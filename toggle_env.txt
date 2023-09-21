@@ -1,0 +1,2 @@
+activate	-> source env/bin/activate
+deactivate	-> deactivate
