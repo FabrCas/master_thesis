@@ -232,7 +232,9 @@ class ResNet(nn.Module):
 
 
 class ResNet_ImageNet():   # modfify first layer if use grayscale images
-    """ This is a wrap class for pretraiend Resnet use the getModel function to get the nn.module implementation
+    """ 
+    This is a wrap class for pretraiend Resnet use the getModel function to get the nn.module implementation.
+    The model expects color images in RGB standard, of size 244x244
     """
     
     
@@ -241,10 +243,11 @@ class ResNet_ImageNet():   # modfify first layer if use grayscale images
         self.n_channels = n_channels
         self.n_classes = n_classes
         self.model = self._create_net()
+        self.weight_name =  ResNet50_Weights.IMAGENET1K_V2  # weights with accuracy 80.858% on ImageNet 
         self.device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
         
     def _create_net(self):
-        model = models.resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)
+        model = models.resnet50(weights= self.weight_name)
         # edit first layer to accept grayscale images
         if self.n_channels == 1:
             model.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
