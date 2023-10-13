@@ -1,5 +1,6 @@
 from time import time
 import os 
+import json
 import multiprocessing as mp
 import numpy as np
 from PIL import Image
@@ -42,7 +43,6 @@ def showImage(img, name= "unknown", has_color = True):
     else:
         print("img data is not valid for the printing")
         
-
 def test_num_workers(dataset, batch_size = 32):
     """
         simple test to choose the best number of processes to use in dataloaders
@@ -71,8 +71,7 @@ def test_num_workers(dataset, batch_size = 32):
     print(data_workers)
     print("best choice from the test is {}".format(data_workers[0][0]))
 
-
-def _saveModel(model, name_file, path_folder= "./models"):
+def saveModel(model, name_file, path_folder= "./models"):
     """ function to save weights of pytorch model as checkpoints (dict)
 
     Args:
@@ -105,3 +104,121 @@ def loadModel(model, name_file, path_folder= "./models"):
     
     ckpt = T.load(path_save)
     model.load_state_dict(ckpt)
+      
+def saveJson(path, data):
+    """ save file using JSON format
+
+    Args:
+        path (str): path to the JSON file
+        data (JSON like object: dict or list): data to make persistent
+    """
+    with open(path, "w") as file:
+        json.dump(data, file, indent= 4)
+    
+def loadJson(path):
+    """ load file using json format
+
+    Args:
+        path (str): path to the JSON file
+
+    Returns:
+        JSON like object (dict or list): JSON data from the path
+    """
+    with open(path, "r") as file:
+        json_data = file.read()
+    data =  json.loads(json_data)
+    return data
+
+def plot_cm(cm, epoch = "_", model_name = None, path_save = None, duration_timer = 2500):
+    """ sava and plot the confusion matrix
+
+    Args:
+        cm (matrix-like list): confusion matrix
+        epoch (str, optional): _description_. Defaults to "_".
+        model_name (_type_, optional): _description_. Defaults to None.
+        path_save (_type_, optional): _description_. Defaults to None.
+        duration_timer (int, optional): _description_. Defaults to 2500.
+    """
+    
+    def close_event():
+        plt.close()
+
+    fig, ax = plt.subplots(figsize=(10, 10))
+    
+    # initialize timer to close plot
+    if duration_timer is not None: 
+        timer = fig.canvas.new_timer(interval = duration_timer) # timer object with time interval in ms
+        timer.add_callback(close_event)
+    
+    ax.matshow(cm, cmap=plt.cm.Greens, alpha=0.5)
+    for i in range(cm.shape[0]):
+        for j in range(cm.shape[1]):
+            ax.text(x= j, y = i, s= round(cm[i, j], 3), va='center', ha='center', size='xx-large')
+                
+    plt.xlabel('Predictions', fontsize=18)
+    plt.ylabel('Targets', fontsize=18)
+    if model_name is not None:
+        plt.title('Confusion Matrix + {}'.format(model_name), fontsize=18)
+    else:
+        plt.title('Confusion Matrix', fontsize=18)
+    if path_save is not None:
+        
+        # check if the folder exists otherwise create it
+        if (not os.path.exists(path_save)):
+            os.makedirs(path_save)
+        
+        
+        plt.savefig(os.path.join(path_save, 'testingCM_'+ str(epoch) +'.png'))
+    if duration_timer is not None: timer.start()
+    plt.show()
+    
+def plot_loss(loss_array, epoch="_", model_name = None, path_save = None, duration_timer = 2500):
+    """ save and plot the loss by epochs
+
+    Args:
+        loss_array (list): list of avg loss for each epoch
+        epoch (str, optional): _description_. Defaults to "_".
+        model_name (_type_, optional): _description_. Defaults to None.
+        path_save (_type_, optional): _description_. Defaults to None.
+        duration_timer (int, optional): _description_. Defaults to 2500.
+    """
+    def close_event():
+        plt.close()
+    
+    # check if the folder exists otherwise create it
+    if (path_save is not None) and (not os.path.exists(path_save)):
+        os.makedirs(path_save)
+    
+    # define x axis values
+    x_values = list(range(1,len(loss_array)+1))
+    
+    color = "green"
+
+    # Plot the array with a continuous line color
+    for i in range(len(loss_array) -1):
+        plt.plot([x_values[i], x_values[i + 1]], [loss_array[i], loss_array[i + 1]], color= color , linewidth=2)
+        
+    # text on the plot
+    # if path_save is None:       
+    #     plt.xlabel('steps', fontsize=18)
+    # else:
+    
+    plt.xlabel('epochs', fontsize=18)
+    plt.ylabel('Loss', fontsize=18)
+    if model_name is not None:
+        plt.title("Learning loss plot {}".format(model_name), fontsize=18)
+    else:
+        plt.title('Learning loss plot', fontsize=18)
+    
+    # save if you define the path
+    if path_save is not None:
+        plt.savefig(os.path.join(path_save, 'loss_'+ str(epoch) +'.png'))
+    
+    fig = plt.gcf()
+    
+    if duration_timer is not None:
+        timer = fig.canvas.new_timer(interval=duration_timer)
+        timer.add_callback(close_event)
+        timer.start()
+    
+    plt.show()

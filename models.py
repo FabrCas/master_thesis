@@ -253,7 +253,7 @@ class ResNet_ImageNet():   # modfify first layer if use grayscale images
         return model
     
     
-    def getMmodel(self):
+    def getModel(self):
         return self.model
     
     def getSummary(self, input_shape = (None,None,None,None)):  #shape: batch,color,width,height

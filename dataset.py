@@ -136,7 +136,13 @@ class CDDB_binary(Dataset):
             img = img.expand(3, -1, -1)
 
         label = self.y[idx]
-        return img, label
+        
+        # binary encoding to compute BCE (one-hot)
+        label_vector = [0,0]
+        label_vector[label] = 1
+        label_vector = T.tensor(label_vector)     
+        
+        return img, label_vector
 
 
 
@@ -180,15 +186,19 @@ if __name__ == "__main__":
     
     # test Dataloader from Dataset
     dataloader = DataLoader(dataset=dataset, batch_size=32, shuffle= True, drop_last= True, pin_memory= True)
-    show = False
+    show = True
     for i,(x,y) in enumerate(dataloader):
         print(x.shape)
         print(y)
         if show: 
             for i in range(x.shape[0]):
                 img = x[i]
-                showImage(img)
-
+                label = y[i]
+                if label[0] == 1: # real
+                    name  = "real image"
+                else:
+                    name  = "fake image"
+                showImage(img, name = name)
         break
         
     
