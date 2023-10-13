@@ -103,8 +103,7 @@ class Bottleneck_block2D_s(nn.Module):
         
         self.ds_layer  = ds_layer
         self.stride = stride
-        
-        
+      
 class ResNet(nn.Module):
     # channel -> colors image
     # classes -> unique labels for the classification
@@ -230,7 +229,6 @@ class ResNet(nn.Module):
     
 #_____________________________________ResNet 50 ImageNet__________________________________________
 
-
 class ResNet_ImageNet():   # modfify first layer if use grayscale images
     """ 
     This is a wrap class for pretraiend Resnet use the getModel function to get the nn.module implementation.
@@ -242,9 +240,8 @@ class ResNet_ImageNet():   # modfify first layer if use grayscale images
         # super(nn.Module,self).__init__()
         self.n_channels = n_channels
         self.n_classes = n_classes
-        self.model = self._create_net()
         self.weight_name =  ResNet50_Weights.IMAGENET1K_V2  # weights with accuracy 80.858% on ImageNet 
-        self.device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
+        self.model = self._create_net()
         
     def _create_net(self):
         model = models.resnet50(weights= self.weight_name)
@@ -267,9 +264,11 @@ class ResNet_ImageNet():   # modfify first layer if use grayscale images
         summary(self.model, input_shape)
     
     
-    def toGPU(self):
-        self.model.to(self.device)
-        
+    def to(self, device):
+        self.model.to(device)
+    
+    def isCuda(self):
+        return next(self.model.parameters()).is_cuda
          
     def forward(self, x):
         x = self.model(x)
@@ -277,11 +276,9 @@ class ResNet_ImageNet():   # modfify first layer if use grayscale images
     
         
 
-
-
 if __name__ == "__main__":
     # resnet = ResNet()
-    # device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
+    device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
     # resnet.to(device)
     # input_example = T.rand(size=(3,224,224))
     # batch_example = input_example.unsqueeze(0)
@@ -289,6 +286,7 @@ if __name__ == "__main__":
     
     
     resnet = ResNet_ImageNet()
-    resnet.toGPU()
-    input_example = T.rand(size=(3,224,224))
+    resnet.to(device)
+    input_example = T.rand(size=(3,224,224)).to(device)
+    print(input_example.is_cuda)
     resnet.getSummary(input_shape= input_example.shape)

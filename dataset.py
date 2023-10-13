@@ -32,33 +32,29 @@ class CDDB_binary(Dataset):
         self.x_train = None; self.y_train = None; self.x_test = None; self.y_test = None
         self._scanData()
         
-        # load the correct data 
-        if self.train:
-            self.x = self.x_train
-            self.y = self.y_train   # 0-> real, 1 -> fake
-        else:
-            self.x = self.x_test
-            self.y = self.y_test    # 0-> real, 1 -> fake
+
         
 
     def _scanData(self, real_folder = "0_real", fake_folder = "1_fake"):
         
         # initialize empty lists
-        xs_train    = [] # images path (train)
-        ys_train    = []  # binary label for each image (train)
-        xs_test     = [] # images path (test)
-        ys_test     = []  # binary label for each image (test)
+        xs = []  # images path
+        ys = []  # binary label for each image
         
         
-        print("looking for data in: {}".format(CDDB_PATH))
+        if self.train: print("looking for train data in: {}".format(CDDB_PATH))
+        else: print("looking for test data in: {}".format(CDDB_PATH))
         
         data_models = sorted(os.listdir(CDDB_PATH))
         for data_model in data_models:                                      # loop over folders of each model
-            path_train_model = os.path.join(CDDB_PATH,data_model,"train")    # around 3/4 of all the data
-            path_val_model = os.path.join(CDDB_PATH,data_model,"val")        # around 1/4 of all the data
             
-            #                               extract for the train set
-            sub_dir_model = sorted(os.listdir(path_train_model))
+            if self.train:
+                path_set_model = os.path.join(CDDB_PATH,data_model,"train")      # around 70% of all the data
+            else:
+                path_set_model = os.path.join(CDDB_PATH,data_model,"val")        # around 30% of all the data
+            
+            #                               extract for the selected set
+            sub_dir_model = sorted(os.listdir(path_set_model))
             # print(sub_dir_model)
             
             # count how many samples you collect
@@ -67,7 +63,7 @@ class CDDB_binary(Dataset):
             
             if not (real_folder in sub_dir_model and fake_folder in sub_dir_model):   # contains sub-categories
                 for category in sub_dir_model:
-                    path_category =  os.path.join(path_train_model, category)
+                    path_category =  os.path.join(path_set_model, category)
                     path_category_real = os.path.join(path_category, real_folder)
                     path_category_fake = os.path.join(path_category, fake_folder)
                     # print(path_category_real, "\n", path_category_fake)
@@ -79,16 +75,19 @@ class CDDB_binary(Dataset):
                     y_category_fake = [1]*len(x_category_fake)
                     
                     # save in global data
-                    xs_train = [*xs_train, *x_category_real, *x_category_fake]
-                    ys_train = [*ys_train, *y_category_real, *y_category_fake]
+                    xs = [*xs, *x_category_real, *x_category_fake]
+                    ys = [*ys, *y_category_real, *y_category_fake]
                     
-                    n_train     = len(x_category_real) + len(x_category_fake)
+                    if self.train: 
+                        n_train = len(x_category_real) + len(x_category_fake)
+                    else:
+                        n_test  = len(x_category_real) + len(x_category_fake)
                     
                     
                     
             else:                                                               # 2 folder: "0_real", "1_fake"
-                path_real = os.path.join(path_train_model, real_folder)
-                path_fake = os.path.join(path_train_model, fake_folder)
+                path_real = os.path.join(path_set_model, real_folder)
+                path_fake = os.path.join(path_set_model, fake_folder)
                 # print(path_real,"\n", path_fake)
                 
                 # get local data
@@ -98,61 +97,26 @@ class CDDB_binary(Dataset):
                 y_model_fake = [1]*len(x_model_fake)
                 
                 # save in global data
-                xs_train = [*xs_train, *x_model_real, *x_model_fake]
-                ys_train = [*ys_train, *y_model_real, *y_model_fake]
+                xs = [*xs, *x_model_real, *x_model_fake]
+                ys = [*ys, *y_model_real, *y_model_fake]
                 
-                n_train     = len(x_model_real) + len(x_model_fake)
+                if self.train:
+                    n_train = len(x_model_real) + len(x_model_fake)
+                else:
+                    n_test  = len(x_model_real) + len(x_model_fake)    
                 
-               
-            #                               extract for the test set
-            sub_dir_model = sorted(os.listdir(path_val_model))            
-            # print(sub_dir_model)
-            if not (real_folder in sub_dir_model and fake_folder in sub_dir_model):   # contains sub-categories
-                for category in sub_dir_model:
-                    path_category =  os.path.join(path_val_model, category)
-                    path_category_real = os.path.join(path_category, real_folder)
-                    path_category_fake = os.path.join(path_category, fake_folder)
-                    # print(path_category_real, "\n", path_category_fake)
-                    
-                    # get local data
-                    x_category_real = [os.path.join(path_category_real, name)for name in os.listdir(path_category_real)]
-                    x_category_fake = [os.path.join(path_category_fake, name)for name in os.listdir(path_category_fake)]
-                    y_category_real = [0]*len(x_category_real)
-                    y_category_fake = [1]*len(x_category_fake)
-                    
-                    # save in global data
-                    xs_test = [*xs_test, *x_category_real, *x_category_fake]
-                    ys_test = [*ys_test, *y_category_real, *y_category_fake]
-                    
-                    n_test     = len(x_category_real) + len(x_category_fake)
-                    
-                    
-            else:                                                               # 2 folder: "0_real", "1_fake"
-                path_real = os.path.join(path_val_model, real_folder)
-                path_fake = os.path.join(path_val_model, fake_folder)
-                # print(path_real,"\n", path_fake)
-                
-                # get local data
-                x_model_real = [os.path.join(path_real, name)for name in os.listdir(path_real)]
-                x_model_fake = [os.path.join(path_fake, name)for name in os.listdir(path_fake)]
-                y_model_real = [0]*len(x_model_real)
-                y_model_fake = [1]*len(x_model_fake)
-                
-                # save in global data
-                xs_test = [*xs_test, *x_model_real, *x_model_fake]
-                ys_test = [*ys_test, *y_model_real, *y_model_fake]
-                
-                n_test     = len(x_model_real) + len(x_model_fake)
-
-            print("found data from {:<20}, train -> {:<10}, test -> {:<10}".format(data_model, n_train, n_test))
+            if self.train: print("found data from {:<20}, train samples -> {:<10}".format(data_model, n_train))
+            else: print("found data from {:<20}, train samples -> {:<10}".format(data_model, n_test))
             
-        print("train samples: {:<10}".format(len(xs_train)))  
-        print("test samples: {:<10}".format(len(xs_test)))
-    
-        self.x_train    = xs_train
-        self.y_train    = ys_train
-        self.x_test     = xs_test
-        self.y_test     = ys_test
+       
+        # load the correct data 
+        if self.train:
+            print("train samples: {:<10}".format(len(xs)))  
+        else:
+            print("test samples: {:<10}".format(len(xs)))
+            
+        self.x = xs
+        self.y = ys    # 0-> real, 1 -> fake
         
     def _transform(self,x):
         return self.transform_ops(x)
@@ -166,6 +130,11 @@ class CDDB_binary(Dataset):
         # print(img_path)
         img = Image.open(img_path)
         img = self._transform(img)
+        
+        # check whether grayscale image, perform pseudocolor inversion 
+        if img.shape[0] == 1:
+            img = img.expand(3, -1, -1)
+
         label = self.y[idx]
         return img, label
 
@@ -200,22 +169,25 @@ class CDDB():
 # [test section]
 if __name__ == "__main__":
     dataset = CDDB_binary(train= True)
-    
     # test Dataset item get
     x,y = dataset.__getitem__(0)
-    print(y)
     print(x.shape)
+    print(y)
     showImage(x, name = "CDDB sample")
+    
+
     from torch.utils.data import DataLoader
     
     # test Dataloader from Dataset
-    dataloader = DataLoader(dataset=dataset, batch_size=16, shuffle= True, drop_last= True, pin_memory= True)
-    for x,y in dataloader:
+    dataloader = DataLoader(dataset=dataset, batch_size=32, shuffle= True, drop_last= True, pin_memory= True)
+    show = False
+    for i,(x,y) in enumerate(dataloader):
         print(x.shape)
         print(y)
-        for i in range(x.shape[0]):
-            img = x[i]
-            showImage(img)
+        if show: 
+            for i in range(x.shape[0]):
+                img = x[i]
+                showImage(img)
 
         break
         
