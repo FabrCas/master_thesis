@@ -1,13 +1,20 @@
-from time import time
-import os 
-import json
-import multiprocessing as mp
-import numpy as np
-from PIL import Image
-import matplotlib.pyplot as plt
-import torch as T
-from torch.utils.data import DataLoader
-from tqdm import tqdm
+import  os 
+import  json
+from    time                import time
+import  multiprocessing     as mp
+import  numpy               as np
+from    PIL                 import Image
+import  matplotlib.pyplot   as plt
+import  torch               as T
+from    torch.utils.data    import DataLoader
+from    tqdm                import tqdm
+
+
+from    sklearn.metrics     import precision_score, recall_score, f1_score, confusion_matrix, hamming_loss, jaccard_score, accuracy_score
+#  binary classification metrics
+from    sklearn.metrics     import auc, roc_curve, average_precision_score
+#  multi-class classification metrics
+
 
 def showImage(img, name= "unknown", has_color = True):
     """ plot image using matplotlib
@@ -71,38 +78,25 @@ def test_num_workers(dataset, batch_size = 32):
     print(data_workers)
     print("best choice from the test is {}".format(data_workers[0][0]))
 
-def saveModel(model, name_file, path_folder= "./models"):
+def saveModel(model, path_save):
     """ function to save weights of pytorch model as checkpoints (dict)
 
     Args:
         model (nn.Module): Pytorch model
-        name_file (_type_): name of the checkpoint file to be saved
-        path_folder (str, optional): folder used to save the models. Defaults to "./models".
+        path_save (str): path of the checkpoint file to be saved
     """
-    
-    # name_file = 'resNet3D-'+ str(name) +'.ckpt'
-    path_save = os.path.join(path_folder, name_file)
-    print("Saving model to: ", path_save)
-    
-    # create directories for models if doesn't exist
-    if not os.path.exists(path_folder):
-        os.makedirs(path_folder)
-        
+    print("Saving model to: ", path_save)        
     T.save(model.state_dict(), path_save)
     
-def loadModel(model, name_file, path_folder= "./models"):
+def loadModel(model, path_load):
     """ function to load weights of pytorch model as checkpoints (dict)
 
     Args:
         model (nn.Module): Pytorch model that we want to update with the new weights
-        name_file (_type_): name of the checkpoint file to be saved
-        path_folder (str, optional): folder used to save the models. Defaults to "./models".
+        path_load (str): path to locate the model weights file (.ckpt)
     """
-    # name_file = 'resNet3D-'+ str(epoch) +'.ckpt'
-    path_save = os.path.join(path_folder, name_file)
-    print("Loading model from: ", path_save)
-    
-    ckpt = T.load(path_save)
+    print("Loading model from: ", path_load)
+    ckpt = T.load(path_load)
     model.load_state_dict(ckpt)
       
 def saveJson(path, data):
@@ -129,58 +123,14 @@ def loadJson(path):
     data =  json.loads(json_data)
     return data
 
-def plot_cm(cm, epoch = "_", model_name = None, path_save = None, duration_timer = 2500):
-    """ sava and plot the confusion matrix
-
-    Args:
-        cm (matrix-like list): confusion matrix
-        epoch (str, optional): _description_. Defaults to "_".
-        model_name (_type_, optional): _description_. Defaults to None.
-        path_save (_type_, optional): _description_. Defaults to None.
-        duration_timer (int, optional): _description_. Defaults to 2500.
-    """
-    
-    def close_event():
-        plt.close()
-
-    fig, ax = plt.subplots(figsize=(10, 10))
-    
-    # initialize timer to close plot
-    if duration_timer is not None: 
-        timer = fig.canvas.new_timer(interval = duration_timer) # timer object with time interval in ms
-        timer.add_callback(close_event)
-    
-    ax.matshow(cm, cmap=plt.cm.Greens, alpha=0.5)
-    for i in range(cm.shape[0]):
-        for j in range(cm.shape[1]):
-            ax.text(x= j, y = i, s= round(cm[i, j], 3), va='center', ha='center', size='xx-large')
-                
-    plt.xlabel('Predictions', fontsize=18)
-    plt.ylabel('Targets', fontsize=18)
-    if model_name is not None:
-        plt.title('Confusion Matrix + {}'.format(model_name), fontsize=18)
-    else:
-        plt.title('Confusion Matrix', fontsize=18)
-    if path_save is not None:
-        
-        # check if the folder exists otherwise create it
-        if (not os.path.exists(path_save)):
-            os.makedirs(path_save)
-        
-        
-        plt.savefig(os.path.join(path_save, 'testingCM_'+ str(epoch) +'.png'))
-    if duration_timer is not None: timer.start()
-    plt.show()
-    
-def plot_loss(loss_array, epoch="_", model_name = None, path_save = None, duration_timer = 2500):
+def plot_loss(loss_array, title_plot = None, path_save = None, duration_timer = 2500):
     """ save and plot the loss by epochs
 
     Args:
         loss_array (list): list of avg loss for each epoch
-        epoch (str, optional): _description_. Defaults to "_".
-        model_name (_type_, optional): _description_. Defaults to None.
-        path_save (_type_, optional): _description_. Defaults to None.
-        duration_timer (int, optional): _description_. Defaults to 2500.
+        title_plot (str, optional): _title to exhibit on the plot
+        path_save (str, optional): relative path for the location of the save folder
+        duration_timer (int, optional): milliseconds used to show the plot 
     """
     def close_event():
         plt.close()
@@ -205,14 +155,14 @@ def plot_loss(loss_array, epoch="_", model_name = None, path_save = None, durati
     
     plt.xlabel('epochs', fontsize=18)
     plt.ylabel('Loss', fontsize=18)
-    if model_name is not None:
-        plt.title("Learning loss plot {}".format(model_name), fontsize=18)
+    if title_plot is not None:
+        plt.title("Learning loss plot {}".format(title_plot), fontsize=18)
     else:
         plt.title('Learning loss plot', fontsize=18)
     
     # save if you define the path
     if path_save is not None:
-        plt.savefig(os.path.join(path_save, 'loss_'+ str(epoch) +'.png'))
+        plt.savefig(path_save)
     
     fig = plt.gcf()
     
@@ -222,3 +172,125 @@ def plot_loss(loss_array, epoch="_", model_name = None, path_save = None, durati
         timer.start()
     
     plt.show()
+
+def plot_cm(cm, labels, title_plot = None, path_save = None, duration_timer = 2500):
+    """ sava and plot the confusion matrix
+
+    Args:
+        cm (matrix-like list): confusion matrix
+        labels (list) : labels to index the matrix
+        title_plot (str, optional): text to visaulize as title of the plot
+        path_save (str, optional): relative path for the location of the save folder
+        duration_timer (int, optional): milliseconds used to show the plot 
+    """
+    
+    def close_event():
+        plt.close()
+
+    fig, ax = plt.subplots(figsize=(6, 6))
+    
+    # initialize timer to close plot
+    if duration_timer is not None: 
+        timer = fig.canvas.new_timer(interval = duration_timer) # timer object with time interval in ms
+        timer.add_callback(close_event)
+    
+    ax.matshow(cm, cmap=plt.cm.Greens, alpha=0.5)
+    for i in range(cm.shape[0]):
+        for j in range(cm.shape[1]):
+            ax.text(x= j, y = i, s= round(cm[i, j], 3), va='center', ha='center', size='xx-large')
+        
+        
+    
+    # change labels name on the matrix
+    ax.set_xticks(range(len(labels)))
+    ax.set_yticks(range(len(labels)))
+    ax.set_xticklabels(labels, fontsize = 9)
+    ax.set_yticklabels(labels, fontsize = 9)
+            
+    plt.xlabel('Predictions', fontsize=11)
+    plt.ylabel('Targets', fontsize=11)
+    
+    if title_plot is not None:
+        plt.title('Confusion Matrix + {}'.format(title_plot), fontsize=18)
+    else:
+        plt.title('Confusion Matrix', fontsize=18)
+        
+    if path_save is not None:
+        plt.savefig(os.path.join(path_save, "confusion_matrix.png"))
+        
+    if duration_timer is not None: timer.start()
+    plt.show()
+    
+def plot_ROC_curve(fpr, tpr, path_save = None, duration_timer = 2500):
+    def close_event():
+        plt.close()
+    
+    plt.figure()
+    plt.plot(fpr, tpr, color='lime', lw=2, label=f'ROC curve)')
+    plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('Receiver Operating Characteristic (ROC)')
+    plt.legend(loc='lower right')
+    
+    if path_save is not None:
+        plt.savefig(os.path.join(path_save, "ROC_curve.png"))
+        
+    fig = plt.gcf()
+    
+    if duration_timer is not None:
+        timer = fig.canvas.new_timer(interval=duration_timer)
+        timer.add_callback(close_event)
+        timer.start()
+        
+    plt.show()
+
+def metrics_binClass(preds, targets, pred_probs, epoch_model, path_save = None, average = "macro"):
+    
+    # roc curve computation
+    fpr, tpr, thresholds = roc_curve(targets, pred_probs,pos_label=1,  drop_intermediate= False)
+    roc_auc = auc(fpr, tpr)
+    
+    # plot and save ROC curve
+    plot_ROC_curve(fpr, tpr, path_save)
+    
+    # compute metrics and store into a dictionary
+    metrics_results = {
+        "accuracy":             accuracy_score(targets, preds, normalize= True),
+        "precision":            precision_score(targets, preds, average = "binary", zero_division=1, pos_label=1),   \
+        "recall":               recall_score(targets, preds, average = "binary", zero_division=1, pos_label=1),      \
+        "f1-score":             f1_score(targets, preds, average= "binary", zero_division=1, pos_label=1),           \
+        "average_precision":    average_precision_score(targets, pred_probs, average= average, pos_label=1),        \
+        "roc_auc":              roc_auc,                                                                            \
+        "hamming_loss":         hamming_loss(targets, preds),                                                        \
+        "jaccard_score":        jaccard_score(targets,preds, pos_label=1, average="binary", zero_division=1),       \
+        "confusion_matrix":     confusion_matrix(targets, preds, labels=[0,1], normalize="true")
+         
+    }
+    
+    # print metrics
+    for k,v in metrics_results.items():
+        if k != "confusion_matrix":
+            print("\nmetric: {}, result: {}".format(k,v))
+        else:
+            print("Confusion matrix")
+            print(v)
+    
+    # save the results (JSON file) if a path has been provided
+    if path_save is not None:
+        metrics_results_ = metrics_results.copy()
+        metrics_results_['confusion_matrix'] = metrics_results_['confusion_matrix'].tolist()
+        saveJson(os.path.join(path_save, 'testingMetrics_' + epoch_model + '.json'), metrics_results_)
+    
+    # plot and save (if path specified) confusion matrix
+    plot_cm(cm = metrics_results['confusion_matrix'], labels = ["real", "fake"], title_plot = None, path_save = path_save, duration_timer= None)
+
+#TODO
+def metrics_OOD():
+    pass
+
+#TODO
+def metrics_multiClass():
+    pass

@@ -245,10 +245,12 @@ class ResNet_ImageNet():   # modfify first layer if use grayscale images
         
     def _create_net(self):
         model = models.resnet50(weights= self.weight_name)
+        
         # edit first layer to accept grayscale images
         if self.n_channels == 1:
             model.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
-        # fully connected layer for the output
+            
+        # include fully connected layer for the output
         model.fc = nn.Linear(model.fc.in_features, self.n_classes)
         return model
     
@@ -267,6 +269,13 @@ class ResNet_ImageNet():   # modfify first layer if use grayscale images
     def to(self, device):
         self.model.to(device)
     
+    def getLayers(self):
+        return dict(self.model.named_parameters())
+    
+    def freeze(self):
+        for name, param in self.model.named_parameters():
+            param.requires_grad = False
+    
     def isCuda(self):
         return next(self.model.parameters()).is_cuda
          
@@ -283,7 +292,6 @@ if __name__ == "__main__":
     # input_example = T.rand(size=(3,224,224))
     # batch_example = input_example.unsqueeze(0)
     # resnet.getSummary(input_shape= input_example.shape)
-    
     
     resnet = ResNet_ImageNet()
     resnet.to(device)

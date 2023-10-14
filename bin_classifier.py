@@ -12,8 +12,12 @@ from    utilities           import *
 from    dataset             import CDDB_binary
 from    models              import ResNet_ImageNet, ResNet
 
-from sklearn.metrics import precision_score, recall_score, f1_score,     \
-        confusion_matrix, hamming_loss, jaccard_score, accuracy_score
+
+
+"""
+                        Binary Deepfake classification models
+"""
+
 
 class DFD_BinClassifier(object):
     """
@@ -30,6 +34,12 @@ class DFD_BinClassifier(object):
         self.batch_size = batch_size
         self.model_type = model_type
         
+        
+        # path 2 save
+        self.path_models    = "./models/bin"
+        self.path_results   = "./results/bin"
+
+        
         # load dataset & dataloader
         self.train_dataset = CDDB_binary(train = True)
         self.test_dataset = CDDB_binary(train = False)
@@ -40,8 +50,12 @@ class DFD_BinClassifier(object):
         
         if model_type == "resnet_pretrained":
             self.model = ResNet_ImageNet(n_classes = 2).getModel()
+            self.path2model_results   = os.path.join(self.path_results, "ImageNet")
         else:
             self.model = ResNet()
+            self.path2model_results   = os.path.join(self.path_results, "RandomIntialization")
+            
+        self.modelEpochs = 0        # variable used to store the actual number of epochs used to learn the model
         self.model.to(self.device)
         
         # define loss and final activation function
@@ -80,7 +94,7 @@ class DFD_BinClassifier(object):
         
         # training loop over epochs
         for epoch_idx in range(self.n_epochs):
-            print(f"\n             [Epoch{epoch_idx+1}]             \n")
+            print(f"\n             [Epoch {epoch_idx+1}]             \n")
             
             # define cumulative loss for the current epoch
             loss_epoch = 0
@@ -103,7 +117,7 @@ class DFD_BinClassifier(object):
                 with autocast():
                     logits = self.model.forward(x)
 
-                    loss = F.binary_cross_entropy_with_logits(input=logits, target=y)
+                    loss = self.bce(input=logits, target=y)   # logits bce version
                 
                 # update total loss    
                 loss_epoch += loss.item()
@@ -131,35 +145,104 @@ class DFD_BinClassifier(object):
         # create paths and file names for saving training outcomes
         current_date = date.today().strftime("%d-%m-%Y")
         
-        path_model_folder = os.path.join("./models",  name_train + "_" + current_date)
-        path_loss_folder  = os.path.join("./results", name_train + "_" + current_date)
-        model_name = str(self.n_epochs) +'.ckpt'
+        path_model_folder       = os.path.join(self.path_models,  name_train + "_" + current_date)
+        name_model_file         = str(self.n_epochs) +'.ckpt'
+        path_model_save         = os.path.join(path_model_folder, name_model_file)  # path folder + name file
         
+        path_results_folder     = os.path.join(self.path_results, name_train + "_" + current_date)
+        name_loss_file          = 'loss_'+ str(self.n_epochs) +'.png'
+        path_lossPlot_save      = os.path.join(path_results_folder, name_loss_file)
+        
+        # save info for the new model trained
+        self.path2model_results = path_results_folder
+        self.modelEpochs         = self.n_epochs
+        
+        # create model and results folder if not already present
         if (not os.path.exists(path_model_folder)):
             os.makedirs(path_model_folder)
-        if (not os.path.exists(path_loss_folder)):
-            os.makedirs(path_loss_folder)
+        if (not os.path.exists(path_results_folder)):
+            os.makedirs(path_results_folder)
         
         # save loss plot
-        plot_loss(loss_epochs, epoch= self.n_epochs, model_name= name_train, path_save = path_loss_folder)
+        plot_loss(loss_epochs, title_plot= name_train, path_save = path_lossPlot_save)
         
         # save model
-        saveModel(self.model, model_name, path_model_folder)
+        saveModel(self.model, path_model_save)
     
     def test(self):
         
         # define test dataloader
-        train_dataloader = DataLoader(self.test_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= False, pin_memory= True)
-    
+        test_dataloader = DataLoader(self.test_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
+
+        # compute number of batches for test
+        n_steps = len(test_dataloader)
+        print("Number of batches for test: {}".format(n_steps))
+        
         # model in evaluation mode
         self.model.eval()  
         
-        with T.no_grad():
-            pass
+        # define the array to store the result
+        predictions             = np.empty((0), dtype= np.int16)
+        predicted_probabilities = np.empty((0), dtype= np.float32)
+        targets                 = np.empty((0), dtype= np.int16)
+        
+        T.cuda.empty_cache()
+        
+        # loop over steps
+        for step_idx,(x,y) in tqdm(enumerate(test_dataloader), total= n_steps):
+            
+            # prepare samples/targets batches 
+            x = x.to(self.device)
+            y = y.to(self.device)               # binary int encoding for each sample
+            y = y.to(T.float)
+            target = T.argmax(y, dim =-1).cpu().numpy().astype(int)
+            
+            with T.no_grad():
+                with autocast():
+                    pred, prob = self.forward(x)
+                    pred = pred.cpu().numpy().astype(int)
+                    prob = prob.cpu().numpy()
+            
+            predictions             = np.append(predictions, pred, axis  =0)
+            predicted_probabilities = np.append(predicted_probabilities, prob, axis  =0)
+            targets                 = np.append(targets,  target, axis  =0)
+            
+                
+        # create folder for the results
+        if (not os.path.exists(self.path2model_results)):
+            os.makedirs(self.path2model_results)
+            
+        # compute metrics from test data
+        metrics_binClass(predictions, targets, predicted_probabilities, epoch_model= str(self.modelEpochs), path_save = self.path2model_results)
     
-    def metrics(self):
-        pass 
+    def forward(self, x):
+        """ network forward
 
+        Args:
+            x (T.Tensor): input image/images
+
+        Returns:
+            pred: label: 0 -> real, 1 -> fake
+        """
+
+        # handle single image, increasing dimensions for batch
+        if len(x.shape) == 3:
+            x = T.expand(1,-1,-1,-1)
+            
+        logits = self.model.forward(x)
+        probs  = self.sigmoid(logits)
+        pred   = T.argmax(probs, -1)
+        prob   = probs[:,1]   # positive class probability (fake probability)
+        
+        return pred, prob
+        
+        
+    def load(self, folder_model, epoch):
+        self.path2model         = os.path.join(self.path_models,  folder_model, str(epoch) + ".ckpt")
+        self.path2model_results = os.path.join(self.path_results, folder_model)
+        self.modelEpochs         = epoch
+        loadModel(self.model, self.path2model)
+        
 #TODO        
 class OOD_BinDetector(object):
     """
@@ -174,4 +257,7 @@ if __name__ == "__main__":
     # dataset = CDDB_binary()
     # test_num_workers(dataset, batch_size  =32)   # use n_workers = 8
     bin_classifier = DFD_BinClassifier()
-    bin_classifier.train(name_train="resnet50_ImageNet")
+    # bin_classifier.train(name_train="resnet50_ImageNet")
+    bin_classifier.load("resnet50_ImageNet_13-10-2023", 20)
+    bin_classifier.test()
+    
