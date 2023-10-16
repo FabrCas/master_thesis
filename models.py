@@ -250,7 +250,7 @@ class ResNet_ImageNet():   # modfify first layer if use grayscale images
         if self.n_channels == 1:
             model.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
             
-        # include fully connected layer for the output
+        # edit fully connected layer for the output
         model.fc = nn.Linear(model.fc.in_features, self.n_classes)
         return model
     

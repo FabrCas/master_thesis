@@ -7,14 +7,18 @@ from utilities import *
 
 # torch import
 import torch as T
+import torchvision
 from torchvision import transforms
 from torchvision.transforms.functional import InterpolationMode
 from torch.utils.data import Dataset
 T.manual_seed(22)
 
 
-CDDB_PATH = "./data/CDDB"
+CDDB_PATH       = "./data/CDDB"
+CIFAR100_PATH   = "./data/cifar100"
 
+
+#                           [Deepfake classification]
 
 class CDDB_binary(Dataset):
     def __init__(self, width_img= 224, height_img = 224, train = True):
@@ -24,7 +28,7 @@ class CDDB_binary(Dataset):
         self.height_img = height_img
         self.transform_ops = transforms.Compose([
             transforms.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
-            transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image
+            transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
             # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])   # to have pixel values close between -1 and 1 (imagenet distribution)
         ])
         
@@ -121,7 +125,6 @@ class CDDB_binary(Dataset):
     def _transform(self,x):
         return self.transform_ops(x)
 
-    
     def __len__(self):
         return len(self.y)
     
@@ -147,7 +150,7 @@ class CDDB_binary(Dataset):
 
 
 #TODO
-class CDDB():
+class CDDB(Dataset):
     def __init__(self, width_img= 224, height_img = 224):
         super(CDDB,self).__init__()
         
@@ -156,7 +159,7 @@ class CDDB():
         
         self.transform_ops = transforms.Compose([
             transforms.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
-            transforms.ToTensor(),
+            transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
             # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])   # to have pixel values close between -1 and 1 (imagenet distribution)
         ])
 
@@ -171,36 +174,77 @@ class CDDB():
         return None
 
 
+#                           [OOD detection]
+
+def getCIFAR100_dataset(train, width_img= 224, height_img = 224):
+    """ get CIFAR100 dataset
+
+    Args:
+        train (bool): choose between the train or test set. Defaults to True.
+        width_img (int, optional): img width for the resize. Defaults to 224.
+        height_img (int, optional): img height for the resize. Defaults to 224.
+        
+    Returns:
+        torch.Dataset : Cifar100 dataset object
+    """
+    transform_ops = transforms.Compose([
+        transforms.Resize((width_img, height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
+        transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+    ])
+    
+    download_files = False
+    # create folder if not exists
+    if not(os.path.exists(CIFAR100_PATH)):
+        os.mkdir(CIFAR100_PATH)
+        download_files = True
+    
+    # load cifar data
+    if train:
+        cifar100 = torchvision.datasets.CIFAR100(root=CIFAR100_PATH, train=True, download=download_files, transform=transform_ops)
+    else:
+        cifar100 = torchvision.datasets.CIFAR100(root=CIFAR100_PATH, train=False, download=download_files, transform=transform_ops)
+    
+    return cifar100
+    
+    
+        
+        
         
 # [test section]
 if __name__ == "__main__":
-    dataset = CDDB_binary(train= True)
-    # test Dataset item get
-    x,y = dataset.__getitem__(0)
-    print(x.shape)
-    print(y)
-    showImage(x, name = "CDDB sample")
     
-
-    from torch.utils.data import DataLoader
-    
-    # test Dataloader from Dataset
-    dataloader = DataLoader(dataset=dataset, batch_size=32, shuffle= True, drop_last= True, pin_memory= True)
-    show = True
-    for i,(x,y) in enumerate(dataloader):
+    def test_cddbinary():
+        dataset = CDDB_binary(train= True)
+        # test Dataset item get
+        x,y = dataset.__getitem__(0)
         print(x.shape)
         print(y)
-        if show: 
-            for i in range(x.shape[0]):
-                img = x[i]
-                label = y[i]
-                if label[0] == 1: # real
-                    name  = "real image"
-                else:
-                    name  = "fake image"
-                showImage(img, name = name)
-        break
+        showImage(x, name = "CDDB sample")
         
+
+        from torch.utils.data import DataLoader
+        
+        # test Dataloader from Dataset
+        dataloader = DataLoader(dataset=dataset, batch_size=32, shuffle= True, drop_last= True, pin_memory= True)
+        show = True
+        for i,(x,y) in enumerate(dataloader):
+            print(x.shape)
+            print(y)
+            if show: 
+                for i in range(x.shape[0]):
+                    img = x[i]
+                    label = y[i]
+                    if label[0] == 1: # real
+                        name  = "real image"
+                    else:
+                        name  = "fake image"
+                    showImage(img, name = name)
+            break
+    
+    ds = getCIFAR100_dataset(train = False)
+    train_loader = DataLoader(ds, batch_size=32, shuffle=True)
+    print(len(train_loader))
+    
     
     
     

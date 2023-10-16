@@ -15,7 +15,7 @@ from    models              import ResNet_ImageNet, ResNet
 
 
 """
-                        Binary Deepfake classification models
+                        Binary Deepfake classification models trained on CDDB dataset
 """
 
 
@@ -67,7 +67,12 @@ class DFD_BinClassifier(object):
         self.n_epochs = 20
         self.weight_decay = 0.001       # L2 regularization term 
         
-        
+    def getLayers(self, show = True):
+        layers = dict(self.model.named_parameters())
+        for k,v in layers.items():
+            print("name: {:<30}, shape layer: {:>20}: ".format(k, str(list(v.data.shape))))
+        return layers
+    
     def train(self, name_train):
         
         # define train dataloader
@@ -248,16 +253,20 @@ class OOD_BinDetector(object):
     """
         Detector for OOD data
     """
-    
-    def __init__(self):
+    def __init__(self, bin_classifier):
         pass 
         
 # [test section] 
 if __name__ == "__main__":
     # dataset = CDDB_binary()
     # test_num_workers(dataset, batch_size  =32)   # use n_workers = 8
-    bin_classifier = DFD_BinClassifier()
+   
+    bin_classifier = DFD_BinClassifier(model_type="resnet_pretrained")
     # bin_classifier.train(name_train="resnet50_ImageNet")
     bin_classifier.load("resnet50_ImageNet_13-10-2023", 20)
-    bin_classifier.test()
+    # bin_classifier.test()
+    # bin_classifier.getLayers(show = True)
+    
+    
+    
     
