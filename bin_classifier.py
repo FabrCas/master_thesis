@@ -9,7 +9,7 @@ from    torch.cuda.amp      import GradScaler, autocast
 from    torch.utils.data    import DataLoader
 
 from    utilities           import *
-from    dataset             import CDDB_binary
+from    dataset             import CDDB_binary, getCIFAR100_dataset
 from    models              import ResNet_ImageNet, ResNet
 
 
@@ -253,11 +253,25 @@ class OOD_BinDetector(object):
     """
         Detector for OOD data
     """
-    def __init__(self, bin_classifier):
+    def __init__(self, classifier):
+        self.classifier  = classifier
+        self.ood_dataset = getCIFAR100_dataset(train= False)
+        self.in_dataset  = CDDB_binary(train = False)
+    
+    
+    def test(self):
         pass 
+    
+    def forward(self, x):
+        
+        # handle single image, increasing dimensions for batch
+        if len(x.shape) == 3:
+            x = T.expand(1,-1,-1,-1)
+        
         
 # [test section] 
 if __name__ == "__main__":
+    
     # dataset = CDDB_binary()
     # test_num_workers(dataset, batch_size  =32)   # use n_workers = 8
    
@@ -266,6 +280,8 @@ if __name__ == "__main__":
     bin_classifier.load("resnet50_ImageNet_13-10-2023", 20)
     # bin_classifier.test()
     # bin_classifier.getLayers(show = True)
+    
+    
     
     
     

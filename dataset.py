@@ -1,6 +1,8 @@
 import os
 from PIL import Image
 import numpy as np
+import math
+import random
 
 
 from utilities import * 
@@ -12,6 +14,7 @@ from torchvision import transforms
 from torchvision.transforms.functional import InterpolationMode
 from torch.utils.data import Dataset
 T.manual_seed(22)
+random.seed(22)
 
 
 CDDB_PATH       = "./data/CDDB"
@@ -148,7 +151,6 @@ class CDDB_binary(Dataset):
         return img, label_vector
 
 
-
 #TODO
 class CDDB(Dataset):
     def __init__(self, width_img= 224, height_img = 224):
@@ -188,7 +190,7 @@ def getCIFAR100_dataset(train, width_img= 224, height_img = 224):
         torch.Dataset : Cifar100 dataset object
     """
     transform_ops = transforms.Compose([
-        transforms.Resize((width_img, height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
+        transforms.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
         transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
     ])
     
@@ -205,9 +207,82 @@ def getCIFAR100_dataset(train, width_img= 224, height_img = 224):
         cifar100 = torchvision.datasets.CIFAR100(root=CIFAR100_PATH, train=False, download=download_files, transform=transform_ops)
     
     return cifar100
-    
-    
+
+
+
+
+class OOD_dataset(Dataset):
+    def __init__(self, id_data, ood_data, balancing_mode:str = None, exact_samples:int = None):  # balancing_mode = "max","exact" or None
+        super(OOD_dataset, self).__init__()
         
+        assert isinstance(id_data, Dataset)
+        assert isinstance(ood_data, Dataset)
+        self.id_data        = id_data
+        self.ood_data       = ood_data
+        self.balancing_mode  = balancing_mode
+        self.exact_samples = exact_samples
+        self._count_samples()
+
+    
+    def _count_samples(self):
+        print("Building OOD detection dataset...\nID samples: {}, OOD samples: {}, balancing mode: {}".format(len(self.id_data), len(self.ood_data), self.balancing_mode))
+        
+        if self.balancing_mode == "max":
+            max_samples = min(len(self.id_data), len(self.ood_data))
+            self.n_IDsamples    = max_samples
+            self.n_OODsamples   = max_samples
+            self.n_samples      = max_samples*2
+            
+            # compute indices
+            self.id_indices  =  random.sample(range(len(self.id_data)), max_samples)
+            self.ood_indices =  random.sample(range(len(self.ood_data)), max_samples)
+            
+        elif self.balancing_mode == "exact" and not(self.exact_samples is None):
+            self.n_IDsamples    = math.floor(self.exact_samples/2)
+            self.n_OODsamples   = math.floor(self.exact_samples/2)
+            if self.exact_samples%2 == 1:
+                self.n_IDsamples += 1
+            self.n_samples      = self.exact_samples
+            
+            # compute indices
+            self.id_indices  =  random.sample(range(len(self.id_data)), self.n_IDsamples)
+            self.ood_indices =  random.sample(range(len(self.ood_data)), self.n_OODsamples)
+            
+        else:
+            self.n_IDsamples    = len(self.id_data)
+            self.n_OODsamples   = len(self.ood_data)
+            self.n_samples      = self.n_IDsamples + self.n_OODsamples # be careful, don't use too different dataset in size
+            
+            self.id_indices = None
+            self.ood_indices = None
+            
+    def __len__(self):
+        return self.n_samples
+    
+    def __getitem__(self,idx):
+        if idx < self.n_IDsamples:
+            if self.id_indices is None:   # sample by providen index, this is used when no balancing is appleid on data (all data ID and ODD returned)
+                x, _ = self.id_data[idx]
+            else:
+                x, _ = self.id_data[self.id_indices[idx]]    # sample from random sampled index, this is used when balancing is appleid on data (max or exact mode)
+            y = 0
+        else:
+            idx_ood = idx - self.n_IDsamples  # compute the index for the ood data
+            if self.ood_indices is None:
+                x, _ = self.ood_data[idx_ood]
+            else:
+                x, _ = self.ood_data[self.ood_indices[idx_ood]]
+            y = 1
+    
+        # check whether grayscale image, perform pseudocolor inversion 
+        if x.shape[0] == 1:
+            x = x.expand(3, -1, -1)
+        
+        # label to encoding
+        y_vector    = [0,0]             # zero vector
+        y_vector[y] = 1                 # mark with one the correct position: [1,0] -> ID, [0,1]-> OOD
+        
+        return x, y_vector
         
         
 # [test section]
@@ -241,11 +316,31 @@ if __name__ == "__main__":
                     showImage(img, name = name)
             break
     
-    ds = getCIFAR100_dataset(train = False)
-    train_loader = DataLoader(ds, batch_size=32, shuffle=True)
-    print(len(train_loader))
-    
-    
+    def test_cifar():
+        ds = getCIFAR100_dataset(train = False)
+        train_loader = DataLoader(ds, batch_size=32, shuffle=True)
+        train_loader = iter(train_loader)
+        batch1 =  next(train_loader)
+        batch2 = next(train_loader)
+        showImage(batch1[0][31])
+        
+    def test_ood():
+        cddb_dataset = CDDB_binary(train = True)
+        cifar_dataset = getCIFAR100_dataset(train = True)
+
+        dataset = OOD_dataset(cddb_dataset, cifar_dataset, balancing_mode="exact", exact_samples= 50)
+        print(len(dataset))
+        sample = dataset[25]
+        img = sample[0]
+        showImage(img)
+        print(sample[1])
+
+        
+        
+        
+        
+        
+test_ood()
     
     
     
