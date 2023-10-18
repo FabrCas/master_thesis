@@ -9,7 +9,7 @@ from    torch.cuda.amp      import GradScaler, autocast
 from    torch.utils.data    import DataLoader
 
 from    utilities           import *
-from    dataset             import CDDB_binary, getCIFAR100_dataset
+from    dataset             import CDDB_binary, getCIFAR100_dataset,OOD_dataset
 from    models              import ResNet_ImageNet, ResNet
 
 
@@ -60,7 +60,7 @@ class DFD_BinClassifier(object):
         
         # define loss and final activation function
         self.sigmoid = F.sigmoid
-        self.bce = F.binary_cross_entropy_with_logits
+        self.bce     = F.binary_cross_entropy_with_logits
         
         # learning parameters (default)
         self.lr = 1e-5
@@ -204,7 +204,7 @@ class DFD_BinClassifier(object):
             
             with T.no_grad():
                 with autocast():
-                    pred, prob = self.forward(x)
+                    pred, prob, _ = self.forward(x)
                     pred = pred.cpu().numpy().astype(int)
                     prob = prob.cpu().numpy()
             
@@ -234,36 +234,139 @@ class DFD_BinClassifier(object):
         if len(x.shape) == 3:
             x = T.expand(1,-1,-1,-1)
             
-        logits = self.model.forward(x)
-        probs  = self.sigmoid(logits)
-        pred   = T.argmax(probs, -1)
-        prob   = probs[:,1]   # positive class probability (fake probability)
+        logits      = self.model.forward(x)
+        probs       = self.sigmoid(logits)
+        pred        = T.argmax(probs, -1)
+        fake_prob   = probs[:,1]   # positive class probability (fake probability)
         
-        return pred, prob
+        return pred, fake_prob, logits
         
         
     def load(self, folder_model, epoch):
-        self.path2model         = os.path.join(self.path_models,  folder_model, str(epoch) + ".ckpt")
-        self.path2model_results = os.path.join(self.path_results, folder_model)
-        self.modelEpochs         = epoch
-        loadModel(self.model, self.path2model)
+        try:
+            self.path2model         = os.path.join(self.path_models,  folder_model, str(epoch) + ".ckpt")
+            self.path2model_results = os.path.join(self.path_results, folder_model)
+            self.modelEpochs         = epoch
+            loadModel(self.model, self.path2model)
+            self.model.eval()   # no train mode
+        except:
+            print("No model: {} found for the epoch: {} in the folder: {}".format(folder_model, epoch, self.path_models))
         
-#TODO        
-class OOD_BinDetector(object):
+             
+class OOD_Baseline(object):
     """
         Detector for OOD data
     """
-    def __init__(self, classifier):
+    def __init__(self, classifier, ood_data_train, ood_data_test, useGPU = True):
+        """ constructor
+
+        Args:
+            classifier (DFD_BinClassifier): classifier used for the main Deepfake detectio task
+            ood_data_train (torch.utils.data.Dataset): train set out of distribution
+            ood_data_test (torch.utils.data.Dataset): test set out of distribution
+            useGPU (bool, optional): flag to enable usage of GPU. Defaults to True.
+        """
+        
+        # classfier used
         self.classifier  = classifier
-        self.ood_dataset = getCIFAR100_dataset(train= False)
-        self.in_dataset  = CDDB_binary(train = False)
+        
+        # train
+        # self.id_data_train  = CDDB_binary(train = True)
+        # self.ood_data_train = ood_data_train
+        # self.dataset_train  = OOD_dataset(self.id_data_train, self.ood_data_train, balancing_mode = None)
+        
+        # test sets
+        self.id_data_test  = CDDB_binary(train = False)
+        self.ood_data_test = ood_data_test
+        self.dataset_test  = OOD_dataset(self.id_data_test, self.ood_data_test, balancing_mode = None)
+        
+        # paths and name
+        self.path_models    = "./models/ood_detection"
+        self.path_results   = "./results/ood_detection"
+        self.name           = "baseline"
+        
+        # execution specs
+        self.useGPU = useGPU
+        if self.useGPU: self.device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
+        else: self.device = "cpu"
+        
+        # learning-testing parameters
+        self.batch_size     = 32
+        # self.sigmoid        = F.sigmoid                 # binary case
+        # self.softmax        = F.softmax                 # multi-class case 
     
+    def sigmoid(self,x):
+            return 1.0 / (1.0 + np.exp(-x))
+        
+    def softmax(self,x):
+            e = np.exp(x)
+            return  e/e.sum(axis=1, keepdims=True)
+            # return  e/e.sum()
+     
+    def compute_thr(self, name_classifier):
+        # define the dataloader 
+        # dataloader =  DataLoader(self.dataset_train, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
+        dataloader = DataLoader(self.id_data_test, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
+        
+        # use model on selected device
+        self.classifier.model.to(self.device)
+        
+        # define empty lsit to store outcomes
+        test_logits = np.empty((0,2), dtype= np.float32)
+        test_pred   = np.empty((0),   dtype= np.int32)
+        test_labels = np.empty((0,2), dtype= np.int32)
+        
+        for idx, (x,y) in tqdm(enumerate(dataloader), total= len(dataloader)):
+            
+            # to test
+            if idx >= 5: break
+            
+            x = x.to(self.device)
+            with T.no_grad():
+                with autocast():
+                    y_pred ,_, logits =self.classifier.forward(x)
+                    
+            # to numpy array
+            logits  = logits.cpu().numpy()
+            y_pred  = y_pred.cpu().numpy()
+            y       = y.numpy()
+                
+
+            test_logits = np.append(test_logits, logits, axis= 0)
+            test_pred   = np.append(test_pred, y_pred, axis = 0)
+            test_labels = np.append(test_labels, y, axis= 0)
+            
+        print(test_logits.shape)
+        print(test_pred.shape)
+        print(test_labels.shape)
+        
+        # to softmax/sigmoid probabilities
+        probs = self.sigmoid(test_logits)
+        
+        # get the max probability
+        maximum_prob = np.max(probs, axis=1)
+        print(probs)
+        print(maximum_prob)
+            
     
+        # save data (JSON)
+        path_model_folder       = os.path.join(self.path_models,  self.name + "_" + name_classifier)
+        name_model_file         = 'threshold.json'
+        path_model_save         = os.path.join(path_model_folder, name_model_file)  # path folder + name file
+    
+        if (not os.path.exists(path_model_folder)):
+            os.makedirs(path_model_folder)
+
+    
+      
     def test(self):
-        pass 
+        path_results_folder     = os.path.join(self.path_results, self.name)        
+        if (not os.path.exists(path_results_folder)):
+            os.makedirs(path_results_folder) 
+    
+    
     
     def forward(self, x):
-        
         # handle single image, increasing dimensions for batch
         if len(x.shape) == 3:
             x = T.expand(1,-1,-1,-1)
@@ -280,6 +383,14 @@ if __name__ == "__main__":
     bin_classifier.load("resnet50_ImageNet_13-10-2023", 20)
     # bin_classifier.test()
     # bin_classifier.getLayers(show = True)
+    
+    cifar_data_train = getCIFAR100_dataset(train = True)
+    cifar_data_test  = getCIFAR100_dataset(train = False)
+    ood_detector = OOD_Baseline(classifier=bin_classifier, ood_data_train=cifar_data_train, ood_data_test= cifar_data_test, useGPU= True)
+    ood_detector.compute_thr(name_classifier="resnet50_ImageNet_13-10-2023")
+    
+    
+    
     
     
     

@@ -209,14 +209,13 @@ def getCIFAR100_dataset(train, width_img= 224, height_img = 224):
     return cifar100
 
 
-
-
 class OOD_dataset(Dataset):
     def __init__(self, id_data, ood_data, balancing_mode:str = None, exact_samples:int = None):  # balancing_mode = "max","exact" or None
         super(OOD_dataset, self).__init__()
         
         assert isinstance(id_data, Dataset)
         assert isinstance(ood_data, Dataset)
+        
         self.id_data        = id_data
         self.ood_data       = ood_data
         self.balancing_mode  = balancing_mode
@@ -281,6 +280,7 @@ class OOD_dataset(Dataset):
         # label to encoding
         y_vector    = [0,0]             # zero vector
         y_vector[y] = 1                 # mark with one the correct position: [1,0] -> ID, [0,1]-> OOD
+        y_vector = T.tensor(y_vector) 
         
         return x, y_vector
         
@@ -334,13 +334,8 @@ if __name__ == "__main__":
         img = sample[0]
         showImage(img)
         print(sample[1])
-
-        
-        
-        
-        
-        
-test_ood()
+  
+    test_ood()
     
     
     
