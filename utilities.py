@@ -320,7 +320,7 @@ def metrics_binClass(preds, targets, pred_probs, epoch_model, path_save = None, 
     # plot and save (if path specified) confusion matrix
     plot_cm(cm = metrics_results['confusion_matrix'], labels = ["real", "fake"], title_plot = None, path_save = path_save)
 
-#TODO
+#TODO, proably is not necessary to reimplement nothing, jsut use the metric for the bin classification
 def metrics_OOD():
     pass
 

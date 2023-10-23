@@ -13,6 +13,8 @@ from    dataset             import CDDB_binary, getCIFAR100_dataset,OOD_dataset
 from    models              import ResNet_ImageNet, ResNet
 
 
+from    sklearn.metrics     import precision_recall_curve, auc, roc_auc_score
+
 
 """
                         Binary Deepfake classification models trained on CDDB dataset
@@ -261,7 +263,7 @@ class OOD_Baseline(object):
         """ constructor
 
         Args:
-            classifier (DFD_BinClassifier): classifier used for the main Deepfake detectio task
+            classifier (DFD_BinClassifier): classifier used for the main Deepfake detection task
             ood_data_train (torch.utils.data.Dataset): train set out of distribution
             ood_data_test (torch.utils.data.Dataset): test set out of distribution
             useGPU (bool, optional): flag to enable usage of GPU. Defaults to True.
@@ -292,8 +294,8 @@ class OOD_Baseline(object):
         
         # learning-testing parameters
         self.batch_size     = 32
-        # self.sigmoid        = F.sigmoid                 # binary case
-        # self.softmax        = F.softmax                 # multi-class case 
+    
+    #                                       math aux functions
     
     def sigmoid(self,x):
             return 1.0 / (1.0 + np.exp(-x))
@@ -302,65 +304,154 @@ class OOD_Baseline(object):
             e = np.exp(x)
             return  e/e.sum(axis=1, keepdims=True)
             # return  e/e.sum()
-     
-    def compute_thr(self, name_classifier):
+        
+    def entropy(self, distibution):
+        """
+            computes entropy from KL divergence formula, comparing the distribution with a uniform one    
+        """
+        return np.log(10.) + np.sum(distibution * np.log(np.abs(distibution) + 1e-11), axis=1, keepdims=True)
+    
+    #                                     analysis aux functions
+    def compute_aupr(self, id_labels, ood_labels, prob):
+        p_id, r_id, _ = precision_recall_curve(id_labels, prob)
+        aupr_id     = auc(r_id,p_id)
+        p_ood, r_ood, _ = precision_recall_curve(ood_labels, prob)
+        aupr_ood    =  auc(r_ood, p_ood)
+        
+        return aupr_id, aupr_ood
+    
+    def compute_auroc(self, id_labels, ood_labels, prob):
+        auroc_id    = roc_auc_score(id_labels, prob)
+        auroc_ood   = roc_auc_score(ood_labels, prob)
+        
+        auroc_id, auroc_ood
+        
+    
+    def compute_statsProb(self, probability, verbose = False):  # probability is the output from softmax-sigmoid function using the logits
+        # get the max probability
+        maximum_prob    = np.max(probability, axis=1)
+        entropy         = self.entropy(probability)
+        mean_e          = np.mean(entropy)
+        var_e           = np.var(entropy)
+        
+        if verbose:
+            print("KL divergence        (mean,std) -> ", mean_e, var_e)
+        
+        return maximum_prob, entropy, mean_e, var_e
+        
+    
+    # include noise
+    def add_noise(self, batch_input, complexity=0.5):
+        return batch_input + np.random.normal(size=batch_input.shape, scale=1e-9 + complexity)
+
+    def add_distortion_noise(self, batch_input):
+        distortion = np.random.uniform(low=0.9, high=1.2)
+        return batch_input + np.random.normal(size=batch_input.shape, scale=1e-9 + distortion)
+
+    
+    # analysis and testing functions
+    def analyze(self, name_classifier):
         # define the dataloader 
-        # dataloader =  DataLoader(self.dataset_train, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
-        dataloader = DataLoader(self.id_data_test, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
+        # cddbTest_dataloader = DataLoader(self.id_data_test,  batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
+        # ood_dataloader      = DataLoader(self.ood_data_test, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
+        id_ood_dataloader   = DataLoader(self.dataset_test,  batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
         
         # use model on selected device
         self.classifier.model.to(self.device)
         
         # define empty lsit to store outcomes
         test_logits = np.empty((0,2), dtype= np.float32)
-        test_pred   = np.empty((0),   dtype= np.int32)
         test_labels = np.empty((0,2), dtype= np.int32)
         
-        for idx, (x,y) in tqdm(enumerate(dataloader), total= len(dataloader)):
+        for idx, (x,y) in tqdm(enumerate(id_ood_dataloader), total= len(id_ood_dataloader)):
             
             # to test
-            if idx >= 5: break
+            if idx >= 10: break
             
             x = x.to(self.device)
             with T.no_grad():
                 with autocast():
-                    y_pred ,_, logits =self.classifier.forward(x)
+                    _ ,_, logits =self.classifier.forward(x)
                     
             # to numpy array
             logits  = logits.cpu().numpy()
-            y_pred  = y_pred.cpu().numpy()
             y       = y.numpy()
                 
-
             test_logits = np.append(test_logits, logits, axis= 0)
-            test_pred   = np.append(test_pred, y_pred, axis = 0)
             test_labels = np.append(test_labels, y, axis= 0)
             
         print(test_logits.shape)
-        print(test_pred.shape)
         print(test_labels.shape)
         
         # to softmax/sigmoid probabilities
         probs = self.sigmoid(test_logits)
         
-        # get the max probability
-        maximum_prob = np.max(probs, axis=1)
-        print(probs)
-        print(maximum_prob)
+        print(probs.shape)
+        
+        # id/ood labels and probabilities
+        id_labels  =  test_labels[:,0]
+        ood_labels =  test_labels[:,1]
+        prob_id     = probs[id_labels == 1]
+        prob_ood    = probs[ood_labels == 1]
             
+        maximum_prob_id,  entropy_id,  mean_e_id,  var_e_id  = self.compute_statsProb(prob_id, verbose = True)
+        maximum_prob_ood, entropy_ood, mean_e_ood, var_e_ood = self.compute_statsProb(prob_ood,verbose = True)
+        
+        print("In-Distribution      (mean,std) -> ", np.mean(maximum_prob_id), np.std(maximum_prob_id))
+        print("Out-Of-Distribution  (mean,std) -> ", np.mean(maximum_prob_ood), np.std(maximum_prob_ood))
+        
+        # normality detection
+        print("Normality detection:")
+        norm_base_rate = round(100*(prob_id.shape[0]/(prob_id.shape[0] + prob_ood.shape[0])),2)
+        print("     base rate(%): {}".format(norm_base_rate))
+        print("     KL divergence (entropy)")
+        #TODO
+        
+        
+        # abnormality detection
+        print("Abnormality detection:")
+        abnorm_base_rate = round(100*(prob_ood.shape[0]/(prob_id.shape[0] + prob_ood.shape[0])),2)
+        print("     base rate(%): {}".format(abnorm_base_rate))
+        
+        
+        # AUROC and AUPR computation
+        # auroc_id, auroc_ood, aupr_id, aupr_ood  = self.compute_aupr_auroc(id_labels, ood_labels, maximum_prob)
+        
+        # print(f"ID data -> auroc: {auroc_id}, aupr {aupr_id}")
+        # print(f"OOD data -> auroc: {auroc_ood}, aupr {aupr_ood}")
+        
+        # compute avg max prob
+        # avg_prob_in  = np.mean(maximum_prob_id)
+        # avg_prob_ood =  np.mean(maximum_prob_ood)
+        
+        # print(avg_prob_in)
+        # print(avg_prob_ood)
     
+    
+        # store statistics in a dictionary
+        # data = {
+        #     "AUROC_ID"          : auroc_id,
+        #     "AUROD_OOD"         : auroc_ood,
+        #     "AUPR_ID"           : aupr_id,
+        #     "AUPR_OOD"          : aupr_ood,
+        #     "avg_prob_ID"       : avg_prob_in,
+        #     "avg_prov_OOD"      : avg_prob_ood  
+        # }
+        
+        
         # save data (JSON)
         path_model_folder       = os.path.join(self.path_models,  self.name + "_" + name_classifier)
         name_model_file         = 'threshold.json'
         path_model_save         = os.path.join(path_model_folder, name_model_file)  # path folder + name file
-    
+
+
         if (not os.path.exists(path_model_folder)):
             os.makedirs(path_model_folder)
 
     
       
-    def test(self):
-        path_results_folder     = os.path.join(self.path_results, self.name)        
+    def test(self, name_classifier, name_odd_data):
+        path_results_folder     = os.path.join(self.path_results, name_classifier + "_" + name_odd_data)        
         if (not os.path.exists(path_results_folder)):
             os.makedirs(path_results_folder) 
     
@@ -370,7 +461,9 @@ class OOD_Baseline(object):
         # handle single image, increasing dimensions for batch
         if len(x.shape) == 3:
             x = T.expand(1,-1,-1,-1)
-        
+    
+    
+
         
 # [test section] 
 if __name__ == "__main__":
@@ -387,7 +480,7 @@ if __name__ == "__main__":
     cifar_data_train = getCIFAR100_dataset(train = True)
     cifar_data_test  = getCIFAR100_dataset(train = False)
     ood_detector = OOD_Baseline(classifier=bin_classifier, ood_data_train=cifar_data_train, ood_data_test= cifar_data_test, useGPU= True)
-    ood_detector.compute_thr(name_classifier="resnet50_ImageNet_13-10-2023")
+    ood_detector.analyze(name_classifier="resnet50_ImageNet_13-10-2023")
     
     
     
