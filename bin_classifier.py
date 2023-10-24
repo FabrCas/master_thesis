@@ -17,7 +17,7 @@ from    sklearn.metrics     import precision_recall_curve, auc, roc_auc_score
 
 
 """
-                        Binary Deepfake classification models trained on CDDB dataset
+                        Binary Deepfake classifiers trained on CDDB dataset with different presets
 """
 
 
@@ -38,8 +38,8 @@ class DFD_BinClassifier(object):
         
         
         # path 2 save
-        self.path_models    = "./models/bin"
-        self.path_results   = "./results/bin"
+        self.path_models    = "./models/bin_class"
+        self.path_results   = "./results/bin_class"
 
         
         # load dataset & dataloader
@@ -259,18 +259,22 @@ class OOD_Baseline(object):
     """
         Detector for OOD data
     """
-    def __init__(self, classifier, ood_data_train, ood_data_test, useGPU = True):
-        """ constructor
+    def __init__(self, classifier,  ood_data_test, ood_data_train, useGPU = True):
+        """
+        Class-Constructor
 
         Args:
             classifier (DFD_BinClassifier): classifier used for the main Deepfake detection task
-            ood_data_train (torch.utils.data.Dataset): train set out of distribution
             ood_data_test (torch.utils.data.Dataset): test set out of distribution
+            ood_data_train (torch.utils.data.Dataset): train set out of distribution
             useGPU (bool, optional): flag to enable usage of GPU. Defaults to True.
         """
         
         # classfier used
         self.classifier  = classifier
+        
+        # classifier types
+        self.types_classifier = ["bin_class", "multi_class", "multi_label_class"]
         
         # train
         # self.id_data_train  = CDDB_binary(train = True)
@@ -294,6 +298,7 @@ class OOD_Baseline(object):
         
         # learning-testing parameters
         self.batch_size     = 32
+        
     
     #                                       math aux functions
     
@@ -312,24 +317,43 @@ class OOD_Baseline(object):
         return np.log(10.) + np.sum(distibution * np.log(np.abs(distibution) + 1e-11), axis=1, keepdims=True)
     
     #                                     analysis aux functions
-    def compute_aupr(self, id_labels, ood_labels, prob):
-        p_id, r_id, _ = precision_recall_curve(id_labels, prob)
-        aupr_id     = auc(r_id,p_id)
-        p_ood, r_ood, _ = precision_recall_curve(ood_labels, prob)
-        aupr_ood    =  auc(r_ood, p_ood)
+    def compute_aupr(self, labels, pred):
+        # p_id, r_id, _ = precision_recall_curve(id_labels, prob)
+        # aupr_id     = auc(r_id,p_id)
+        # p_ood, r_ood, _ = precision_recall_curve(ood_labels, prob)
+        # aupr_ood    =  auc(r_ood, p_ood)
         
-        return aupr_id, aupr_ood
+        p, r, _ = precision_recall_curve(labels, pred)
+        return  auc(r, p)
     
-    def compute_auroc(self, id_labels, ood_labels, prob):
-        auroc_id    = roc_auc_score(id_labels, prob)
-        auroc_ood   = roc_auc_score(ood_labels, prob)
+    def compute_auroc(self, labels, pred):
+        # auroc_id    = roc_auc_score(id_labels, prob)
+        # auroc_ood   = roc_auc_score(ood_labels, prob)
         
-        auroc_id, auroc_ood
+        return roc_auc_score(labels, pred)
         
-    
+    def compute_curves(self, id_data, ood_data, positive_reversed = False):
+        # create the array with the labels initally full of zeros
+        target = np.zeros((id_data.shape[0] + ood_data.shape[0]), dtype= np.int32)
+        print(target.shape)
+        if positive_reversed:
+            target[id_data.shape[0]:] = 1
+        else:
+            target[:id_data.shape[0]] = 1
+        
+        predictions = np.squeeze(np.vstack((id_data, ood_data)))
+        print(predictions.shape)
+        aupr    = round(self.compute_aupr(target, predictions)*100, 2)
+        auroc   = round(self.compute_auroc(target, predictions)*100, 2)
+        print("\tAUROC(%)-> {}".format(auroc))
+        print("\tAUPR (%)-> {}".format(aupr))
+        return aupr, auroc
+        
+            
+        
     def compute_statsProb(self, probability, verbose = False):  # probability is the output from softmax-sigmoid function using the logits
         # get the max probability
-        maximum_prob    = np.max(probability, axis=1)
+        maximum_prob    = np.max(probability, axis=1, keepdims= True)
         entropy         = self.entropy(probability)
         mean_e          = np.mean(entropy)
         var_e           = np.var(entropy)
@@ -340,7 +364,7 @@ class OOD_Baseline(object):
         return maximum_prob, entropy, mean_e, var_e
         
     
-    # include noise
+    #                                     data augmentation    
     def add_noise(self, batch_input, complexity=0.5):
         return batch_input + np.random.normal(size=batch_input.shape, scale=1e-9 + complexity)
 
@@ -348,10 +372,18 @@ class OOD_Baseline(object):
         distortion = np.random.uniform(low=0.9, high=1.2)
         return batch_input + np.random.normal(size=batch_input.shape, scale=1e-9 + distortion)
 
-    
-    # analysis and testing functions
-    def analyze(self, name_classifier):
+    #                                     analysis and testing functions
+    def analyze(self, name_classifier, task_type_prog):
+        """ analyze function
+
+        Args:
+            name_classifier (nn.Module): _description_
+            task_type (int): 0 for binary classification, 1 for multi-class classificaiton, 2 multi-label classification
+        
+        """
+        
         # define the dataloader 
+        
         # cddbTest_dataloader = DataLoader(self.id_data_test,  batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
         # ood_dataloader      = DataLoader(self.ood_data_test, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
         id_ood_dataloader   = DataLoader(self.dataset_test,  batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
@@ -403,22 +435,22 @@ class OOD_Baseline(object):
         # normality detection
         print("Normality detection:")
         norm_base_rate = round(100*(prob_id.shape[0]/(prob_id.shape[0] + prob_ood.shape[0])),2)
-        print("     base rate(%): {}".format(norm_base_rate))
-        print("     KL divergence (entropy)")
-        #TODO
+        print("\tbase rate(%): {}".format(norm_base_rate))
+        print("\tKL divergence (entropy)")
+        kl_norm_aupr, kl_norm_auroc = self.compute_curves(entropy_id, entropy_ood)
+        print("\tPrediction probability")
+        p_norm_aupr, p_norm_auroc = self.compute_curves(maximum_prob_id, maximum_prob_ood)
         
         
         # abnormality detection
         print("Abnormality detection:")
         abnorm_base_rate = round(100*(prob_ood.shape[0]/(prob_id.shape[0] + prob_ood.shape[0])),2)
-        print("     base rate(%): {}".format(abnorm_base_rate))
+        print("\tbase rate(%): {}".format(abnorm_base_rate))
+        print("\tKL divergence (entropy)")
+        kl_abnorm_aupr, kl_abnorm_auroc = self.compute_curves(-entropy_id, -entropy_ood, positive_reversed= True)
+        print("\tPrediction probability")
+        p_abnorm_aupr, p_abnorm_auroc = self.compute_curves(-maximum_prob_id, -maximum_prob_ood, positive_reversed= True)
         
-        
-        # AUROC and AUPR computation
-        # auroc_id, auroc_ood, aupr_id, aupr_ood  = self.compute_aupr_auroc(id_labels, ood_labels, maximum_prob)
-        
-        # print(f"ID data -> auroc: {auroc_id}, aupr {aupr_id}")
-        # print(f"OOD data -> auroc: {auroc_ood}, aupr {aupr_ood}")
         
         # compute avg max prob
         # avg_prob_in  = np.mean(maximum_prob_id)
@@ -429,29 +461,58 @@ class OOD_Baseline(object):
     
     
         # store statistics in a dictionary
-        # data = {
-        #     "AUROC_ID"          : auroc_id,
-        #     "AUROD_OOD"         : auroc_ood,
-        #     "AUPR_ID"           : aupr_id,
-        #     "AUPR_OOD"          : aupr_ood,
-        #     "avg_prob_ID"       : avg_prob_in,
-        #     "avg_prov_OOD"      : avg_prob_ood  
-        # }
+        data = {
+            "normality": {
+                "KL_AUPR":      kl_norm_aupr,
+                "KL_AUROC":     kl_norm_auroc,
+                "Prob_AUPR":    p_norm_aupr,   
+                "Prob_AUROC":   p_norm_auroc
+            },
+            "abnormality":{
+                "KL_AUPR":      kl_abnorm_aupr,
+                "KL_AUROC":     kl_abnorm_auroc,
+                "Prob_AUPR":    p_abnorm_aupr,   
+                "Prob_AUROC":   p_abnorm_auroc
+            }
+            
+        }
         
         
         # save data (JSON)
-        path_model_folder       = os.path.join(self.path_models,  self.name + "_" + name_classifier)
-        name_model_file         = 'threshold.json'
+        name_task               = self.types_classifier[task_type_prog]
+        path_ood_classifier     = os.path.join(self.path_models, name_task)
+        path_ood_baseline       = os.path.join(path_ood_classifier, self.name)
+        path_model_folder       = os.path.join(path_ood_baseline, name_classifier)
+        name_model_file         = 'stats.json'
         path_model_save         = os.path.join(path_model_folder, name_model_file)  # path folder + name file
 
-
+        # prepare file-system
+        if (not os.path.exists(path_ood_classifier)):
+            os.makedirs(path_ood_classifier)
+        if (not os.path.exists(path_ood_baseline)):
+            os.makedirs(path_ood_baseline)
         if (not os.path.exists(path_model_folder)):
             os.makedirs(path_model_folder)
+        
+        saveJson(path = path_model_save, data=data)
 
     
       
-    def test(self, name_classifier, name_odd_data):
-        path_results_folder     = os.path.join(self.path_results, name_classifier + "_" + name_odd_data)        
+    def test(self, name_classifier, task_type_prog, name_odd_data = None):
+        
+        name_task = self.types_classifier[task_type_prog]
+        path_results_ood_classifier = os.path.join(self.path_results, name_task)
+        path_results_baseline       = os.path.join(path_results_ood_classifier, self.name)
+        if name_odd_data is not None:
+            path_results_folder         = os.path.join(path_results_baseline, name_classifier + "_" + name_odd_data)        
+        else:
+            path_results_folder         = os.path.join(path_results_baseline, name_classifier)    
+        
+        # prepare file-system
+        if (not os.path.exists(path_results_ood_classifier)):
+            os.makedirs(path_results_ood_classifier) 
+        if (not os.path.exists(path_results_baseline)):
+            os.makedirs(path_results_baseline) 
         if (not os.path.exists(path_results_folder)):
             os.makedirs(path_results_folder) 
     
@@ -479,8 +540,9 @@ if __name__ == "__main__":
     
     cifar_data_train = getCIFAR100_dataset(train = True)
     cifar_data_test  = getCIFAR100_dataset(train = False)
+    
     ood_detector = OOD_Baseline(classifier=bin_classifier, ood_data_train=cifar_data_train, ood_data_test= cifar_data_test, useGPU= True)
-    ood_detector.analyze(name_classifier="resnet50_ImageNet_13-10-2023")
+    ood_detector.analyze(name_classifier="resnet50_ImageNet_13-10-2023", task_type_prog= 0)
     
     
     
