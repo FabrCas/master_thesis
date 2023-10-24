@@ -284,7 +284,7 @@ class OOD_Baseline(object):
         # test sets
         self.id_data_test  = CDDB_binary(train = False)
         self.ood_data_test = ood_data_test
-        self.dataset_test  = OOD_dataset(self.id_data_test, self.ood_data_test, balancing_mode = None)
+        self.dataset_test  = OOD_dataset(self.id_data_test, self.ood_data_test, balancing_mode = "max")
         
         # paths and name
         self.path_models    = "./models/ood_detection"
@@ -299,9 +299,7 @@ class OOD_Baseline(object):
         # learning-testing parameters
         self.batch_size     = 32
         
-    
     #                                       math aux functions
-    
     def sigmoid(self,x):
             return 1.0 / (1.0 + np.exp(-x))
         
@@ -329,56 +327,55 @@ class OOD_Baseline(object):
     def compute_auroc(self, labels, pred):
         # auroc_id    = roc_auc_score(id_labels, prob)
         # auroc_ood   = roc_auc_score(ood_labels, prob)
-        
         return roc_auc_score(labels, pred)
         
     def compute_curves(self, id_data, ood_data, positive_reversed = False):
         # create the array with the labels initally full of zeros
         target = np.zeros((id_data.shape[0] + ood_data.shape[0]), dtype= np.int32)
-        print(target.shape)
+        # print(target.shape)
         if positive_reversed:
             target[id_data.shape[0]:] = 1
         else:
             target[:id_data.shape[0]] = 1
         
         predictions = np.squeeze(np.vstack((id_data, ood_data)))
-        print(predictions.shape)
+        
         aupr    = round(self.compute_aupr(target, predictions)*100, 2)
         auroc   = round(self.compute_auroc(target, predictions)*100, 2)
         print("\tAUROC(%)-> {}".format(auroc))
         print("\tAUPR (%)-> {}".format(aupr))
         return aupr, auroc
         
-            
-        
-    def compute_statsProb(self, probability, verbose = False):  # probability is the output from softmax-sigmoid function using the logits
+    def compute_statsProb(self, probability):
+        """ get statistics from probability
+
+        Args:
+            probability (_type_):is the output from softmax-sigmoid function using the logits
+
+        Returns:
+            maximum_prob (np.array): max probability for each prediction (keepsdim = True)
+            entropy (np.array): entropy from KL divergence with uniform distribution and data distribution
+            mean_e (np.array): entropy's mean
+            std_e (np.array): standard deviation entropy
+        """
         # get the max probability
         maximum_prob    = np.max(probability, axis=1, keepdims= True)
         entropy         = self.entropy(probability)
         mean_e          = np.mean(entropy)
-        var_e           = np.var(entropy)
+        std_e           = np.std(entropy)
         
-        if verbose:
-            print("KL divergence        (mean,std) -> ", mean_e, var_e)
-        
-        return maximum_prob, entropy, mean_e, var_e
-        
+        return maximum_prob, entropy, mean_e, std_e
     
-    #                                     data augmentation    
-    def add_noise(self, batch_input, complexity=0.5):
-        return batch_input + np.random.normal(size=batch_input.shape, scale=1e-9 + complexity)
-
-    def add_distortion_noise(self, batch_input):
-        distortion = np.random.uniform(low=0.9, high=1.2)
-        return batch_input + np.random.normal(size=batch_input.shape, scale=1e-9 + distortion)
-
+    def compute_confidence(self):     # should be not translated as direct measure of confidence
+        TODO
+    
     #                                     analysis and testing functions
     def analyze(self, name_classifier, task_type_prog):
         """ analyze function
 
         Args:
             name_classifier (nn.Module): _description_
-            task_type (int): 0 for binary classification, 1 for multi-class classificaiton, 2 multi-label classification
+            task_type (int): 3 possible values: 0 for binary classification, 1 for multi-class classificaiton, 2 multi-label classification
         
         """
         
@@ -412,13 +409,11 @@ class OOD_Baseline(object):
             test_logits = np.append(test_logits, logits, axis= 0)
             test_labels = np.append(test_labels, y, axis= 0)
             
-        print(test_logits.shape)
-        print(test_labels.shape)
+        # print(test_logits.shape)
+        # print(test_labels.shape)
         
         # to softmax/sigmoid probabilities
         probs = self.sigmoid(test_logits)
-        
-        print(probs.shape)
         
         # id/ood labels and probabilities
         id_labels  =  test_labels[:,0]
@@ -426,11 +421,19 @@ class OOD_Baseline(object):
         prob_id     = probs[id_labels == 1]
         prob_ood    = probs[ood_labels == 1]
             
-        maximum_prob_id,  entropy_id,  mean_e_id,  var_e_id  = self.compute_statsProb(prob_id, verbose = True)
-        maximum_prob_ood, entropy_ood, mean_e_ood, var_e_ood = self.compute_statsProb(prob_ood,verbose = True)
+        maximum_prob_id,  entropy_id,  mean_e_id,  std_e_id  = self.compute_statsProb(prob_id)
+        maximum_prob_ood, entropy_ood, mean_e_ood, std_e_ood = self.compute_statsProb(prob_ood)
         
-        print("In-Distribution      (mean,std) -> ", np.mean(maximum_prob_id), np.std(maximum_prob_id))
-        print("Out-Of-Distribution  (mean,std) -> ", np.mean(maximum_prob_ood), np.std(maximum_prob_ood))
+        max_prob_id_mean = np.mean(maximum_prob_id); max_prob_id_std = np.std(maximum_prob_id)
+        max_prob_ood_mean = np.mean(maximum_prob_ood); max_prob_ood_std = np.std(maximum_prob_ood)
+        
+        
+        # in-out of distribution moments
+        print("In-Distribution max prob         (mean,std) -> ", max_prob_id_mean, max_prob_id_std)
+        print("Out-Of-Distribution max prob     (mean,std) -> ", max_prob_ood_mean, max_prob_ood_std)
+        
+        print("In-Distribution entropy          (mean,std) -> ", mean_e_id, std_e_id)
+        print("Out-Of-Distribution entropy      (mean,std) -> ", mean_e_ood, std_e_ood)
         
         # normality detection
         print("Normality detection:")
@@ -459,24 +462,47 @@ class OOD_Baseline(object):
         # print(avg_prob_in)
         # print(avg_prob_ood)
     
-    
+        print("In-Distribution max prob         (mean,std) -> ", max_prob_id_mean, max_prob_id_std)
+        print("Out-Of-Distribution max prob     (mean,std) -> ", max_prob_ood_mean, max_prob_ood_std)
+        
+        print("In-Distribution entropy          (mean,std) -> ", mean_e_id, std_e_id)
+        print("Out-Of-Distribution entropy      (mean,std) -> ", mean_e_ood, std_e_ood)
+        
         # store statistics in a dictionary
         data = {
+            "ID_max_prob": {
+                "mean":  float(max_prob_id_mean), 
+                "var":   float(max_prob_id_std)
+            },
+            "OOD_max_prob": {
+                "mean": float(max_prob_ood_mean), 
+                "var":  float(max_prob_ood_std) 
+            },
+            "ID_entropy":   {
+                "mean": float(mean_e_id), 
+                "var":  float(std_e_id)
+            },
+            "OOD_entropy":  {
+                "mean": float(mean_e_ood), 
+                "var":  float(std_e_ood)
+            },
+            
             "normality": {
-                "KL_AUPR":      kl_norm_aupr,
-                "KL_AUROC":     kl_norm_auroc,
-                "Prob_AUPR":    p_norm_aupr,   
-                "Prob_AUROC":   p_norm_auroc
+                "base_rate":    float(norm_base_rate),
+                "KL_AUPR":      float(kl_norm_aupr),
+                "KL_AUROC":     float(kl_norm_auroc),
+                "Prob_AUPR":    float(p_norm_aupr),   
+                "Prob_AUROC":   float(p_norm_auroc)
             },
             "abnormality":{
-                "KL_AUPR":      kl_abnorm_aupr,
-                "KL_AUROC":     kl_abnorm_auroc,
-                "Prob_AUPR":    p_abnorm_aupr,   
-                "Prob_AUROC":   p_abnorm_auroc
+                "base_rate":    float(abnorm_base_rate),
+                "KL_AUPR":      float(kl_abnorm_aupr),
+                "KL_AUROC":     float(kl_abnorm_auroc),
+                "Prob_AUPR":    float(p_abnorm_aupr),   
+                "Prob_AUROC":   float(p_abnorm_auroc)
             }
             
         }
-        
         
         # save data (JSON)
         name_task               = self.types_classifier[task_type_prog]
@@ -495,9 +521,7 @@ class OOD_Baseline(object):
             os.makedirs(path_model_folder)
         
         saveJson(path = path_model_save, data=data)
-
     
-      
     def test(self, name_classifier, task_type_prog, name_odd_data = None):
         
         name_task = self.types_classifier[task_type_prog]
@@ -516,14 +540,18 @@ class OOD_Baseline(object):
         if (not os.path.exists(path_results_folder)):
             os.makedirs(path_results_folder) 
     
-    
-    
     def forward(self, x):
         # handle single image, increasing dimensions for batch
         if len(x.shape) == 3:
             x = T.expand(1,-1,-1,-1)
     
-    
+    #                                     data augmentation    
+    def add_noise(self, batch_input, complexity=0.5):
+        return batch_input + np.random.normal(size=batch_input.shape, scale=1e-9 + complexity)
+
+    def add_distortion_noise(self, batch_input):
+        distortion = np.random.uniform(low=0.9, high=1.2)
+        return batch_input + np.random.normal(size=batch_input.shape, scale=1e-9 + distortion)
 
         
 # [test section] 

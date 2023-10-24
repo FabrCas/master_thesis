@@ -1,4 +1,5 @@
 import time
+import subprocess
 import os
 import argparse
 import torch as T
@@ -42,17 +43,29 @@ def check_arguments(args):
 
 
 def create_folders(args):
-	folders = os.listdir("./")
+    folders = os.listdir("./")
+
+    if not('data' in folders) and args.mode in ["test","train"]:
+        os.makedirs("./data")
+        print("please include the datasets in the data folder")
+
+    if not("models" in folders):
+        os.makedirs("./models")
+        print("required training mode launch to build the model")
+
+    if not("results" in folders) and args.mode in ["test","train"]:
+        os.makedirs("./results")
+
+    if not(os.path.exists("./setup")):
+        os.makedirs("./setup")
 	
-	if not('data' in folders) and args.mode in ["test","train"]:
-		os.makedirs("./data")
-		print("please include the datasets in the data folder")
-	if not("models" in folders):
-		os.makedirs("./models")
-		print("required training mode launch to build the model")
-	if not("results" in folders) and args.mode in ["test","train"]:
-		os.makedirs("./results")
-		
+def redirect_requirements(name_file = "requirements.txt"):
+    # create file
+    subprocess.run(["touch", os.path.join("./setup", name_file)])
+    # redirect list of dependencies output
+    subprocess.run(["pip freeze > {}".format(os.path.join("./setup", name_file))], shell= True)
+
+    return 
 		
 def main():
 	# parse main arguments
@@ -65,9 +78,10 @@ def main():
 
 
 if __name__ == "__main__":
-	print("started execution {}".format(os.getcwd()+ "/main.py"))
-	t_start = time.time()
-	main()
-	exe_time = time.time() - t_start
-	print("Execution time: {} [s]".format(round(exe_time,5)))
+    print("started execution {}".format(os.getcwd()+ "/main.py"))
+    t_start = time.time()
+    main()
+    redirect_requirements()
+    exe_time = time.time() - t_start
+    print("Execution time: {} [s]".format(round(exe_time,5)))
 
