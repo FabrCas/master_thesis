@@ -315,18 +315,71 @@ def metrics_binClass(preds, targets, pred_probs, epoch_model, path_save = None, 
     if path_save is not None:
         metrics_results_ = metrics_results.copy()
         metrics_results_['confusion_matrix'] = metrics_results_['confusion_matrix'].tolist()
-        saveJson(os.path.join(path_save, 'testingMetrics_' + epoch_model + '.json'), metrics_results_)
+        saveJson(os.path.join(path_save, 'binaryMetrics_' + epoch_model + '.json'), metrics_results_)
     
     # plot and save (if path specified) confusion matrix
     plot_cm(cm = metrics_results['confusion_matrix'], labels = ["real", "fake"], title_plot = None, path_save = path_save)
 
-#TODO, proably is not necessary to reimplement nothing, jsut use the metric for the bin classification
-def metrics_OOD():
-    pass
+
+def metrics_OOD(targets, pred_probs, path_save):
+    
+    fpr, tpr, _ = roc_curve(targets, pred_probs, pos_label=1,  drop_intermediate= False)
+    auroc = auc(fpr, tpr)
+    
+    fpr95 = fpr_at_95_tpr(pred_probs, targets)
+    
+    det_err = detection_error(pred_probs, targets)
+    
+    metric_results = {
+        "auroc":            auroc,
+        "fpr95":            fpr95,
+        "detection_error":  det_err
+        
+    }
+    
+    # save the results (JSON file) if a path has been provided
+    if path_save is not None:
+        saveJson(os.path.join(path_save, 'metricsOOD.json'), metric_results)
 
 #TODO
 def metrics_multiClass():
     pass
+
+def fpr_at_95_tpr(preds, labels):
+    '''
+    Returns the false positive rate when the true positive rate is at minimum 95%.
+    '''
+    fpr, tpr, _ = roc_curve(labels, preds)
+    if all(tpr < 0.95):
+        # No threshold allows TPR >= 0.95
+        return 0
+    elif all(tpr >= 0.95):
+        # All thresholds allow TPR >= 0.95, so find lowest possible FPR
+        idxs = [i for i, x in enumerate(tpr) if x >= 0.95]
+        return min(map(lambda idx: fpr[idx], idxs))
+    else:
+        # Linear interp between values to get FPR at TPR == 0.95
+        return np.interp(0.95, tpr, fpr)
+
+
+def detection_error(preds, labels):
+    '''
+    Return the misclassification probability when TPR is 95%.
+    '''
+    fpr, tpr, _ = roc_curve(labels, preds)
+
+    # Get ratio of true positives to false positives
+    f2t_ratio = sum(np.array(labels) == 1) / len(labels)
+    t2f_ratio = 1 - f2t_ratio
+
+    # Get indexes of all TPR >= 95%
+    idxs = [i for i, x in enumerate(tpr) if x >= 0.95]
+
+    # Calc error for a given threshold (i.e. idx)
+    _detection_error = lambda idx: t2f_ratio * (1 - tpr[idx]) + f2t_ratio * fpr[idx]
+
+    # Return the minimum detection error such that TPR >= 0.95
+    return min(map(_detection_error, idxs))
 
 # test functions
 
