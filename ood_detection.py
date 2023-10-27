@@ -9,7 +9,7 @@ from    tqdm                import tqdm
 from    dataset             import CDDB_binary, getCIFAR100_dataset,OOD_dataset
 from    sklearn.metrics     import precision_recall_curve, auc, roc_auc_score
 from    bin_classifier      import DFD_BinClassifier
-from    utilities           import saveJson, loadJson
+from    utilities           import saveJson, loadJson, metrics_binClass, metrics_OOD
 
 
 types_classifier = ["bin_class", "multi_class", "multi_label_class"]
@@ -95,9 +95,9 @@ class OOD_Baseline(object):
         target = np.zeros((id_data.shape[0] + ood_data.shape[0]), dtype= np.int32)
         # print(target.shape)
         if positive_reversed:
-            target[id_data.shape[0]:] = 1
+            target[id_data.shape[0]:] += 1
         else:
-            target[:id_data.shape[0]] = 1
+            target[:id_data.shape[0]] += 1
         
         predictions = np.squeeze(np.vstack((id_data, ood_data)))
         
@@ -105,8 +105,21 @@ class OOD_Baseline(object):
         auroc   = round(self.compute_auroc(target, predictions)*100, 2)
         print("\tAUROC(%)-> {}".format(auroc))
         print("\tAUPR (%)-> {}".format(aupr))
-        return aupr, auroc
         
+        return aupr, auroc
+    
+
+    def compute_metrics_ood(self, id_data, ood_data):
+        """_
+            function used to compute fpr95, detection error and relative threshold
+        """
+        target = np.zeros((id_data.shape[0] + ood_data.shape[0]), dtype= np.int32)
+        target[id_data.shape[0]:] += 1
+        predictions = np.squeeze(np.vstack((id_data, ood_data)))
+        metrics_ood = metrics_OOD(targets=target, pred_probs= predictions)
+        return metrics_ood 
+        
+    
     def compute_statsProb(self, probability):
         """ get statistics from probability
 
@@ -127,37 +140,38 @@ class OOD_Baseline(object):
         
         return maximum_prob, entropy, mean_e, std_e
     
-    def compute_confidence(self, probabilties):     # should be not translated as direct measure of confidence
+    def compute_confidences(self, probabilities):     # should be not translated as direct measure of confidence
         """ computation of the baseline performance: maximm softmax performance (MSP)
 
         Args:
             probabilties (np.array): probabilities from logits
 
         Returns:
-            int: confidence
+            confidences (np.array): list of confidences for each prediction
         """
+        # print(probabilties.shape)
+        pred_value      = np.max(probabilities, -1)
+        # print(pred_value.shape)
+        confidences     = np.reshape(pred_value, (len(pred_value), 1))
+        # print(confidence.shape)
         
-        pred_value, _   = T.max(probabilties.data, 1)
-        confidence      = pred_value.cpu().numpy()
-        confidence      = np.reshape(confidence, (len(confidence), 1))
-        
-        return confidence
-        
+        return confidences
+    
+    def compute_avgConfidence(self, probabilities):
+        pred_value      = np.max(probabilities, -1)
+        return np.average(pred_value)
     
     #                                     analysis and testing functions
-    def analyze(self, name_classifier, task_type_prog):
-        """ analyze function
+    def analyze(self, name_classifier, task_type_prog, name_ood_data = None):
+        """ analyze function, computing OOD metrics that are not threshold related
 
         Args:
-            name_classifier (nn.Module): _description_
+            name_classifier (str): deepfake detection model used (name from models folder)
             task_type (int): 3 possible values: 0 for binary classification, 1 for multi-class classificaiton, 2 multi-label classification
         
         """
         
         # define the dataloader 
-        
-        # cddbTest_dataloader = DataLoader(self.id_data_test,  batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
-        # ood_dataloader      = DataLoader(self.ood_data_test, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
         id_ood_dataloader   = DataLoader(self.dataset_test,  batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
         
         # use model on selected device
@@ -170,7 +184,7 @@ class OOD_Baseline(object):
         for idx, (x,y) in tqdm(enumerate(id_ood_dataloader), total= len(id_ood_dataloader)):
             
             # to test
-            if idx >= 10: break
+            # if idx >= 10: break
             
             x = x.to(self.device)
             with T.no_grad():
@@ -184,18 +198,20 @@ class OOD_Baseline(object):
             test_logits = np.append(test_logits, logits, axis= 0)
             test_labels = np.append(test_labels, y, axis= 0)
             
-        # print(test_logits.shape)
-        # print(test_labels.shape)
-        
         # to softmax/sigmoid probabilities
         probs = self.sigmoid(test_logits)
         
-        # id/ood labels and probabilities
+        
+        # sepration of id/ood labels and probabilities
         id_labels  =  test_labels[:,0]
         ood_labels =  test_labels[:,1]
         prob_id     = probs[id_labels == 1]
         prob_ood    = probs[ood_labels == 1]
-            
+        
+        # compute confidence (all)
+        conf_all = round(self.compute_avgConfidence(probs),3)
+        print("Confidence ID+OOD\t{}".format(conf_all))
+        
         maximum_prob_id,  entropy_id,  mean_e_id,  std_e_id  = self.compute_statsProb(prob_id)
         maximum_prob_ood, entropy_ood, mean_e_ood, std_e_ood = self.compute_statsProb(prob_ood)
         
@@ -204,11 +220,11 @@ class OOD_Baseline(object):
         
         
         # in-out of distribution moments
-        print("In-Distribution max prob         (mean,std) -> ", max_prob_id_mean, max_prob_id_std)
-        print("Out-Of-Distribution max prob     (mean,std) -> ", max_prob_ood_mean, max_prob_ood_std)
+        print("In-Distribution max prob         [mean (confidence ID),std]  -> ", max_prob_id_mean, max_prob_id_std)
+        print("Out-Of-Distribution max prob     [mean (confidence OOD),std] -> ", max_prob_ood_mean, max_prob_ood_std)
         
-        print("In-Distribution entropy          (mean,std) -> ", mean_e_id, std_e_id)
-        print("Out-Of-Distribution entropy      (mean,std) -> ", mean_e_ood, std_e_ood)
+        print("In-Distribution entropy          [mean,std]                  -> ", mean_e_id, std_e_id)
+        print("Out-Of-Distribution entropy      [mean,std]                  -> ", mean_e_ood, std_e_ood)
         
         # normality detection
         print("Normality detection:")
@@ -218,7 +234,7 @@ class OOD_Baseline(object):
         kl_norm_aupr, kl_norm_auroc = self.compute_curves(entropy_id, entropy_ood)
         print("\tPrediction probability")
         p_norm_aupr, p_norm_auroc = self.compute_curves(maximum_prob_id, maximum_prob_ood)
-        
+
         
         # abnormality detection
         print("Abnormality detection:")
@@ -228,21 +244,11 @@ class OOD_Baseline(object):
         kl_abnorm_aupr, kl_abnorm_auroc = self.compute_curves(-entropy_id, -entropy_ood, positive_reversed= True)
         print("\tPrediction probability")
         p_abnorm_aupr, p_abnorm_auroc = self.compute_curves(-maximum_prob_id, -maximum_prob_ood, positive_reversed= True)
-        
-        
-        # compute avg max prob
-        # avg_prob_in  = np.mean(maximum_prob_id)
-        # avg_prob_ood =  np.mean(maximum_prob_ood)
-        # print(avg_prob_in)
-        # print(avg_prob_ood)
-        
-    
-        print("In-Distribution max prob         (mean,std) -> ", max_prob_id_mean, max_prob_id_std)
-        print("Out-Of-Distribution max prob     (mean,std) -> ", max_prob_ood_mean, max_prob_ood_std)
-        
-        print("In-Distribution entropy          (mean,std) -> ", mean_e_id, std_e_id)
-        print("Out-Of-Distribution entropy      (mean,std) -> ", mean_e_ood, std_e_ood)
-        
+
+        # compute fpr95, detection_error and threshold_error 
+        metrics_ood = self.compute_metrics_ood(maximum_prob_id, maximum_prob_ood)
+        print("OOD metrics:\n", metrics_ood)   
+                     
         # store statistics in a dictionary
         data = {
             "ID_max_prob": {
@@ -263,76 +269,146 @@ class OOD_Baseline(object):
             },
             
             "normality": {
-                "base_rate":    float(norm_base_rate),
-                "KL_AUPR":      float(kl_norm_aupr),
-                "KL_AUROC":     float(kl_norm_auroc),
-                "Prob_AUPR":    float(p_norm_aupr),   
-                "Prob_AUROC":   float(p_norm_auroc)
+                "base_rate":        float(norm_base_rate),
+                "KL_AUPR":          float(kl_norm_aupr),
+                "KL_AUROC":         float(kl_norm_auroc),
+                "Prob_AUPR":        float(p_norm_aupr),   
+                "Prob_AUROC":       float(p_norm_auroc)
             },
             "abnormality":{
-                "base_rate":    float(abnorm_base_rate),
-                "KL_AUPR":      float(kl_abnorm_aupr),
-                "KL_AUROC":     float(kl_abnorm_auroc),
-                "Prob_AUPR":    float(p_abnorm_aupr),   
-                "Prob_AUROC":   float(p_abnorm_auroc)
-            }
+                "base_rate":        float(abnorm_base_rate),
+                "KL_AUPR":          float(kl_abnorm_aupr),
+                "KL_AUROC":         float(kl_abnorm_auroc),
+                "Prob_AUPR":        float(p_abnorm_aupr),   
+                "Prob_AUROC":       float(p_abnorm_auroc),
+
+            },
+            "avg_confidence":   float(conf_all),
+            "fpr95":            float(metrics_ood['fpr95']),
+            "detection_error":  float(metrics_ood['detection_error']),
+            "threshold":        float(metrics_ood['thr_de'])
             
         }
         
         # save data (JSON)
-        name_task               = self.types_classifier[task_type_prog]
-        path_ood_classifier     = os.path.join(self.path_models, name_task)
-        path_ood_baseline       = os.path.join(path_ood_classifier, self.name)
-        path_model_folder       = os.path.join(path_ood_baseline, name_classifier)
-        name_model_file         = 'stats.json'
-        path_model_save         = os.path.join(path_model_folder, name_model_file)  # path folder + name file
-
-        # prepare file-system
-        if (not os.path.exists(path_ood_classifier)):
-            os.makedirs(path_ood_classifier)
-        if (not os.path.exists(path_ood_baseline)):
-            os.makedirs(path_ood_baseline)
-        if (not os.path.exists(path_model_folder)):
-            os.makedirs(path_model_folder)
-        
-        saveJson(path = path_model_save, data=data)
+        if name_ood_data is not None:            
+            name_task = self.types_classifier[task_type_prog]
+            path_results_ood_classifier = os.path.join(self.path_results, name_task)
+            path_results_baseline       = os.path.join(path_results_ood_classifier, self.name)
+            path_results_folder         = os.path.join(path_results_baseline, name_classifier)    
+            name_result_file            = 'metrics_ood_{}.json'.format(name_ood_data)
+            path_result_save            = os.path.join(path_results_folder, name_result_file)   # full path to json file
+            
+            print(path_result_save)
+            
+            # prepare file-system
+            if (not os.path.exists(path_results_ood_classifier)):
+                os.makedirs(path_results_ood_classifier) 
+            if (not os.path.exists(path_results_baseline)):
+                os.makedirs(path_results_baseline) 
+            if (not os.path.exists(path_results_folder)):
+                os.makedirs(path_results_folder) 
+            
+            saveJson(path = path_result_save, data = data)
     
-    def test(self, name_classifier, task_type_prog, name_odd_data = None):
+    def test_binClass(self, name_classifier, task_type_prog, name_ood_data):
+        """
+            This test compute metrics that are threshold related (discriminator)
+        """
         
-        name_task = self.types_classifier[task_type_prog]
+        # load data from analyze
+        name_task                   = self.types_classifier[task_type_prog]
         path_results_ood_classifier = os.path.join(self.path_results, name_task)
         path_results_baseline       = os.path.join(path_results_ood_classifier, self.name)
-        if name_odd_data is not None:
-            path_results_folder         = os.path.join(path_results_baseline, name_classifier + "_" + name_odd_data)        
-        else:
-            path_results_folder         = os.path.join(path_results_baseline, name_classifier)    
+        path_results_folder         = os.path.join(path_results_baseline, name_classifier)    
+        name_result_file            = 'metrics_ood_{}.json'.format(name_ood_data)
+        path_result_save            = os.path.join(path_results_folder, name_result_file)   # full path to json file
+            
         
-        print(path_results_folder)
+        try:
+            data = loadJson(path_result_save)
+        except Exception as e:
+            print(e)
+            print("No data found at path {}".format(path_result_save))
+            
+        # threshold = data['avg_confidence']
+        threshold = data['threshold']
         
+        id_ood_dataloader   = DataLoader(self.dataset_test,  batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
+        
+        # use model on selected device
+        self.classifier.model.to(self.device)
+        
+        # define empty lsit to store outcomes
+        test_logits     = np.empty((0,2), dtype= np.float32)
+        test_labels     = np.empty((0,2), dtype= np.int32)
+        
+        for idx, (x,y) in tqdm(enumerate(id_ood_dataloader), total= len(id_ood_dataloader)):
+            
+            # to test
+            if idx >= 5: break
+            
+            x = x.to(self.device)
+            with T.no_grad():
+                with autocast():
+                    _ ,_, logits =self.classifier.forward(x)
+                    
+            # to numpy array
+            logits  = logits.cpu().numpy()
+            y       = y.numpy()
+                
+            test_logits = np.append(test_logits, logits, axis= 0)
+            test_labels = np.append(test_labels, y, axis= 0)
+        
+        
+        probs = self.sigmoid(test_logits)
+        print(probs.shape)
+        maximum_prob    = np.max(probs, axis=1)
+        print(maximum_prob.shape)
+        
+        pred = []
+        for prob in maximum_prob:
+            if prob < threshold: pred.append(1)
+            else: pred.append(0)
+        
+        pred = np.array(pred)
+        target = test_labels[:,1]
+        print(pred)
+        print(target)
+        
+        metrics_class =  metrics_binClass(preds = pred, targets= target, pred_probs = None)
+        print(metrics_class)
+        
+        # save data (JSON)
         # prepare file-system
         if (not os.path.exists(path_results_ood_classifier)):
             os.makedirs(path_results_ood_classifier) 
         if (not os.path.exists(path_results_baseline)):
             os.makedirs(path_results_baseline) 
         if (not os.path.exists(path_results_folder)):
-            os.makedirs(path_results_folder) 
-    
+            os.makedirs(path_results_folder)
+        
+        name_resultClass_file         = 'metrics_classification{}.json'.format(name_ood_data)
+        path_resultClass_file         = os.path.join(path_results_folder, name_resultClass_file)
+
+        
+        saveJson(path=path_resultClass_file, data= metrics_class)
+        
     def forward(self, x):
+        """ discriminator forward
+
+        Args:
+            x (torch.Tensor): input image to be discriminated (real/fake)
+        """
         # handle single image, increasing dimensions for batch
         if len(x.shape) == 3:
             x = T.expand(1,-1,-1,-1)
     
-    #                                     data augmentation    
-    def add_noise(self, batch_input, complexity=0.5):
-        return batch_input + np.random.normal(size=batch_input.shape, scale=1e-9 + complexity)
-
-    def add_distortion_noise(self, batch_input):
-        distortion = np.random.uniform(low=0.9, high=1.2)
-        return batch_input + np.random.normal(size=batch_input.shape, scale=1e-9 + distortion)
-    
-    
-    
 if __name__ == "__main__":
+    
+    # select executions
+    exe = [1,0]
+    
     # [1] load deep fake classifier
     bin_classifier = DFD_BinClassifier(model_type="resnet_pretrained")
     bin_classifier.load("resnet50_ImageNet_13-10-2023", 20)
@@ -344,7 +420,8 @@ if __name__ == "__main__":
     # [3] define the detector
     ood_detector = OOD_Baseline(classifier=bin_classifier, ood_data_train=cifar_data_train, ood_data_test= cifar_data_test, useGPU= True)
     
+    # [4] launch analyzer/training
+    if exe[0]: ood_detector.analyze(name_classifier="resnet50_ImageNet_13-10-2023", task_type_prog= 0, name_ood_data="cifar100")
     
-    # [4] launch testing
-    ood_detector.analyze(name_classifier="resnet50_ImageNet_13-10-2023", task_type_prog= 0)
-    # ood_detector.test("resnet50_ImageNet_13-10-2023", 0)
+    # [5] launch testing
+    if exe[1]: ood_detector.test_binClass(name_classifier="resnet50_ImageNet_13-10-2023", task_type_prog = 0, name_ood_data="cifar100")

@@ -18,7 +18,7 @@ from    sklearn.metrics     import precision_score, recall_score, f1_score, conf
 from    sklearn.metrics     import auc, roc_curve, average_precision_score, precision_recall_curve
 
 
-# image transformer
+##################################################  image transformation/data augmentation ############################################
 
 def transfResnet50(isTensor = False):
     """ function that returns trasnformation operations sequence for the image input to be compatible for ResNet50 model
@@ -36,8 +36,42 @@ def transfResnet50(isTensor = False):
         ])
     
     return transform_ops
+
+#TODO implement normalizer for learning 
+
+class NormalizeByChannelMeanStd(T.nn.Module):
+    def __init__(self, mean, std):
+        super(NormalizeByChannelMeanStd, self).__init__()
+        if not isinstance(mean, T.Tensor):
+            mean = T.tensor(mean)
+        if not isinstance(std, T.Tensor):
+            std = T.tensor(std)
+        self.register_buffer("mean", mean)
+        self.register_buffer("std", std)
+
+    def forward(self, tensor):
+        return normalize_fn(tensor, self.mean, self.std)
+
+    def extra_repr(self):
+        return 'mean={}, std={}'.format(self.mean, self.std)
+
+
+def normalize_fn(tensor, mean, std):
+    """Differentiable version of torchvision.functional.normalize"""
+    # here we assume the color channel is in at dim=1, so: [batch_size, color_channel, height, width]
+    mean = mean[None, :, None, None]
+    std = std[None, :, None, None]
+    return tensor.sub(mean).div(std)
+
+def add_noise(batch_input, complexity=0.5):
+    return batch_input + np.random.normal(size=batch_input.shape, scale=1e-9 + complexity)
+
+def add_distortion_noise(batch_input):
+    distortion = np.random.uniform(low=0.9, high=1.2)
+    return batch_input + np.random.normal(size=batch_input.shape, scale=1e-9 + distortion)
     
-# Save/Load functions
+
+##################################################  Save/Load functions ###############################################################
 
 def showImage(img, name= "unknown", has_color = True):
     """ plot image using matplotlib
@@ -53,7 +87,7 @@ def showImage(img, name= "unknown", has_color = True):
         except:
             img = img.detach().cpu().numpy()
             
-        # move back color channel has last dimension
+        # move back color channel has last dimension, (in Tensor the convention for the color channel is to use the first after the batch)
         img = np.moveaxis(img,0,-1)
     
     
@@ -118,7 +152,7 @@ def loadJson(path):
     data =  json.loads(json_data)
     return data
 
-# Plot/show functions 
+##################################################  Plot/show functions ###############################################################
 
 def plot_loss(loss_array, title_plot = None, path_save = None, duration_timer = 2500):
     """ save and plot the loss by epochs
@@ -270,23 +304,32 @@ def plot_PR_curve(recalls, precisions, path_save = None, duration_timer = 2500):
         
     plt.show()
 
-# Metrics functions 
+##################################################  Metrics functions #################################################################
 
-def metrics_binClass(preds, targets, pred_probs, epoch_model, path_save = None, average = "macro"):
+def metrics_binClass(preds, targets, pred_probs, epoch_model="unknown", path_save = None, average = "macro"):
     
-    # roc curve/auroc computation
-    fpr, tpr, thresholds = roc_curve(targets, pred_probs, pos_label=1,  drop_intermediate= False)
-    roc_auc = auc(fpr, tpr)
+    if pred_probs is not None:
+        # roc curve/auroc computation
+        fpr, tpr, thresholds = roc_curve(targets, pred_probs, pos_label=1,  drop_intermediate= False)
+        roc_auc = auc(fpr, tpr)
+        
+        # plot and save ROC curve
+        plot_ROC_curve(fpr, tpr, path_save)
+        
+        # pr curve/ aupr computation
+        p,r, thresholds = precision_recall_curve(targets, pred_probs, pos_label=1,  drop_intermediate= False)
+        aupr = auc(r,p)    # almost the same of average precision score
+        
+        # plot PR curve
+        plot_PR_curve(r,p,path_save) 
+        
+        # compute everage precision 
+        avg_precision = average_precision_score(targets, pred_probs, average= average, pos_label=1),         \
     
-    # plot and save ROC curve
-    plot_ROC_curve(fpr, tpr, path_save)
-    
-    # pr curve/ aupr computation
-    p,r, thresholds = precision_recall_curve(targets, pred_probs, pos_label=1,  drop_intermediate= False)
-    aupr = auc(r,p)    # almost the same of average precision score
-    
-    # plot PR curve
-    plot_PR_curve(r,p,path_save) 
+    else: 
+        avg_precision  = "empty"
+        roc_auc        = "empty"
+        aupr           = "empty"
     
     # compute metrics and store into a dictionary
     metrics_results = {
@@ -294,7 +337,7 @@ def metrics_binClass(preds, targets, pred_probs, epoch_model, path_save = None, 
         "precision":                    precision_score(targets, preds, average = "binary", zero_division=1, pos_label=1),   \
         "recall":                       recall_score(targets, preds, average = "binary", zero_division=1, pos_label=1),      \
         "f1-score":                     f1_score(targets, preds, average= "binary", zero_division=1, pos_label=1),           \
-        "average_precision/":           average_precision_score(targets, pred_probs, average= average, pos_label=1),         \
+        "average_precision/":           avg_precision,                                                                        \
         "ROC_AUC":                      roc_auc,                                                                             \
         "PR_AUC":                       aupr,                                                                                \
         "hamming_loss":                 hamming_loss(targets, preds),                                                        \
@@ -311,35 +354,43 @@ def metrics_binClass(preds, targets, pred_probs, epoch_model, path_save = None, 
             print("Confusion matrix")
             print(v)
     
+    
+        # plot and save (if path specified) confusion matrix
+    plot_cm(cm = metrics_results['confusion_matrix'], labels = ["real", "fake"], title_plot = None, path_save = path_save)
+    
     # save the results (JSON file) if a path has been provided
     if path_save is not None:
-        metrics_results_ = metrics_results.copy()
-        metrics_results_['confusion_matrix'] = metrics_results_['confusion_matrix'].tolist()
-        saveJson(os.path.join(path_save, 'binaryMetrics_' + epoch_model + '.json'), metrics_results_)
+        # metrics_results_ = metrics_results.copy()
+        # metrics_results_['confusion_matrix'] = metrics_results_['confusion_matrix'].tolist()
+        saveJson(os.path.join(path_save, 'binaryMetrics_' + epoch_model + '.json'), metrics_results)
     
-    # plot and save (if path specified) confusion matrix
-    plot_cm(cm = metrics_results['confusion_matrix'], labels = ["real", "fake"], title_plot = None, path_save = path_save)
+    metrics_results['confusion_matrix'] = metrics_results['confusion_matrix'].tolist()
+    
+    return metrics_results
 
 
-def metrics_OOD(targets, pred_probs, path_save):
+def metrics_OOD(targets, pred_probs, pos_label = 1, path_save = None):
     
     fpr, tpr, _ = roc_curve(targets, pred_probs, pos_label=1,  drop_intermediate= False)
-    auroc = auc(fpr, tpr)
+    # auroc = auc(fpr, tpr)
     
-    fpr95 = fpr_at_95_tpr(pred_probs, targets)
+    fpr95   = fpr_at_95_tpr(pred_probs, targets)
     
-    det_err = detection_error(pred_probs, targets)
+    det_err, thr_err = detection_error(pred_probs, targets, pos_label= pos_label)
     
     metric_results = {
-        "auroc":            auroc,
+        # "auroc":            auroc,
         "fpr95":            fpr95,
-        "detection_error":  det_err
+        "detection_error":  det_err,
+        "thr_de":           thr_err
         
     }
     
     # save the results (JSON file) if a path has been provided
     if path_save is not None:
         saveJson(os.path.join(path_save, 'metricsOOD.json'), metric_results)
+    
+    return metric_results
 
 #TODO
 def metrics_multiClass():
@@ -361,27 +412,37 @@ def fpr_at_95_tpr(preds, labels):
         # Linear interp between values to get FPR at TPR == 0.95
         return np.interp(0.95, tpr, fpr)
 
-
-def detection_error(preds, labels):
+def detection_error(preds, labels, pos_label = 1):
     '''
     Return the misclassification probability when TPR is 95%.
     '''
-    fpr, tpr, _ = roc_curve(labels, preds)
+    fpr, tpr, thresholds = roc_curve(labels, preds, pos_label= pos_label)
 
     # Get ratio of true positives to false positives
-    f2t_ratio = sum(np.array(labels) == 1) / len(labels)
-    t2f_ratio = 1 - f2t_ratio
+    pos_ratio = sum(np.array(labels) == pos_label) / len(labels)
+    neg_ratio = 1 - pos_ratio
 
     # Get indexes of all TPR >= 95%
     idxs = [i for i, x in enumerate(tpr) if x >= 0.95]
 
     # Calc error for a given threshold (i.e. idx)
-    _detection_error = lambda idx: t2f_ratio * (1 - tpr[idx]) + f2t_ratio * fpr[idx]
+    _detection_error = lambda idx: neg_ratio * (1 - tpr[idx]) + pos_ratio * fpr[idx]
 
+    # Find the minimum detection error such such that TPR >= 0.95
+    min_error_idx = min(idxs, key=_detection_error)
+    
+    detection_error = _detection_error(min_error_idx)
+    
+    threshold_de = thresholds[min_error_idx]
+    
+    
     # Return the minimum detection error such that TPR >= 0.95
-    return min(map(_detection_error, idxs))
+    # detection_error, index = min(map(_detection_error, idxs))
+    # index = idxs
+    
+    return detection_error, threshold_de
 
-# test functions
+##################################################  performance testing functions #####################################################
 
 def test_num_workers(dataset, batch_size = 32):
     """

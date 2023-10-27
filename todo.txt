@@ -1,0 +1,4 @@
+1) define in the dataset the amount of data to be used as validation set
+2) prepare the various dataset configuration scenario: easy, medium and hard
+3) train the model in these 3 configurations
+4) test the baseline on these 3 different configurations
