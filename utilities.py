@@ -371,10 +371,10 @@ def metrics_binClass(preds, targets, pred_probs, epoch_model="unknown", path_sav
 
 def metrics_OOD(targets, pred_probs, pos_label = 1, path_save = None):
     
-    fpr, tpr, _ = roc_curve(targets, pred_probs, pos_label=1,  drop_intermediate= False)
+    # fpr, tpr, _ = roc_curve(targets, pred_probs, pos_label=1,  drop_intermediate= False)
     # auroc = auc(fpr, tpr)
     
-    fpr95   = fpr_at_95_tpr(pred_probs, targets)
+    fpr95   = fpr_at_95_tpr(pred_probs, targets, pos_label)
     
     det_err, thr_err = detection_error(pred_probs, targets, pos_label= pos_label)
     
@@ -383,7 +383,6 @@ def metrics_OOD(targets, pred_probs, pos_label = 1, path_save = None):
         "fpr95":            fpr95,
         "detection_error":  det_err,
         "thr_de":           thr_err
-        
     }
     
     # save the results (JSON file) if a path has been provided
@@ -392,15 +391,11 @@ def metrics_OOD(targets, pred_probs, pos_label = 1, path_save = None):
     
     return metric_results
 
-#TODO
-def metrics_multiClass():
-    pass
-
-def fpr_at_95_tpr(preds, labels):
+def fpr_at_95_tpr(preds, labels, pos_label = 1):
     '''
     Returns the false positive rate when the true positive rate is at minimum 95%.
     '''
-    fpr, tpr, _ = roc_curve(labels, preds)
+    fpr, tpr, _ = roc_curve(labels, preds, pos_label= pos_label, drop_intermediate= True)
     if all(tpr < 0.95):
         # No threshold allows TPR >= 0.95
         return 0
@@ -410,14 +405,18 @@ def fpr_at_95_tpr(preds, labels):
         return min(map(lambda idx: fpr[idx], idxs))
     else:
         # Linear interp between values to get FPR at TPR == 0.95
-        return np.interp(0.95, tpr, fpr)
+        return np.interp(x = 0.95, xp = tpr,fp = fpr)   # x->y(x) interpolated, xp->[x1,..,xn], fp-> [y1,..-,yn]
 
-def detection_error(preds, labels, pos_label = 1):
+def detection_error(preds, labels, pos_label = 1, verbose = False):
     '''
     Return the misclassification probability when TPR is 95%.
     '''
-    fpr, tpr, thresholds = roc_curve(labels, preds, pos_label= pos_label)
-
+    fpr, tpr, thresholds = roc_curve(labels, preds, pos_label= pos_label, drop_intermediate= True)
+    
+    if verbose:
+        for i in range(len(fpr)):
+            print(f"thr:{thresholds[i]}, fpr:{fpr[i]}, tpr:{tpr[i]}")
+    
     # Get ratio of true positives to false positives
     pos_ratio = sum(np.array(labels) == pos_label) / len(labels)
     neg_ratio = 1 - pos_ratio
@@ -441,6 +440,10 @@ def detection_error(preds, labels, pos_label = 1):
     # index = idxs
     
     return detection_error, threshold_de
+
+#TODO
+def metrics_multiClass():
+    pass
 
 ##################################################  performance testing functions #####################################################
 

@@ -91,6 +91,12 @@ class OOD_Baseline(object):
         return roc_auc_score(labels, pred)
         
     def compute_curves(self, id_data, ood_data, positive_reversed = False):
+        """_
+            compute AUROC and AUPR, defining the vector of labels from the length of ID and OOD distribution
+            can be chosen which label use as positive, defult is for ID data.
+            set to False the parameter "positive_reversed" for abnormality detection (OOD).
+        """
+        
         # create the array with the labels initally full of zeros
         target = np.zeros((id_data.shape[0] + ood_data.shape[0]), dtype= np.int32)
         # print(target.shape)
@@ -109,12 +115,21 @@ class OOD_Baseline(object):
         return aupr, auroc
     
 
-    def compute_metrics_ood(self, id_data, ood_data):
+    def compute_metrics_ood(self, id_data, ood_data, positive_reversed = False):
         """_
-            function used to compute fpr95, detection error and relative threshold
+            function used to compute fpr95, detection error and relative threshold.
+            con be selected the positive label, the defulat one is for ID data, set to False
+            with the parameter "positive_reversed" for abnormality detection (OOD).
         """
         target = np.zeros((id_data.shape[0] + ood_data.shape[0]), dtype= np.int32)
-        target[id_data.shape[0]:] += 1
+        
+        if positive_reversed:
+            target[id_data.shape[0]:] += 1
+        else:
+            target[:id_data.shape[0]] += 1
+            
+        print(target)
+        
         predictions = np.squeeze(np.vstack((id_data, ood_data)))
         metrics_ood = metrics_OOD(targets=target, pred_probs= predictions)
         return metrics_ood 
@@ -149,6 +164,7 @@ class OOD_Baseline(object):
         Returns:
             confidences (np.array): list of confidences for each prediction
         """
+        
         # print(probabilties.shape)
         pred_value      = np.max(probabilities, -1)
         # print(pred_value.shape)
@@ -158,7 +174,10 @@ class OOD_Baseline(object):
         return confidences
     
     def compute_avgConfidence(self, probabilities):
-        pred_value      = np.max(probabilities, -1)
+        """_
+            computes the average using max probabilities from test instances.
+        """
+        pred_value      = np.max(probabilities, -1)   # max among class probabilities
         return np.average(pred_value)
     
     #                                     analysis and testing functions
@@ -178,8 +197,8 @@ class OOD_Baseline(object):
         self.classifier.model.to(self.device)
         
         # define empty lsit to store outcomes
-        test_logits = np.empty((0,2), dtype= np.float32)
-        test_labels = np.empty((0,2), dtype= np.int32)
+        pred_logits = np.empty((0,2), dtype= np.float32)
+        dl_labels = np.empty((0,2), dtype= np.int32)            # dataloader labels, binary one-hot encoding, ID -> [1,0], OOD -> [0,1]
         
         for idx, (x,y) in tqdm(enumerate(id_ood_dataloader), total= len(id_ood_dataloader)):
             
@@ -195,17 +214,17 @@ class OOD_Baseline(object):
             logits  = logits.cpu().numpy()
             y       = y.numpy()
                 
-            test_logits = np.append(test_logits, logits, axis= 0)
-            test_labels = np.append(test_labels, y, axis= 0)
+            pred_logits = np.append(pred_logits, logits, axis= 0)
+            dl_labels = np.append(dl_labels, y, axis= 0)
             
         # to softmax/sigmoid probabilities
-        probs = self.sigmoid(test_logits)
+        probs = self.sigmoid(pred_logits)
         
         
-        # sepration of id/ood labels and probabilities
-        id_labels  =  test_labels[:,0]
-        ood_labels =  test_labels[:,1]
-        prob_id     = probs[id_labels == 1]
+        # separation of id/ood labels and probabilities
+        id_labels  =  dl_labels[:,0]                # filter by label column
+        ood_labels =  dl_labels[:,1]
+        prob_id     = probs[id_labels == 1]         # split forward probabilites between ID adn OOD, still a list of probabilities for each class learned by the model
         prob_ood    = probs[ood_labels == 1]
         
         # compute confidence (all)
@@ -215,16 +234,16 @@ class OOD_Baseline(object):
         maximum_prob_id,  entropy_id,  mean_e_id,  std_e_id  = self.compute_statsProb(prob_id)
         maximum_prob_ood, entropy_ood, mean_e_ood, std_e_ood = self.compute_statsProb(prob_ood)
         
-        max_prob_id_mean = np.mean(maximum_prob_id); max_prob_id_std = np.std(maximum_prob_id)
-        max_prob_ood_mean = np.mean(maximum_prob_ood); max_prob_ood_std = np.std(maximum_prob_ood)
+        max_prob_id_mean    = np.mean(maximum_prob_id);     max_prob_id_std     = np.std(maximum_prob_id)
+        max_prob_ood_mean   = np.mean(maximum_prob_ood);    max_prob_ood_std    = np.std(maximum_prob_ood)
         
         
         # in-out of distribution moments
         print("In-Distribution max prob         [mean (confidence ID),std]  -> ", max_prob_id_mean, max_prob_id_std)
         print("Out-Of-Distribution max prob     [mean (confidence OOD),std] -> ", max_prob_ood_mean, max_prob_ood_std)
         
-        print("In-Distribution entropy          [mean,std]                  -> ", mean_e_id, std_e_id)
-        print("Out-Of-Distribution entropy      [mean,std]                  -> ", mean_e_ood, std_e_ood)
+        print("In-Distribution Entropy          [mean,std]                  -> ", mean_e_id, std_e_id)
+        print("Out-Of-Distribution Entropy      [mean,std]                  -> ", mean_e_ood, std_e_ood)
         
         # normality detection
         print("Normality detection:")
@@ -242,12 +261,16 @@ class OOD_Baseline(object):
         print("\tbase rate(%): {}".format(abnorm_base_rate))
         print("\tKL divergence (entropy)")
         kl_abnorm_aupr, kl_abnorm_auroc = self.compute_curves(-entropy_id, -entropy_ood, positive_reversed= True)
+        # kl_abnorm_aupr, kl_abnorm_auroc = self.compute_curves(1-entropy_id, 1-entropy_ood, positive_reversed= True)
         print("\tPrediction probability")
         p_abnorm_aupr, p_abnorm_auroc = self.compute_curves(-maximum_prob_id, -maximum_prob_ood, positive_reversed= True)
+        # p_abnorm_aupr, p_abnorm_auroc = self.compute_curves(1-maximum_prob_id, 1-maximum_prob_ood, positive_reversed= True)
 
         # compute fpr95, detection_error and threshold_error 
-        metrics_ood = self.compute_metrics_ood(maximum_prob_id, maximum_prob_ood)
-        print("OOD metrics:\n", metrics_ood)   
+        metrics_norm = self.compute_metrics_ood(maximum_prob_id, maximum_prob_ood)
+        print("OOD metrics:\n", metrics_norm)  
+        metrics_abnorm = self.compute_metrics_ood(1-maximum_prob_id, 1-maximum_prob_ood, positive_reversed= True)
+        print("OOD metrics:\n", metrics_abnorm)   
                      
         # store statistics in a dictionary
         data = {
@@ -284,9 +307,9 @@ class OOD_Baseline(object):
 
             },
             "avg_confidence":   float(conf_all),
-            "fpr95":            float(metrics_ood['fpr95']),
-            "detection_error":  float(metrics_ood['detection_error']),
-            "threshold":        float(metrics_ood['thr_de'])
+            "fpr95":            float(metrics_norm['fpr95']),
+            "detection_error":  float(metrics_norm['detection_error']),
+            "threshold":        float(metrics_norm['thr_de'])
             
         }
         
@@ -311,7 +334,7 @@ class OOD_Baseline(object):
             
             saveJson(path = path_result_save, data = data)
     
-    def test_binClass(self, name_classifier, task_type_prog, name_ood_data):
+    def test_binClass(self, name_classifier, task_type_prog, name_ood_data, thr_type = "trp95"):
         """
             This test compute metrics that are threshold related (discriminator)
         """
@@ -330,9 +353,14 @@ class OOD_Baseline(object):
         except Exception as e:
             print(e)
             print("No data found at path {}".format(path_result_save))
-            
-        # threshold = data['avg_confidence']
-        threshold = data['threshold']
+        
+        # choose the threshold to use for the discrimination ID/OOD
+        
+        # t
+        if thr_type == "tpr95":
+            threshold = data['threshold']
+        else:                                       # use avg max prob confidence as thr (proven to be misleading)
+            threshold = data['avg_confidence']
         
         id_ood_dataloader   = DataLoader(self.dataset_test,  batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
         
@@ -368,8 +396,8 @@ class OOD_Baseline(object):
         
         pred = []
         for prob in maximum_prob:
-            if prob < threshold: pred.append(1)
-            else: pred.append(0)
+            if prob < threshold: pred.append(1)  # OOD
+            else: pred.append(0)                 # ID
         
         pred = np.array(pred)
         target = test_labels[:,1]
@@ -400,6 +428,11 @@ class OOD_Baseline(object):
         Args:
             x (torch.Tensor): input image to be discriminated (real/fake)
         """
+        
+        
+        if not(isinstance(x, T.Tensor)):
+            x = T.tensor(x)
+            
         # handle single image, increasing dimensions for batch
         if len(x.shape) == 3:
             x = T.expand(1,-1,-1,-1)

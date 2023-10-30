@@ -234,11 +234,16 @@ class DFD_BinClassifier(object):
         Returns:
             pred: label: 0 -> real, 1 -> fake
         """
-
+        
+        if not(isinstance(x, T.Tensor)):
+            x = T.tensor(x)
+        
         # handle single image, increasing dimensions for batch
         if len(x.shape) == 3:
             x = T.expand(1,-1,-1,-1)
-            
+        
+        x = x.to(self.device)
+        
         logits      = self.model.forward(x)
         probs       = self.sigmoid(logits)
         pred        = T.argmax(probs, -1)
