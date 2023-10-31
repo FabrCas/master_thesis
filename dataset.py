@@ -1,29 +1,30 @@
 import os
-from PIL import Image
-import numpy as np
+from PIL                                import Image
+import numpy                            as np
 import math
 import random
-
-
-from utilities import * 
-
+from utilities                          import showImage, sampleValidSet
 # torch import
-import torch as T
+import torch                            as T
 import torchvision
-from torchvision import transforms
-from torchvision.transforms.functional import InterpolationMode
-from torch.utils.data import Dataset
+from torchvision                        import transforms
+from torchvision.transforms.functional  import InterpolationMode
+from torch.utils.data                   import Dataset, DataLoader
 T.manual_seed(22)
 random.seed(22)
 
-
+# Paths and data structure
 CDDB_PATH       = "./data/CDDB"
 CIFAR100_PATH   = "./data/cifar100"
+GROUP_CLASSES   = [[],[],[]]
 
 
-#                           [Deepfake classification]
+##################################################### [Binary Deepfake classification] ################################################################
 
 class CDDB_binary(Dataset):
+    """_
+        Dataset class that uses the full data from CDDB dataset as IN-distribuion for binary deepfake detection
+    """
     def __init__(self, width_img= 224, height_img = 224, train = True):
         super(CDDB_binary,self).__init__()
         self.train = train                      # boolean flag to select train or test data
@@ -36,10 +37,10 @@ class CDDB_binary(Dataset):
         ])
         
         # load the data paths and labels
-        self.x_train = None; self.y_train = None; self.x_test = None; self.y_test = None
+        self.x_train = None; self.y_train = None;
+        self.x_valid = None; self.y_valid = None
+        self.x_test = None; self.y_test = None
         self._scanData()
-        
-
         
 
     def _scanData(self, real_folder = "0_real", fake_folder = "1_fake"):
@@ -89,8 +90,6 @@ class CDDB_binary(Dataset):
                         n_train = len(x_category_real) + len(x_category_fake)
                     else:
                         n_test  = len(x_category_real) + len(x_category_fake)
-                    
-                    
                     
             else:                                                               # 2 folder: "0_real", "1_fake"
                 path_real = os.path.join(path_set_model, real_folder)
@@ -151,6 +150,8 @@ class CDDB_binary(Dataset):
         return img, label_vector
 
 
+
+##################################################### [Multi-Class Deepfake classification] ############################################################
 #TODO
 class CDDB(Dataset):
     def __init__(self, width_img= 224, height_img = 224):
@@ -176,7 +177,7 @@ class CDDB(Dataset):
         return None
 
 
-#                           [OOD detection]
+##################################################### [Out-Of-Distribution Detection] ################################################################
 
 def getCIFAR100_dataset(train, width_img= 224, height_img = 224):
     """ get CIFAR100 dataset
@@ -316,6 +317,85 @@ if __name__ == "__main__":
                     showImage(img, name = name)
             break
     
+    def test_splitvalidation():
+                
+        from torch.utils.data import random_split
+        from torch.utils.data import ConcatDataset
+        
+        # this implemented as a method is under the name sampleValidSet in utilties module
+        
+        train = CDDB_binary(train= True)
+        test  = CDDB_binary(train = False)
+        generator = T.Generator().manual_seed(22)
+        
+        print("train length", len(train))
+        print("test length", len(test))
+        all_data = len(train) + len(test)
+        print("total samples n°", all_data)
+        
+        print("Data percentage distribution over sets before partition:")
+        print("TrainSet [%]",round(100*(len(train)/all_data),2) )
+        print("TestSet  [%]",round(100*(len(test)/all_data),2),"\n")
+        
+        
+        if False: 
+            """
+                split data with the following strategy, validation set is the 10% of all data.
+                These samples are extract half from training set and half from test set.
+                after this we have almost the following distribution:
+                training        -> 65%
+                validation      -> 10%
+                testing         -> 25% 
+            """
+            
+            
+            # compute relative percentage
+            perc_train = round(((0.1 * all_data)*0.5/len(train)),3)
+            perc_test = round(((0.1 * all_data)*0.5/len(test)),3)
+
+            
+            
+            train, val_p1  = random_split(train,  [1-perc_train, perc_train], generator = generator)  #[0.92, 0.08]
+            print(f"splitting train (- {perc_train}%) ->",len(val_p1), len(train))
+
+            test,  val_p2  = random_split(test,  [1-perc_test, perc_test], generator = generator)   #[0.84, 0.16]
+            print(f"splitting test (- {perc_test}%) ->",len(val_p2), len(test))
+            
+            val = ConcatDataset([val_p1, val_p2])
+            print("validation length ->", len(val))
+            
+        else:
+            """
+                split data with the following strategy, validation set is the 10% of all data.
+                These samples are extract all from the test set.
+            """
+            
+            
+            perc_test = round(((0.1 * all_data)/len(test)),3)
+            
+            test,  val  = random_split(test,  [1-perc_test, perc_test], generator = generator)
+            print(f"splitting test (- {perc_test}%) ->",len(val), len(test))
+            print("validation length", len(val))
+            
+        print("\nData percentage distribution over sets after partition:")
+        print("TrainSet [%]",round(100*(len(train)/all_data),2) )
+        print("TestSet  [%]",round(100*(len(test)/all_data),2)  )
+        print("ValidSet [%]",round(100*(len(val)/all_data),2)   )
+            
+        
+        # from subset you can easily get the dataloader in the usual way pass to dataloader
+        # dl = T.utils.data.DataLoader(val1[1])
+        # print(type(dl))
+    
+    def test_getValid():
+        train = CDDB_binary(train= True)
+        test  = CDDB_binary(train= False)
+        
+        train, valid, test = sampleValidSet(train, test, useTestSet= True, verbose= True)
+        print(len(train))
+        print(len(valid))
+        print(len(test))
+     
     def test_cifar():
         ds = getCIFAR100_dataset(train = False)
         train_loader = DataLoader(ds, batch_size=32, shuffle=True)
@@ -334,8 +414,15 @@ if __name__ == "__main__":
         img = sample[0]
         showImage(img)
         print(sample[1])
-  
-    test_ood()
+    
+    
+    
+    
+    
+    # pass
+    # test_ood()
+    test_getValid()
+    
     
     
     

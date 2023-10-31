@@ -8,7 +8,7 @@ from    tqdm                import tqdm
 
 from    dataset             import CDDB_binary, getCIFAR100_dataset,OOD_dataset
 from    sklearn.metrics     import precision_recall_curve, auc, roc_auc_score
-from    bin_classifier      import DFD_BinClassifier
+from    bin_classifier      import DFD_BinClassifier_v1
 from    utilities           import saveJson, loadJson, metrics_binClass, metrics_OOD
 
 
@@ -416,7 +416,7 @@ class OOD_Baseline(object):
         if (not os.path.exists(path_results_folder)):
             os.makedirs(path_results_folder)
         
-        name_resultClass_file         = 'metrics_classification{}.json'.format(name_ood_data)
+        name_resultClass_file         = 'metrics_ood_classification_{}.json'.format(name_ood_data)
         path_resultClass_file         = os.path.join(path_results_folder, name_resultClass_file)
 
         
@@ -443,7 +443,7 @@ if __name__ == "__main__":
     exe = [1,0]
     
     # [1] load deep fake classifier
-    bin_classifier = DFD_BinClassifier(model_type="resnet_pretrained")
+    bin_classifier = DFD_BinClassifier_v1(model_type="resnet_pretrained")
     bin_classifier.load("resnet50_ImageNet_13-10-2023", 20)
     
     # [2] define the ood data

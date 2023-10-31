@@ -24,9 +24,14 @@ from    models              import ResNet_ImageNet, ResNet
 """
 
 
-class DFD_BinClassifier(object):
+class DFD_BinClassifier_v1(object):
     """
-        binary classifier for deepfake detection using CDDB dataset
+        binary classifier for deepfake detection using CDDB dataset, first version
+        including usage of ResNet model, no validation set used during training (70% training, 30% testing),
+        no data augementation.
+        
+        training model folder: models/bin_class/resnet50_ImageNet_13-10-2023
+        
     """
     def __init__(self, useGPU = True, batch_size = 32, model_type = "resnet_pretrained"):
         """ init classifier
@@ -34,7 +39,7 @@ class DFD_BinClassifier(object):
         Args:
             useGPU (bool, optional): flag to use CUDA device or cpu hardware by the model. Defaults to True.
         """
-        super(DFD_BinClassifier, self).__init__()
+        super(DFD_BinClassifier_v1, self).__init__()
         self.useGPU = useGPU
         self.batch_size = batch_size
         self.model_type = model_type
@@ -78,10 +83,15 @@ class DFD_BinClassifier(object):
             print("name: {:<30}, shape layer: {:>20}: ".format(k, str(list(v.data.shape))))
         return layers
     
+    def valid(self):
+        raise NotImplementedError
+    
     def train(self, name_train):
         
         # define train dataloader
         train_dataloader = DataLoader(self.train_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
+        
+        # can be included the valid dataloader, look for sampleValidSet in utilities.py module
         
         # compute number of steps for epoch
         n_steps = len(train_dataloader)
@@ -148,6 +158,8 @@ class DFD_BinClassifier(object):
             avg_loss = loss_epoch/n_steps
             loss_epochs.append(avg_loss)
             print("Average loss: {}".format(avg_loss))
+            
+            # include validation here if needed
                 
             # break
         
@@ -234,7 +246,7 @@ class DFD_BinClassifier(object):
         Returns:
             pred: label: 0 -> real, 1 -> fake
         """
-        
+
         if not(isinstance(x, T.Tensor)):
             x = T.tensor(x)
         
@@ -251,7 +263,6 @@ class DFD_BinClassifier(object):
         
         return pred, fake_prob, logits
         
-        
     def load(self, folder_model, epoch):
         try:
             self.path2model         = os.path.join(self.path_models,  folder_model, str(epoch) + ".ckpt")
@@ -262,14 +273,13 @@ class DFD_BinClassifier(object):
         except:
             print("No model: {} found for the epoch: {} in the folder: {}".format(folder_model, epoch, self.path_models))
         
-             
 # [test section] 
 if __name__ == "__main__":
     
     # dataset = CDDB_binary()
     # test_num_workers(dataset, batch_size  =32)   # use n_workers = 8
    
-    bin_classifier = DFD_BinClassifier(model_type="resnet_pretrained")
+    bin_classifier = DFD_BinClassifier_v1(model_type="resnet_pretrained")
     # bin_classifier.train(name_train="resnet50_ImageNet")
     bin_classifier.load("resnet50_ImageNet_13-10-2023", 20)
     # bin_classifier.test()

@@ -6,7 +6,7 @@ import  numpy                               as np
 from    PIL                                 import Image
 import  matplotlib.pyplot                   as plt
 import  torch                               as T
-from    torch.utils.data                    import DataLoader
+from    torch.utils.data                    import DataLoader, random_split, ConcatDataset
 from    tqdm                                import tqdm
 from    torchvision                         import transforms
 from    torchvision.transforms.functional   import InterpolationMode
@@ -17,6 +17,84 @@ from    sklearn.metrics     import precision_score, recall_score, f1_score, conf
 #  multi-class classification metrics
 from    sklearn.metrics     import auc, roc_curve, average_precision_score, precision_recall_curve
 
+
+
+
+##################################################  Dataset utilties ##################################################################
+
+def sampleValidSet(trainset, testset, useTestSet = True, verbose = False):
+    """
+        Function used the partion data to have also a validatio set for training.
+        The validation set is composed by the 10% of the overall amount of samples.
+        you can choose to sample from both test and training set (from both is taken the 5%)
+        or only from the test set (in this case is collected the 10% from only this set).
+        
+        
+        Args:
+            trainset (T.Dataset): The trainig set
+            testset  (T.Dataset): The test set
+            useTestSet (boolean): flag to select which source is used to sample the data
+            verbose (boolean):    flag to active descriptive prints
+    """
+    
+    generator = T.Generator().manual_seed(22)
+    all_data = len(trainset) + len(testset)
+    
+    if verbose:
+        print("\ntrain length ->", len(trainset))
+        print("test length ->", len(testset))
+        print("total samples ->°", all_data)
+        print("Data percentage distribution over sets before partition:")
+        print("TrainSet [%]",round(100*(len(trainset)/all_data),2) )
+        print("TestSet  [%]",round(100*(len(testset)/all_data),2),"\n")
+    
+    
+    if not(useTestSet): 
+        """
+            split data with the following strategy, validation set is the 10% of all data.
+            These samples are extract half from training set and half from test set.
+            after this we have almost the following distribution:
+            training        -> 65%
+            validation      -> 10%
+            testing         -> 25% 
+        """
+        
+        
+        # compute relative percentage
+        perc_train = round(((0.1 * all_data)*0.5/len(trainset)),3)
+        perc_test  = round(((0.1 * all_data)*0.5/len(testset)),3)
+
+        
+        
+        trainset, val_p1  = random_split(trainset,  [1-perc_train, perc_train], generator = generator)  #[0.92, 0.08]
+        if verbose: print(f"splitting train (- {perc_train}%) ->",len(val_p1), len(trainset))
+
+        testset,  val_p2  = random_split(testset,  [1-perc_test, perc_test], generator = generator)   #[0.84, 0.16]
+        if verbose: print(f"splitting test (- {perc_test}%) ->",len(val_p2), len(testset))
+        
+        validset = ConcatDataset([val_p1, val_p2])
+        if verbose: print("validation length ->", len(validset))
+        
+    else:
+        """
+            split data with the following strategy, validation set is the 10% of all data.
+            These samples are extract all from the test set.
+        """
+        
+        perc_test = round(((0.1 * all_data)/len(testset)),3)
+        testset,  validset  = random_split(testset,  [1-perc_test, perc_test], generator = generator)
+        
+        if verbose:
+            print(f"splitting test (- {perc_test}%) ->",len(validset), len(testset))
+            print("validation length", len(validset))
+
+    if verbose:
+        print("\nData percentage distribution over sets after partition:")
+        print("TrainSet [%]",round(100*(len(trainset)/all_data),2) )
+        print("TestSet  [%]",round(100*(len(testset)/all_data),2)  )
+        print("ValidSet [%]",round(100*(len(validset)/all_data),2)   )
+
+    return trainset, validset, testset
 
 ##################################################  image transformation/data augmentation ############################################
 
