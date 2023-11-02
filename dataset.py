@@ -4,7 +4,6 @@ import numpy                            as np
 import math
 import random
 from utilities                          import showImage, sampleValidSet
-# torch import
 import torch                            as T
 import torchvision
 from torchvision                        import transforms
@@ -16,7 +15,25 @@ random.seed(22)
 # Paths and data structure
 CDDB_PATH       = "./data/CDDB"
 CIFAR100_PATH   = "./data/cifar100"
-GROUP_CLASSES   = [[],[],[]]
+
+DF_GROUP_SUBJECT    = {
+                        "virtual_environment":["crn", "imle"],
+                        "faces": ["deepfake", "glow/black_hair", "glow/blond_hair", "glow/brown_hair",
+                                  "stargan_gf/black_hair", "stargan_gf/blond_hair","stargan_gf/brown_hair",
+                                  "whichfaceisreal", "wild"],
+                        "apple":    ["cyclegan/apple"],
+                        "horse":    ["cyclegan/horse"],
+                        "orange":   ["cyclegan/orange"],
+                        "summer":   ["cyclegan/summer"],
+                        "winter":   ["cyclegan/winger"],
+                        "zebra":    ["cyclegan/zebra"],
+                        "bedroom":  ["stylegan/bedroom"],
+                        "car":      ["stylegan/car"],
+                        "cat":      ["stylegan/cat"],
+                        "mix":      ["biggan","gaugan","san"],
+                       }
+
+DF_GROUP_CLASSES    = {"deepfake sources": [], "non-deepfake sources": [],"unknown models":[]}
 
 
 ##################################################### [Binary Deepfake classification] ################################################################
@@ -37,8 +54,7 @@ class CDDB_binary(Dataset):
         ])
         
         # load the data paths and labels
-        self.x_train = None; self.y_train = None;
-        self.x_valid = None; self.y_valid = None
+        self.x_train = None; self.y_train = None;    # validation set is build using utilities module
         self.x_test = None; self.y_test = None
         self._scanData()
         
@@ -150,6 +166,145 @@ class CDDB_binary(Dataset):
         return img, label_vector
 
 
+class CDDB_binary_Partial(Dataset):
+    """_
+        Dataset class that uses the partial data from CDDB dataset for binary deepfake detection.
+        Selecting the study case ("easy", "medium", "hard") the data are orgnized,
+        using remaining samples as OOD data
+    """
+    def __init__(self, scenario, width_img= 224, height_img = 224, train = True, ood = False ):
+        super(CDDB_binary,self).__init__()
+        
+        # boolean flags for data to return
+        self.scenarion = scenario
+        self.train = train
+        self.ood = ood
+        
+             
+        self.width_img = width_img
+        self.height_img = height_img
+        self.transform_ops = transforms.Compose([
+            transforms.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
+            transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+            # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])   # to have pixel values close between -1 and 1 (imagenet distribution)
+        ])
+        
+        # load the data paths and labels
+        self.x_train = None; self.y_train = None;    # validation set is build using utilities module
+        self.x_test = None; self.y_test = None
+        
+        self.x_ood = None; self.y_ood = None;    # validation set is build using utilities module
+        self.x_test = None; self.y_test = None
+        
+        
+        self._scanData()
+        
+
+    def _scanData(self, real_folder = "0_real", fake_folder = "1_fake"):
+        
+        # initialize empty lists
+        xs = []  # images path
+        ys = []  # binary label for each image
+        
+        
+        if self.train: print("looking for train data in: {}".format(CDDB_PATH))
+        else: print("looking for test data in: {}".format(CDDB_PATH))
+        
+        data_models = sorted(os.listdir(CDDB_PATH))
+        for data_model in data_models:                                      # loop over folders of each model
+            
+            if self.train:
+                path_set_model = os.path.join(CDDB_PATH,data_model,"train")      # around 70% of all the data
+            else:
+                path_set_model = os.path.join(CDDB_PATH,data_model,"val")        # around 30% of all the data
+            
+            #                               extract for the selected set
+            sub_dir_model = sorted(os.listdir(path_set_model))
+            # print(sub_dir_model)
+            
+            # count how many samples you collect
+            n_train     = 0
+            n_test      = 0
+            
+            if not (real_folder in sub_dir_model and fake_folder in sub_dir_model):   # contains sub-categories
+                for category in sub_dir_model:
+                    path_category =  os.path.join(path_set_model, category)
+                    path_category_real = os.path.join(path_category, real_folder)
+                    path_category_fake = os.path.join(path_category, fake_folder)
+                    # print(path_category_real, "\n", path_category_fake)
+                    
+                    # get local data
+                    x_category_real = [os.path.join(path_category_real, name)for name in os.listdir(path_category_real)]
+                    x_category_fake = [os.path.join(path_category_fake, name)for name in os.listdir(path_category_fake)]
+                    y_category_real = [0]*len(x_category_real)
+                    y_category_fake = [1]*len(x_category_fake)
+                    
+                    # save in global data
+                    xs = [*xs, *x_category_real, *x_category_fake]
+                    ys = [*ys, *y_category_real, *y_category_fake]
+                    
+                    if self.train: 
+                        n_train = len(x_category_real) + len(x_category_fake)
+                    else:
+                        n_test  = len(x_category_real) + len(x_category_fake)
+                    
+            else:                                                               # 2 folder: "0_real", "1_fake"
+                path_real = os.path.join(path_set_model, real_folder)
+                path_fake = os.path.join(path_set_model, fake_folder)
+                # print(path_real,"\n", path_fake)
+                
+                # get local data
+                x_model_real = [os.path.join(path_real, name)for name in os.listdir(path_real)]
+                x_model_fake = [os.path.join(path_fake, name)for name in os.listdir(path_fake)]
+                y_model_real = [0]*len(x_model_real)
+                y_model_fake = [1]*len(x_model_fake)
+                
+                # save in global data
+                xs = [*xs, *x_model_real, *x_model_fake]
+                ys = [*ys, *y_model_real, *y_model_fake]
+                
+                if self.train:
+                    n_train = len(x_model_real) + len(x_model_fake)
+                else:
+                    n_test  = len(x_model_real) + len(x_model_fake)    
+                
+            if self.train: print("found data from {:<20}, train samples -> {:<10}".format(data_model, n_train))
+            else: print("found data from {:<20}, train samples -> {:<10}".format(data_model, n_test))
+            
+       
+        # load the correct data 
+        if self.train:
+            print("train samples: {:<10}".format(len(xs)))  
+        else:
+            print("test samples: {:<10}".format(len(xs)))
+            
+        self.x = xs
+        self.y = ys    # 0-> real, 1 -> fake
+        
+    def _transform(self,x):
+        return self.transform_ops(x)
+
+    def __len__(self):
+        return len(self.y)
+    
+    def __getitem__(self, idx):
+        img_path = self.x[idx]
+        # print(img_path)
+        img = Image.open(img_path)
+        img = self._transform(img)
+        
+        # check whether grayscale image, perform pseudocolor inversion 
+        if img.shape[0] == 1:
+            img = img.expand(3, -1, -1)
+
+        label = self.y[idx]
+        
+        # binary encoding to compute BCE (one-hot)
+        label_vector = [0,0]
+        label_vector[label] = 1
+        label_vector = T.tensor(label_vector)     
+        
+        return img, label_vector
 
 ##################################################### [Multi-Class Deepfake classification] ############################################################
 #TODO
