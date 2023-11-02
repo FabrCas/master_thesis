@@ -22,6 +22,11 @@ from    sklearn.metrics     import auc, roc_curve, average_precision_score, prec
 
 ##################################################  Dataset utilties ##################################################################
 
+
+def mergeDatasets(dataset1, dataset2):
+    """ alias for ConcatDataset from pytorch"""
+    return ConcatDataset([dataset1, dataset2])
+
 def sampleValidSet(trainset, testset, useTestSet = True, verbose = False):
     """
         Function used the partion data to have also a validatio set for training.
@@ -60,7 +65,7 @@ def sampleValidSet(trainset, testset, useTestSet = True, verbose = False):
         """
         
         
-        # compute relative percentage
+        # compute relative percentage taking 5% for each set
         perc_train = round(((0.1 * all_data)*0.5/len(trainset)),3)
         perc_test  = round(((0.1 * all_data)*0.5/len(testset)),3)
 
