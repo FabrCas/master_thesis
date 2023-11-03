@@ -1,14 +1,15 @@
 import os
-from PIL                                import Image
-import numpy                            as np
+from PIL                                    import Image
+import numpy                                as np
 import math
 import random
-from utilities                          import showImage, sampleValidSet
-import torch                            as T
+from utilities                              import showImage, sampleValidSet
+import torch                                as T
 import torchvision
-from torchvision                        import transforms
-from torchvision.transforms.functional  import InterpolationMode
-from torch.utils.data                   import Dataset, DataLoader
+from torchvision                            import transforms
+from torchvision.transforms                 import v2    # new version for tranformation methods
+from torchvision.transforms.functional      import InterpolationMode
+from torch.utils.data                       import Dataset, DataLoader
 T.manual_seed(22)
 random.seed(22)
 
@@ -65,17 +66,21 @@ class CDDB_binary(Dataset):
         self.height_img = height_img
         if self.augment:
             self.transform_ops = transforms.Compose([
-                transforms.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
-                transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+                v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
+                v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
                 # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])   # to have pixel values close between -1 and 1 (imagenet distribution)
-                transforms.RandomHorizontalFlip(0.5),
-                transforms.RandomVerticalFlip(0.1),
-                transforms.RandAugment(num_ops = 1, magnitude= 7, num_magnitude_bins= 51, interpolation = InterpolationMode.BILINEAR),
+                
+                # v2.ToImage(),
+                # v2.ToDtype(T.float32, scale=True),
+                
+                v2.RandomHorizontalFlip(0.5),
+                v2.RandomVerticalFlip(0.1),
+                v2.RandAugment(num_ops = 1, magnitude= 7, num_magnitude_bins= 51, interpolation = InterpolationMode.BILINEAR),
             ])
         else:
             self.transform_ops = transforms.Compose([
-                transforms.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
-                transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+                v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
+                v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
                 # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])   # to have pixel values close between -1 and 1 (imagenet distribution)
                 # transforms.Normalize(mean=[0.5,0.5,0.5], std=[0.5,0.5,0.5])   # normlization between -1 and 1, using the whole range uniformly, formula: (pixel - mean)/std
             ])
@@ -195,6 +200,8 @@ class CDDB_binary(Dataset):
         
         return img, label_vector
 
+
+#TODO look if it's the case to switch the hard and mid sceneario, since the mid could be more difficult
 class CDDB_binary_Partial(Dataset):
     """_
         Dataset class that uses the partial data from CDDB dataset for binary deepfake detection.
@@ -225,17 +232,21 @@ class CDDB_binary_Partial(Dataset):
         self.height_img = height_img
         if self.augment:
             self.transform_ops = transforms.Compose([
-                transforms.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
-                transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+                v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
+                v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
                 # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])   # to have pixel values close between -1 and 1 (imagenet distribution)
-                transforms.RandomHorizontalFlip(0.5),
-                transforms.RandomVerticalFlip(0.1),
-                transforms.RandAugment(num_ops = 1, magnitude= 7, num_magnitude_bins= 51, interpolation = InterpolationMode.BILINEAR),
+                
+                # v2.ToImage(),
+                # v2.ToDtype(T.float32, scale=True),
+                
+                v2.RandomHorizontalFlip(0.5),
+                v2.RandomVerticalFlip(0.1),
+                v2.RandAugment(num_ops = 1, magnitude= 7, num_magnitude_bins= 51, interpolation = InterpolationMode.BILINEAR),
             ])
         else:
             self.transform_ops = transforms.Compose([
-                transforms.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
-                transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+                v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
+                v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
                 # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])   # to have pixel values close between -1 and 1 (imagenet distribution)
                 # transforms.Normalize(mean=[0.5,0.5,0.5], std=[0.5,0.5,0.5])   # normlization between -1 and 1, using the whole range uniformly, formula: (pixel - mean)/std
             ])
@@ -417,17 +428,21 @@ class CDDB(Dataset):
         self.height_img         = height_img
         if self.augment:
             self.transform_ops = transforms.Compose([
-                transforms.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
-                transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+                v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
+                v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
                 # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])   # to have pixel values close between -1 and 1 (imagenet distribution)
-                transforms.RandomHorizontalFlip(0.5),
-                transforms.RandomVerticalFlip(0.1),
-                transforms.RandAugment(num_ops = 1, magnitude= 7, num_magnitude_bins= 51, interpolation = InterpolationMode.BILINEAR),
+                
+                # v2.ToImage(),
+                # v2.ToDtype(T.float32, scale=True),
+                
+                v2.RandomHorizontalFlip(0.5),
+                v2.RandomVerticalFlip(0.1),
+                v2.RandAugment(num_ops = 1, magnitude= 7, num_magnitude_bins= 51, interpolation = InterpolationMode.BILINEAR),
             ])
         else:
             self.transform_ops = transforms.Compose([
-                transforms.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
-                transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+                v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
+                v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
                 # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])   # to have pixel values close between -1 and 1 (imagenet distribution)
                 # transforms.Normalize(mean=[0.5,0.5,0.5], std=[0.5,0.5,0.5])   # normlization between -1 and 1, using the whole range uniformly, formula: (pixel - mean)/std
             ])
@@ -547,6 +562,10 @@ class CDDB(Dataset):
         
         return img, label_vector
 
+#TODO
+class CDDB_Partial(Dataset):
+    def __init__(self):
+        super(CDDB_Partial, self).__init__()
 
 ##################################################### [Out-Of-Distribution Detection] ################################################################
 
@@ -792,7 +811,7 @@ if __name__ == "__main__":
         pass
     
     
-    data = CDDB_binary_Partial("easy", augment = True)
+    data = CDDB_binary_Partial("easy", augment = False)
     x,y = data.__getitem__(0)
     print(x)
     showImage(x)

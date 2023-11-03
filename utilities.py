@@ -9,6 +9,7 @@ import  torch                               as T
 from    torch.utils.data                    import DataLoader, random_split, ConcatDataset
 from    tqdm                                import tqdm
 from    torchvision                         import transforms
+from    torchvision.transforms              import v2    # new version for tranformation methods
 from    torchvision.transforms.functional   import InterpolationMode
 
 
@@ -27,7 +28,7 @@ def mergeDatasets(dataset1, dataset2):
     """ alias for ConcatDataset from pytorch"""
     return ConcatDataset([dataset1, dataset2])
 
-def sampleValidSet(trainset, testset, useTestSet = True, verbose = False):
+def sampleValidSet(trainset,testset,useTestSet = True, verbose = False):
     """
         Function used the partion data to have also a validatio set for training.
         The validation set is composed by the 10% of the overall amount of samples.
@@ -40,9 +41,19 @@ def sampleValidSet(trainset, testset, useTestSet = True, verbose = False):
             testset  (T.Dataset): The test set
             useTestSet (boolean): flag to select which source is used to sample the data
             verbose (boolean):    flag to active descriptive prints
+            
+        Returns:
+            if useTestSet is True:
+                validset  (pytorch.Dataset),
+                testset   (pytorch.Dataset)
+            if useTestSet is False:
+                trainset  (pytorch.Dataset),
+                validset  (pytorch.Dataset),
+                testset   (pytorch.Dataset)
     """
     
     generator = T.Generator().manual_seed(22)
+
     all_data = len(trainset) + len(testset)
     
     if verbose:
@@ -54,7 +65,8 @@ def sampleValidSet(trainset, testset, useTestSet = True, verbose = False):
         print("TestSet  [%]",round(100*(len(testset)/all_data),2),"\n")
     
     
-    if not(useTestSet): 
+    # if not(useTestSet) and (not trainset is None): 
+    if not(useTestSet):
         """
             split data with the following strategy, validation set is the 10% of all data.
             These samples are extract half from training set and half from test set.
@@ -80,6 +92,13 @@ def sampleValidSet(trainset, testset, useTestSet = True, verbose = False):
         validset = ConcatDataset([val_p1, val_p2])
         if verbose: print("validation length ->", len(validset))
         
+        if verbose:
+            print("\nData percentage distribution over sets after partition:")
+            print("TrainSet [%]",round(100*(len(trainset)/all_data),2) )
+            print("TestSet  [%]",round(100*(len(testset)/all_data),2)  )
+            print("ValidSet [%]",round(100*(len(validset)/all_data),2)   )
+        
+        return trainset, validset, testset
     else:
         """
             split data with the following strategy, validation set is the 10% of all data.
@@ -93,17 +112,18 @@ def sampleValidSet(trainset, testset, useTestSet = True, verbose = False):
             print(f"splitting test (- {perc_test}%) ->",len(validset), len(testset))
             print("validation length", len(validset))
 
-    if verbose:
-        print("\nData percentage distribution over sets after partition:")
-        print("TrainSet [%]",round(100*(len(trainset)/all_data),2) )
-        print("TestSet  [%]",round(100*(len(testset)/all_data),2)  )
-        print("ValidSet [%]",round(100*(len(validset)/all_data),2)   )
+        if verbose:
+            print("\nData percentage distribution over sets after partition:")
+            print("TrainSet [%]",round(100*(len(trainset)/all_data),2) )
+            print("TestSet  [%]",round(100*(len(testset)/all_data),2)  )
+            print("ValidSet [%]",round(100*(len(validset)/all_data),2)   )
 
-    return trainset, validset, testset
+        return validset, testset
+        
 
 ##################################################  image transformation/data augmentation ############################################
 
-def transfResnet50(isTensor = False):
+def get_transformation_Resnet50(isTensor = False):
     """ function that returns trasnformation operations sequence for the image input to be compatible for ResNet50 model
 
     Returns:
@@ -111,7 +131,6 @@ def transfResnet50(isTensor = False):
     """
     if isTensor:
         transform_ops = transforms.Resize((224, 224), interpolation= InterpolationMode.BILINEAR, antialias= True),
-    
     else: 
         transform_ops = transforms.Compose([
             transforms.Resize((224, 224), interpolation= InterpolationMode.BILINEAR, antialias= True),
@@ -119,6 +138,15 @@ def transfResnet50(isTensor = False):
         ])
     
     return transform_ops
+
+def augment_v1(x,w  =224,h=224):
+    x = v2.Resize((w, h), interpolation= InterpolationMode.BILINEAR, antialias= True)(x)
+    x = v2.ToTensor()(x)   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+    # x = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])   # to have pixel values close between -1 and 1 (imagenet distribution)
+    x = v2.RandomHorizontalFlip(0.5)(x)
+    x = v2.RandomVerticalFlip(0.1)(x)
+    x = v2.RandAugment(num_ops = 1, magnitude= 7, num_magnitude_bins= 51, interpolation = InterpolationMode.BILINEAR)(x)
+    return x
 
 #TODO implement normalizer for learning 
 
@@ -156,40 +184,6 @@ def add_distortion_noise(batch_input):
 
 ##################################################  Save/Load functions ###############################################################
 
-def showImage(img, name= "unknown", has_color = True):
-    """ plot image using matplotlib
-
-    Args:
-        img (np.array/T.Tensor/Image): image data in RGB format, [height, width, color_channel]
-    """
-    
-    # if torch tensor convert to numpy array
-    if isinstance(img, T.Tensor):
-        try:
-            img = img.numpy()  # image tensor of the format [C,H,W]
-        except:
-            img = img.detach().cpu().numpy()
-            
-        # move back color channel has last dimension, (in Tensor the convention for the color channel is to use the first after the batch)
-        img = np.moveaxis(img,0,-1)
-    
-    
-    plt.figure()
-    
-    if isinstance(img, (Image.Image, np.ndarray)): # is Pillow Image istance
-        
-        # if numpy array check the correct order of the dimensions
-        if isinstance(img, np.ndarray):
-            if has_color and img.shape[2] != 3:
-                img = np.moveaxis(img,0,-1)
-            elif not(has_color) and img.shape[2] != 1:
-                img = np.moveaxis(img,0,-1)
-        plt.title(name)       
-        plt.imshow(img)
-        plt.show()
-    else:
-        print("img data is not valid for the printing")
-        
 def saveModel(model, path_save):
     """ function to save weights of pytorch model as checkpoints (dict)
 
@@ -236,6 +230,40 @@ def loadJson(path):
     return data
 
 ##################################################  Plot/show functions ###############################################################
+
+def showImage(img, name= "unknown", has_color = True):
+    """ plot image using matplotlib
+
+    Args:
+        img (np.array/T.Tensor/Image): image data in RGB format, [height, width, color_channel]
+    """
+    
+    # if torch tensor convert to numpy array
+    if isinstance(img, T.Tensor):
+        try:
+            img = img.numpy()  # image tensor of the format [C,H,W]
+        except:
+            img = img.detach().cpu().numpy()
+            
+        # move back color channel has last dimension, (in Tensor the convention for the color channel is to use the first after the batch)
+        img = np.moveaxis(img,0,-1)
+    
+    
+    plt.figure()
+    
+    if isinstance(img, (Image.Image, np.ndarray)): # is Pillow Image istance
+        
+        # if numpy array check the correct order of the dimensions
+        if isinstance(img, np.ndarray):
+            if has_color and img.shape[2] != 3:
+                img = np.moveaxis(img,0,-1)
+            elif not(has_color) and img.shape[2] != 1:
+                img = np.moveaxis(img,0,-1)
+        plt.title(name)       
+        plt.imshow(img)
+        plt.show()
+    else:
+        print("img data is not valid for the printing")
 
 def plot_loss(loss_array, title_plot = None, path_save = None, duration_timer = 2500):
     """ save and plot the loss by epochs

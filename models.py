@@ -207,6 +207,16 @@ class ResNet(nn.Module):
             expected input of this type -> batch,color,width,height
         """
         summary(self, input_shape)
+     
+    def getLayers(self):
+        return dict(self.named_parameters())
+    
+    def freeze(self):
+        for name, param in self.named_parameters():
+            param.requires_grad = False
+    
+    def isCuda(self):
+        return next(self.parameters()).is_cuda
          
     def forward(self, x):
         
@@ -265,7 +275,6 @@ class ResNet_ImageNet():   # modfify first layer if use grayscale images
         """
         summary(self.model, input_shape)
     
-    
     def to(self, device):
         self.model.to(device)
     
@@ -286,15 +295,19 @@ class ResNet_ImageNet():   # modfify first layer if use grayscale images
         
 
 if __name__ == "__main__":
-    # resnet = ResNet()
     device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
+    # resnet = ResNet()
     # resnet.to(device)
+    # print(resnet.isCuda())
+    
     # input_example = T.rand(size=(3,224,224))
+    
     # batch_example = input_example.unsqueeze(0)
+    # print(batch_example.shape)
     # resnet.getSummary(input_shape= input_example.shape)
     
-    resnet = ResNet_ImageNet()
+    resnet = ResNet_ImageNet(n_channels=3)
     resnet.to(device)
     input_example = T.rand(size=(3,224,224)).to(device)
-    print(input_example.is_cuda)
+    # print(input_example.is_cuda)
     resnet.getSummary(input_shape= input_example.shape)
