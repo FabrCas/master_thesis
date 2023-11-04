@@ -27,10 +27,11 @@ from    models              import ResNet_ImageNet, ResNet
 
 class BinaryClassifier(object):
     
-    def __init__(self, useGPU = True, batch_size = 32):
+    def __init__(self, useGPU, batch_size, model_type):
         super(BinaryClassifier, self).__init__()
-        self.useGPU = useGPU
-        self.batch_size = batch_size
+        self.model_type     = model_type
+        self.useGPU         = useGPU
+        self.batch_size     = batch_size
         
         # path 2 save
         self.path_models    = "./models/bin_class"
@@ -175,15 +176,14 @@ class DFD_BinClassifier_v1(BinaryClassifier):
         Args:
             useGPU (bool, optional): flag to use CUDA device or cpu hardware by the model. Defaults to True.
         """
-        super(DFD_BinClassifier_v1, self).__init__(useGPU = useGPU, batch_size = batch_size)
-        self.model_type = model_type
+        super(DFD_BinClassifier_v1, self).__init__(useGPU = useGPU, batch_size = batch_size, model_type = model_type)
             
         # load dataset & dataloader
         self.train_dataset = CDDB_binary(train = True)
         self.test_dataset = CDDB_binary(train = False)
         
         # load model
-        if model_type == "resnet_pretrained":   # fine-tuning
+        if self.model_type == "resnet_pretrained":   # fine-tuning
             self.model = ResNet_ImageNet(n_classes = 2).getModel()
             self.path2model_results   = os.path.join(self.path_results, "ImageNet")     
         else:                                   # training from scratch
@@ -314,36 +314,47 @@ class DFD_BinClassifier_v1(BinaryClassifier):
 
 class DFD_BinClassifier_v2(BinaryClassifier):
     """
-        binary classifier for deepfake detection using partial CDDB dataset in the easy scenario configuration (ID data represented by face images),
-        this second version includes usage of ResNet model, with validation set used during training (70% training, 10% validation, 20% testing),
+        binary classifier for deepfake detection using partial CDDB dataset for the chosen scenario configuration.
+        This second version includes usage of ResNet model, with validation set used during training (70% training, 10% validation, 20% testing),
         and data augementation.
         Respect the v1 this version also includes the use of validation set for early stopping.
         
         training model folders:
-        models/bin_class/resnet50_ImageNet_13-10-2023
+        
     """
-    def __init__(self, useGPU = True, batch_size = 32, model_type = "resnet_pretrained"):
+    def __init__(self, scenario, useGPU = True, batch_size = 32, model_type = "resnet_pretrained"):
         """ init classifier
 
         Args:
+            scenario (str): select between "content","group","mix" scenarios:
+            - "content", data (real/fake for each model that contains a certain type of images) from a pseudo-category,
+            chosen only samples with faces, OOD -> all other data that contains different subject from the one in ID.
+            - "group", ID -> assign 2 data groups from CDDB (deep-fake resources, non-deep-fake resources),
+            OOD-> the remaining data group (unknown models)
+            - "mix", mix ID and ODD without maintaining the integrity of the CDDB groups, i.e take models samples from
+            1st ,2nd,3rd groups and do the same for OOD without intersection.
+            
             useGPU (bool, optional): flag to use CUDA device or cpu hardware by the model. Defaults to True.
+            batch_size (int, optional): batch size used by dataloaders. Defaults is 32.
+            model_type (str, optional): choose which model to use, a pretrained ResNet or one from scratch. Defaults is "resnet_pretrained".
         """
-        super(DFD_BinClassifier_v2, self).__init__(useGPU = useGPU, batch_size = batch_size)
-        self.model_type = model_type
+        super(DFD_BinClassifier_v2, self).__init__(useGPU = useGPU, batch_size = batch_size, model_type = model_type)
+        self.scenario = scenario
             
         # load dataset & dataloader
-        self.train_dataset  = CDDB_binary_Partial(scenario = "easy", train = True,  ood = False, augment= True)
-        test_dataset   = CDDB_binary_Partial(scenario = "easy", train = False, ood = False, augment= False)
+        self.train_dataset  = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False, augment= True)
+        test_dataset        = CDDB_binary_Partial(scenario = self.scenario, train = False, ood = False, augment= False)
         self.valid_dataset, self.test_dataset = sampleValidSet(trainset= self.train_dataset, testset= test_dataset, useTestSet = True, verbose = True)
         
         # load model
-        if model_type == "resnet_pretrained":   # fine-tuning
+        if self.model_type == "resnet_pretrained":   # fine-tuning
             self.model = ResNet_ImageNet(n_classes = 2).getModel()
-            self.path2model_results   = os.path.join(self.path_results, "ImageNet")     
+            self.path2model_results   = os.path.join(self.path_results, "ImageNet")  # this give a simple name when initialized the module, but training and loading the model, this changes
         else:                                   # training from scratch
-            self.model = ResNet()
+            self.model = ResNet(depth_level= 2)
             self.init_weights_kaimingNormal()    # initializaton of the wights
             self.path2model_results   = os.path.join(self.path_results, "RandomIntialization")
+            
             
         self.model.to(self.device)
         
@@ -353,34 +364,81 @@ class DFD_BinClassifier_v2(BinaryClassifier):
         
         # learning parameters (default)
         self.lr                     = 1e-5
-        self.n_epochs               = 20
+        self.n_epochs               = 40
         self.weight_decay           = 0.001          # L2 regularization term 
-        self.tolerance              = 5              # early stopping tolerance
+        self.patience               = 5              # early stopping patience
         self.early_stopping_trigger = "loss"        # values "acc" or "loss"
         
-    def valid(self):
+        self._check_parameters()
+     
+    def _check_parameters(self):
+        if not(self.early_stopping_trigger in ["loss", "acc"]):
+            raise ValueError('The early stopping trigger value must be chosen between "loss" and "acc"')
+        
+     
+    def valid(self, epoch, valid_dataloader):
         """
             validation method used mainly for the Early stopping training
         """
+        print (f"Validation for the epoch: {epoch} ...")
         
-        # define valid dataloader
-        valid_dataloader = DataLoader(self.valid_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= False, pin_memory= True)
+        # set temporary evaluation mode and empty cuda cache
+        self.model.eval()
+        T.cuda.empty_cache()
         
-        print(len(valid_dataloader))
+        # list of losses
+        losses = []
+        # counters to compute accuracy
+        correct_predictions = 0
+        num_predictions = 0
+        
+        for (x,y) in tqdm(valid_dataloader):
+            
+            x = x.to(self.device)
+            # y = y.to(self.device).to(T.float32)
+            y = y.to(self.device).to(T.float32)
+            
+            with T.no_grad():
+                with autocast():
+                    
+                    logits = self.model.forward(x)
+                    
+                    if self.early_stopping_trigger == "loss":
+                        loss = self.bce(input=logits, target=y)   # logits bce version
+                        losses.append(loss.item())
+                        
+                    elif self.early_stopping_trigger == "acc":
+                        probs = self.sigmoid(logits)
+ 
+                        # prepare predictions and targets
+                        y_pred  = T.argmax(probs, -1).cpu().numpy()  # both are list of int (indices)
+                        y       = T.argmax(y, -1).cpu().numpy()
+                        
+                        # update counters
+                        correct_predictions += (y_pred == y).sum()
+                        num_predictions += y_pred.shape[0]
+                        
+        # go back to train mode 
+        self.model.train()
         
         if self.early_stopping_trigger == "loss":
-            pass
+            # return the average loss
+            loss_valid = sum(losses)/len(losses)
+            print(f"Loss from validation: {loss_valid}")
+            return loss_valid
         elif self.early_stopping_trigger == "acc":
-            pass
-        else:
-            raise NotImplementedError()
+            # return accuracy
+            accuracy_valid = correct_predictions / num_predictions
+            print(f"Accuracy from validation: {accuracy_valid}")
+            return accuracy_valid
     
     def train(self, name_train):
         
         # define train dataloader
         train_dataloader = DataLoader(self.train_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
         
-        # can be included the valid dataloader, look for sampleValidSet in utilities.py module
+        # define valid dataloader
+        valid_dataloader = DataLoader(self.valid_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= False, pin_memory= True)
         
         # compute number of steps for epoch
         n_steps = len(train_dataloader)
@@ -401,12 +459,20 @@ class DFD_BinClassifier_v2(BinaryClassifier):
         # intialize data structure to keep track of training performance
         loss_epochs = []
         
-        # training loop over epochs
+        # initialzie the patience counter and history for early stopping
+        valid_history       = []
+        counter_stopping    = 0
+        last_epoch          = 0
+        
+        # loop over epochs
         for epoch_idx in range(self.n_epochs):
             print(f"\n             [Epoch {epoch_idx+1}]             \n")
             
             # define cumulative loss for the current epoch
             loss_epoch = 0
+            
+            # update the last epoch for training the model
+            last_epoch = epoch_idx +1
             
             # loop over steps
             for step_idx,(x,y) in tqdm(enumerate(train_dataloader), total= n_steps):
@@ -429,7 +495,7 @@ class DFD_BinClassifier_v2(BinaryClassifier):
                     loss = self.bce(input=logits, target=y)   # logits bce version
                 
                 # update total loss    
-                loss_epoch += loss.item()
+                loss_epoch += loss.item()   # from tensor with single value to int and accumulation
                 
                 # loss backpropagation
                 scaler.scale(loss).backward()
@@ -449,7 +515,34 @@ class DFD_BinClassifier_v2(BinaryClassifier):
             print("Average loss: {}".format(avg_loss))
             
             # include validation here if needed
-            self.valid()
+            criterion = self.valid(epoch=epoch_idx+1, valid_dataloader= valid_dataloader)
+            
+            # early stopping update
+            if self.early_stopping_trigger == "loss":
+                valid_history.append(criterion)             
+                if epoch_idx > 0:
+                    if valid_history[-1] > valid_history[-2]:
+                        if counter_stopping >= self.patience:
+                            print("Early stop")
+                            break
+                        else:
+                            print("Pantience counter increased")
+                            counter_stopping += 1
+                    else:
+                        print("loss decreased respect previous epoch")
+                        
+            elif self.early_stopping_trigger == "acc":
+                valid_history.append(criterion)
+                if epoch_idx > 0:
+                    if valid_history[-1] < valid_history[-2]:
+                        if counter_stopping >= self.patience:
+                            print("Early stop")
+                            break
+                        else:
+                            print("Pantience counter increased")
+                            counter_stopping += 1
+                    else:
+                        print("Accuracy increased respect previous epoch")
                 
             # break
         
@@ -458,16 +551,16 @@ class DFD_BinClassifier_v2(BinaryClassifier):
         current_date = date.today().strftime("%d-%m-%Y")
         
         path_model_folder       = os.path.join(self.path_models,  name_train + "_" + current_date)
-        name_model_file         = str(self.n_epochs) +'.ckpt'
+        name_model_file         = str(last_epoch) +'.ckpt'
         path_model_save         = os.path.join(path_model_folder, name_model_file)  # path folder + name file
         
         path_results_folder     = os.path.join(self.path_results, name_train + "_" + current_date)
-        name_loss_file          = 'loss_'+ str(self.n_epochs) +'.png'
+        name_loss_file          = 'loss_'+ str(last_epoch) +'.png'
         path_lossPlot_save      = os.path.join(path_results_folder, name_loss_file)
         
         # save info for the new model trained
         self.path2model_results = path_results_folder
-        self.modelEpochs         = self.n_epochs
+        self.modelEpochs        = last_epoch
         
         # create model and results folder if not already present
         if (not os.path.exists(path_model_folder)):
@@ -499,13 +592,25 @@ if __name__ == "__main__":
         # bin_classifier.test()
         # bin_classifier.getLayers(show = True)
     
-    def binary_classifier_v2():
-        bin_classifier = DFD_BinClassifier_v2(useGPU= True, model_type="resnet_pretrained")
-        bin_classifier.getLayers(show = True)
-        # bin_classifier.valid()
+    def test_binary_classifier_v2():
+        bin_classifier = DFD_BinClassifier_v2(scenario = "content", useGPU= True, model_type="resnet_pretrained")
+        # bin_classifier.load("resnet50_ImageNet_13-10-2023", 20)
+        # bin_classifier.getLayers(show = True)
         
+        train_dataset  = CDDB_binary_Partial(scenario = "content", train = True,  ood = False, augment= True)
+        test_dataset   = CDDB_binary_Partial(scenario = "content", train = False, ood = False, augment= False)
+        valid_dataset, test_dataset = sampleValidSet(trainset= train_dataset, testset= test_dataset, useTestSet = True, verbose = True)
+        valid_dataloader = DataLoader(valid_dataset, batch_size= 32, num_workers= 8, shuffle= False, pin_memory= True)
+        bin_classifier.early_stopping_trigger = "acc"
+        print(bin_classifier.valid(epoch=0, valid_dataloader= valid_dataloader))
         
-    binary_classifier_v2()
+    def train_v2_content_scenario1():
+        bin_classifier = DFD_BinClassifier_v2(scenario = "content", useGPU= True, model_type="resnet_pretrained")
+        bin_classifier.early_stopping_trigger = "loss"
+        bin_classifier.train(name_train="faces_resnet50ImageNet")   #name with the pattern {data scenario}_{model name}, the algorithm include other name decorations
+            
+        
+    train_v2_content_scenario1()
 
    
     

@@ -46,9 +46,9 @@ DF_GROUP_CLASSES    = {
 
 # dictionary which define what content/class use in the different scenarios
 CATEGORIES_SCENARIOS_ID = {
-                        "easy": ["faces"],                                                              # DF_GROUP_CONTENT
-                        "mid":  ["deepfake sources", "non-deepfake sources"],                           # DF_GROUP_CLASSES
-                        "hard": ["biggan","gaugan","stargan_gf", "deepfake", "glow", "crn","wild"]      # models name
+                        "content": ["faces"],                                                              # DF_GROUP_CONTENT
+                        "group":  ["deepfake sources", "non-deepfake sources"],                           # DF_GROUP_CLASSES
+                        "mix": ["biggan","gaugan","stargan_gf", "deepfake", "glow", "crn","wild"]      # models name
                         }
 
 
@@ -205,14 +205,21 @@ class CDDB_binary(Dataset):
 class CDDB_binary_Partial(Dataset):
     """_
         Dataset class that uses the partial data from CDDB dataset for binary deepfake detection.
-        Selecting the study case ("easy", "medium", "hard") the data are orgnized,
-        using remaining samples as OOD data
+        Selecting the study case ("content","group","mix") the data are organized,
+        using remaining samples as OOD data.
     """
     def __init__(self, scenario, width_img= 224, height_img = 224, train = True, ood = False, augment = False):
         """_summary_
 
         Args:
-            scenario (str): select between "easy","mid","hard" scenarios
+            scenario (str): select between "content","group","mix" scenarios:
+                - "content", data (real/fake for each model that contains a certain type of images) from a pseudo-category,
+                chosen only samples with faces, OOD -> all other data that contains different subject from the one in ID.
+                - "group", ID -> assign wo data group from CDDB (deep-fake resources, non-deep-fake resources),
+                OOD-> the remaining data group (unknown models)
+                - "mix", mix ID and ODD without maintaining the integrity of the CDDB groups, i.e take models samples from
+                1st ,2nd,3rd groups and do the same for OOD without intersection.
+                
             width_img (int, optional): image width reshape. Defaults to 224.
             height_img (int, optional): image height reshape. Defaults to 224.
             train (bool, optional): boolean flag to retrieve trainset, otherwise testset. Defaults to True.
@@ -222,7 +229,7 @@ class CDDB_binary_Partial(Dataset):
         super(CDDB_binary_Partial,self).__init__()
         
         # boolean flags for data to return
-        self.scenario   = scenario
+        self.scenario   = scenario.lower().strip()
         self.train      = train
         self.ood        = ood
         self.augment    = augment
@@ -256,14 +263,10 @@ class CDDB_binary_Partial(Dataset):
         self.y = None
         
         # scan the data    
-        if   scenario.lower().strip() == "easy":
-            self._scanData(scenario = "easy")
-        elif scenario.lower().strip() == "mid":
-            self._scanData(scenario = "mid")
-        elif scenario.lower().strip() == "hard":
-            self._scanData(scenario = "hard")
+        if  scenario in ["content","group","mix"]:
+            self._scanData(scenario = scenario)
         else:
-            raise ValueError("wrong selection for the scenario parameter, choose between: easy,mid,hard")
+            raise ValueError("wrong selection for the scenario parameter, choose between: content, group and mix")
         
 
     def _scanData(self, scenario, real_folder = "0_real", fake_folder = "1_fake"):
@@ -284,15 +287,15 @@ class CDDB_binary_Partial(Dataset):
         cateogories = CATEGORIES_SCENARIOS_ID[scenario]
             
         ID_groups   = []
-        # handle easy and medium scenario
-        if scenario == "easy" or scenario == "mid":
+        # handle content and group scenario
+        if scenario == "content" or scenario == "group":
             for category in cateogories:
-                if scenario == "easy":
+                if scenario == "content":
                     ID_groups = [*ID_groups, *DF_GROUP_CONTENT[category]]
-                elif scenario == "mid":
+                elif scenario == "group":
                     ID_groups = [*ID_groups, *DF_GROUP_CLASSES[category]]
                     
-        # handle hard scenario  
+        # handle mix scenario  
         else:  
             ID_groups = cateogories
 
@@ -804,14 +807,14 @@ if __name__ == "__main__":
         print(sample[1])
     
     def test_partial_bin_cddb():
-        data = CDDB_binary_Partial(scenario="hard", ood = True, train = True)
+        data = CDDB_binary_Partial(scenario="mix", ood = True, train = True)
         # data  = CDDB_binary()
     
     def test_multi_CDDB():
         pass
     
     
-    data = CDDB_binary_Partial("easy", augment = False)
+    data = CDDB_binary_Partial("content", augment = False)
     x,y = data.__getitem__(0)
     print(x)
     showImage(x)

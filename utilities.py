@@ -30,7 +30,7 @@ def mergeDatasets(dataset1, dataset2):
 
 def sampleValidSet(trainset,testset,useTestSet = True, verbose = False):
     """
-        Function used the partion data to have also a validatio set for training.
+        Function used to partiton data to have also a validatio set for training.
         The validation set is composed by the 10% of the overall amount of samples.
         you can choose to sample from both test and training set (from both is taken the 5%)
         or only from the test set (in this case is collected the 10% from only this set).
@@ -51,7 +51,7 @@ def sampleValidSet(trainset,testset,useTestSet = True, verbose = False):
                 validset  (pytorch.Dataset),
                 testset   (pytorch.Dataset)
     """
-    
+    print("Separating data for the validation Set...")
     generator = T.Generator().manual_seed(22)
 
     all_data = len(trainset) + len(testset)
