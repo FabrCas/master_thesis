@@ -265,6 +265,25 @@ def showImage(img, name= "unknown", has_color = True):
     else:
         print("img data is not valid for the printing")
 
+def show_img_grid(imgs, titles):
+    
+    def show_img(img, ax=None, title=None):
+        """Shows a single image."""
+        if ax is None:
+            ax = plt.gca()
+        ax.imshow(img[...])
+        ax.set_xticks([])
+        ax.set_yticks([])
+        if title:
+            ax.set_title(title)
+            
+    """ Shows a grid of images. imgs a list of numpy array"""
+    n = int(np.ceil(len(imgs)**.5))
+    _, axs = plt.subplots(n, n, figsize=(3 * n, 3 * n))
+    for i, (img, title) in enumerate(zip(imgs, titles)):
+        # img = (img + 1) / 2  # Denormalize if -1< 1 is the interval
+        show_img(img, axs[i // n][i % n], title)
+
 def plot_loss(loss_array, title_plot = None, path_save = None, duration_timer = 2500):
     """ save and plot the loss by epochs
 
@@ -276,10 +295,6 @@ def plot_loss(loss_array, title_plot = None, path_save = None, duration_timer = 
     """
     def close_event():
         plt.close()
-    
-    # check if the folder exists otherwise create it
-    if (path_save is not None) and (not os.path.exists(path_save)):
-        os.makedirs(path_save)
     
     # define x axis values
     x_values = list(range(1,len(loss_array)+1))
@@ -466,16 +481,17 @@ def metrics_binClass(preds, targets, pred_probs, epoch_model="unknown", path_sav
             print(v)
     
     
-        # plot and save (if path specified) confusion matrix
+    # plot and save (if path specified) confusion matrix
     plot_cm(cm = metrics_results['confusion_matrix'], labels = ["real", "fake"], title_plot = None, path_save = path_save)
+    
+    
+    metrics_results['confusion_matrix'] = metrics_results['confusion_matrix'].tolist()
     
     # save the results (JSON file) if a path has been provided
     if path_save is not None:
         # metrics_results_ = metrics_results.copy()
         # metrics_results_['confusion_matrix'] = metrics_results_['confusion_matrix'].tolist()
         saveJson(os.path.join(path_save, 'binaryMetrics_' + epoch_model + '.json'), metrics_results)
-    
-    metrics_results['confusion_matrix'] = metrics_results['confusion_matrix'].tolist()
     
     return metrics_results
 

@@ -367,7 +367,7 @@ class DFD_BinClassifier_v2(BinaryClassifier):
         self.n_epochs               = 40
         self.weight_decay           = 0.001          # L2 regularization term 
         self.patience               = 5              # early stopping patience
-        self.early_stopping_trigger = "loss"        # values "acc" or "loss"
+        self.early_stopping_trigger = "acc"        # values "acc" or "loss"
         
         self._check_parameters()
      
@@ -606,11 +606,25 @@ if __name__ == "__main__":
         
     def train_v2_content_scenario1():
         bin_classifier = DFD_BinClassifier_v2(scenario = "content", useGPU= True, model_type="resnet_pretrained")
-        bin_classifier.early_stopping_trigger = "loss"
-        bin_classifier.train(name_train="faces_resnet50ImageNet")   #name with the pattern {data scenario}_{model name}, the algorithm include other name decorations
+        bin_classifier.early_stopping_trigger = "acc"
+        bin_classifier.train(name_train="faces_resnet_50ImageNet")   #name with the pattern {data scenario}_{model name}, the algorithm include other name decorations
             
-        
-    train_v2_content_scenario1()
+    def train_v2_content_scenario2():
+        bin_classifier = DFD_BinClassifier_v2(scenario = "group", useGPU= True, model_type="resnet_pretrained")
+        bin_classifier.early_stopping_trigger = "acc"
+        bin_classifier.train(name_train="groups_resnet50_ImageNet")   #name with the pattern {data scenario}_{model name}, the algorithm include other name decorations
+    
+    def train_v2_content_scenario3():
+        bin_classifier = DFD_BinClassifier_v2(scenario = "mix", useGPU= True, model_type="resnet_pretrained")
+        bin_classifier.early_stopping_trigger = "acc"
+        bin_classifier.train(name_train="mix_resnet50_ImageNet")   #name with the pattern {data scenario}_{model name}, the algorithm include other name decorations
+    
+    def test_v2(name_model, epoch, scenario):
+        bin_classifier = DFD_BinClassifier_v2(scenario = scenario, useGPU= True, model_type="resnet_pretrained")
+        bin_classifier.load(name_model, epoch)
+        bin_classifier.test()
+    
+    test_v2("mix_resnet50_ImageNet_05-11-2023", 21, "mix")
 
    
     

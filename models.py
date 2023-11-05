@@ -292,7 +292,7 @@ class ResNet_ImageNet():   # modfify first layer if use grayscale images
         x = self.model(x)
         return x
     
-        
+#_____________________________________Vision Transformer (ViT)__________________________________________        
 
 if __name__ == "__main__":
     device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
