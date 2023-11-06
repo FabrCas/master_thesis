@@ -11,7 +11,7 @@ from    torch.optim         import Adam, lr_scheduler
 from    torch.cuda.amp      import GradScaler, autocast
 from    torch.utils.data    import DataLoader
 
-from    utilities           import plot_loss, saveModel, metrics_binClass, loadModel, test_num_workers, sampleValidSet
+from    utilities           import plot_loss, saveModel, metrics_binClass, loadModel, test_num_workers, sampleValidSet, duration
 from    dataset             import CDDB_binary, CDDB_binary_Partial
 from    models              import ResNet_ImageNet, ResNet
 
@@ -624,7 +624,7 @@ if __name__ == "__main__":
         bin_classifier.load(name_model, epoch)
         bin_classifier.test()
     
-    test_v2("mix_resnet50_ImageNet_05-11-2023", 21, "mix")
+    # test_v2("mix_resnet50_ImageNet_05-11-2023", 21, "mix")
 
    
     

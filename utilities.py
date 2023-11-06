@@ -11,7 +11,7 @@ from    tqdm                                import tqdm
 from    torchvision                         import transforms
 from    torchvision.transforms              import v2    # new version for tranformation methods
 from    torchvision.transforms.functional   import InterpolationMode
-
+from    time                                import time
 
 #  binary classification metrics
 from    sklearn.metrics     import precision_score, recall_score, f1_score, confusion_matrix, hamming_loss, jaccard_score, accuracy_score
@@ -121,6 +121,80 @@ def sampleValidSet(trainset,testset,useTestSet = True, verbose = False):
         return validset, testset
         
 
+def balanceLabels(self, dataloader, verbose = False):
+    """ 
+        used to make the dataset more balanced (downsampling)
+    """
+    
+    # compute occurrences of labels
+    class_freq={}
+    labels = []
+    
+    total = len(dataloader)
+    for y  in tqdm(dataloader, total= total):
+        l = y.item()
+        if l not in class_freq.keys():
+            class_freq[l] = 1
+        else:
+            class_freq[l] = class_freq[l]+1
+        labels.append(l)
+    
+    n_labels = len(labels)   
+    
+    # sorting the dictionary by key
+    class_freq = {k: class_freq[k] for k in sorted(class_freq.keys())}
+    
+    if verbose: print("class frequency: ->", class_freq)
+    
+    min_freq = min(class_freq.items(), key= lambda x: x[1])
+    if verbose: print("minimum frequency ->", min_freq)
+    
+    max_freq = max(class_freq.items(), key= lambda x: x[1])
+    if verbose: print("maximum frequency ->", max_freq)
+    
+    # indices for each label
+    indices_0 = [idx for idx, val in enumerate(labels) if val == 0]
+    indices_1 = [idx for idx, val in enumerate(labels) if val == 1]
+    indices_2 = [idx for idx, val in enumerate(labels) if val == 2]
+    indices_3 = [idx for idx, val in enumerate(labels) if val == 3]
+    
+    # complete list of indices
+    indices = {0:indices_0, 1:indices_1, 2:indices_2, 3:indices_3}
+    
+    if verbose: print("lenght indices:", len(indices_0), len(indices_1), len(indices_2), len(indices_3))
+
+    # dict of sampled indices
+    sampled_indices = {}
+    
+    for k,v in class_freq.items():
+        if k != min_freq[0]:
+            multiplier = ((n_labels - v)/(n_labels)) * 0.25
+            
+            
+            # 20% of the actual values + the number of minimum samples
+            n_sample = int(v*multiplier) # + min_freq[1]
+            if n_sample > v:
+                n_sample = v
+            
+            if verbose: print(f"n_sample for {k} -> {n_sample}")
+            sampled_indices[k] = random.sample(indices[k], n_sample)
+        else:
+            if verbose: print(f"n_sample for {k} -> {v}")
+            
+            sampled_indices[k] = indices[k]
+        
+
+    # build the flat list with the sorted indices selected
+    final_list = []
+    for k,v in sampled_indices.items():
+        final_list = [*final_list, *v] 
+    
+    final_list = sorted(final_list)
+    
+    if verbose: print("number of samples after the reduction: ", len(final_list))
+
+    return class_freq, final_list
+
 ##################################################  image transformation/data augmentation ############################################
 
 def get_transformation_Resnet50(isTensor = False):
@@ -135,6 +209,7 @@ def get_transformation_Resnet50(isTensor = False):
         transform_ops = transforms.Compose([
             transforms.Resize((224, 224), interpolation= InterpolationMode.BILINEAR, antialias= True),
             transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+            # transforms.Normalize(mean=[0.5,0.5,0.5], std=[0.5,0.5,0.5])   # normlization between -1 and 1, using the whole range uniformly, formula: (pixel - mean)/std
         ])
     
     return transform_ops
@@ -149,7 +224,6 @@ def augment_v1(x,w  =224,h=224):
     return x
 
 #TODO implement normalizer for learning 
-
 class NormalizeByChannelMeanStd(T.nn.Module):
     def __init__(self, mean, std):
         super(NormalizeByChannelMeanStd, self).__init__()
@@ -166,7 +240,6 @@ class NormalizeByChannelMeanStd(T.nn.Module):
     def extra_repr(self):
         return 'mean={}, std={}'.format(self.mean, self.std)
 
-
 def normalize_fn(tensor, mean, std):
     """Differentiable version of torchvision.functional.normalize"""
     # here we assume the color channel is in at dim=1, so: [batch_size, color_channel, height, width]
@@ -181,7 +254,6 @@ def add_distortion_noise(batch_input):
     distortion = np.random.uniform(low=0.9, high=1.2)
     return batch_input + np.random.normal(size=batch_input.shape, scale=1e-9 + distortion)
     
-
 ##################################################  Save/Load functions ###############################################################
 
 def saveModel(model, path_save):
@@ -495,7 +567,6 @@ def metrics_binClass(preds, targets, pred_probs, epoch_model="unknown", path_sav
     
     return metrics_results
 
-
 def metrics_OOD(targets, pred_probs, pos_label = 1, path_save = None):
     
     # fpr, tpr, _ = roc_curve(targets, pred_probs, pos_label=1,  drop_intermediate= False)
@@ -568,7 +639,7 @@ def detection_error(preds, labels, pos_label = 1, verbose = False):
     
     return detection_error, threshold_de
 
-#TODO
+#TODO metrics for multi-label scenario
 def metrics_multiClass():
     pass
 
@@ -601,3 +672,20 @@ def test_num_workers(dataset, batch_size = 32):
     
     print(data_workers)
     print("best choice from the test is {}".format(data_workers[0][0]))
+
+# use as function decorator
+def duration(function):
+    def wrapper_duration(*args, **kwargs):
+        t_start = time()
+        function(*args, **kwargs)   # to unpack no-keywords (*args) and keywords (**) arguments
+        print("Total time elapsed for the execution of {} function: {} [s]".format(function.__name__, round((time() - t_start),4))) 
+    return wrapper_duration
+
+    """  how to use
+    @duration
+    def example(start,stop,power):
+        a = list(range(start,stop))
+        pow = lambda x: x**power
+        result = list(map(pow, a))
+        print(result)
+    """
