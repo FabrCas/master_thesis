@@ -17,7 +17,7 @@ random.seed(22)
 CDDB_PATH       = "./data/CDDB"
 CIFAR100_PATH   = "./data/cifar100"
 
-# dictionary to explicit the content in each model folder of the dataset
+# dictionary to explicit the content in each model folder of the dataset, DON'T MODIFY
 DF_GROUP_CONTENT    = {
                         "virtual_environment":["crn", "imle"],
                         # "faces": ["deepfake", "glow/black_hair", "glow/blond_hair", "glow/brown_hair",
@@ -36,7 +36,7 @@ DF_GROUP_CONTENT    = {
                         "mix":      ["biggan","gaugan","san"],
                        }
 
-# dictionary to separate the 3 main groups of the CDDB dataset
+# dictionary to separate the 3 main groups of the CDDB dataset, DON'T MODIFY
 DF_GROUP_CLASSES    = {
                         "deepfake sources": ["biggan","cyclegan","gaugan","stargan_gf","stylegan"],
                         "non-deepfake sources": ["glow", "crn", "imle", "san", "deepfake"],
@@ -44,7 +44,7 @@ DF_GROUP_CLASSES    = {
                     }
 
 
-# dictionary which define what content/class use in the different scenarios
+# dictionary which defines what content/class use in the different scenarios, this can be modified changing the scenarios' settings 
 CATEGORIES_SCENARIOS_ID = {
                         "content": ["faces"],                                                               # DF_GROUP_CONTENT keys
                         "group":  ["deepfake sources", "non-deepfake sources"],                             # DF_GROUP_CLASSES keys
@@ -148,9 +148,9 @@ class CDDB_binary(Dataset):
                     ys = [*ys, *y_category_real, *y_category_fake]
                     
                     if self.train: 
-                        n_train = len(x_category_real) + len(x_category_fake)
+                        n_train += len(x_category_real) + len(x_category_fake)
                     else:
-                        n_test  = len(x_category_real) + len(x_category_fake)
+                        n_test  += len(x_category_real) + len(x_category_fake)
                     
             else:                                                               # 2 folder: "0_real", "1_fake"
                 path_real = os.path.join(path_set_model, real_folder)
@@ -168,10 +168,10 @@ class CDDB_binary(Dataset):
                 ys = [*ys, *y_model_real, *y_model_fake]
                 
                 if self.train:
-                    n_train = len(x_model_real) + len(x_model_fake)
+                    n_train += len(x_model_real) + len(x_model_fake)
                 else:
-                    n_test  = len(x_model_real) + len(x_model_fake)    
-                
+                    n_test  += len(x_model_real) + len(x_model_fake)    
+                       
             if self.train: print("found data from {:<20}, train samples -> {:<10}".format(data_model, n_train))
             else: print("found data from {:<20}, train samples -> {:<10}".format(data_model, n_test))
             
@@ -221,12 +221,12 @@ class CDDB_binary_Partial(Dataset):
         """ CDDB_binary_Partial constructor
 
         Args:
-            -scenario (str): select between "content","group","mix" scenarios:
-                content: data (real/fake for each model that contains a certain type of images) from a pseudo-category,
+            - scenario (str): select between "content","group","mix" scenarios:
+                - content: data (real/fake for each model that contains a certain type of images) from a pseudo-category,
                 chosen only samples with faces, OOD -> all other data that contains different subject from the one in ID.
-                group: ID -> assign wo data group from CDDB (deep-fake resources, non-deep-fake resources),
+                - group: ID -> assign wo data group from CDDB (deep-fake resources, non-deep-fake resources),
                 OOD-> the remaining data group (unknown models)
-                mix: mix ID and ODD without maintaining the integrity of the CDDB groups, i.e take models samples from
+                - mix: mix ID and ODD without maintaining the integrity of the CDDB groups, i.e take models samples from
                 1st ,2nd,3rd groups and do the same for OOD without intersection.
                 
             - width_img (int, optional): image width reshape. Defaults to 224.
@@ -357,9 +357,9 @@ class CDDB_binary_Partial(Dataset):
                     ys = [*ys, *y_category_real, *y_category_fake]
                     
                     if self.train: 
-                        n_train = len(x_category_real) + len(x_category_fake)
+                        n_train += len(x_category_real) + len(x_category_fake)
                     else:
-                        n_test  = len(x_category_real) + len(x_category_fake)
+                        n_test  += len(x_category_real) + len(x_category_fake)
                     
             else:                                                               # 2 folder: "0_real", "1_fake"
                 path_real = os.path.join(path_set_model, real_folder)
@@ -377,9 +377,9 @@ class CDDB_binary_Partial(Dataset):
                 ys = [*ys, *y_model_real, *y_model_fake]
                 
                 if self.train:
-                    n_train = len(x_model_real) + len(x_model_fake)
+                    n_train += len(x_model_real) + len(x_model_fake)
                 else:
-                    n_test  = len(x_model_real) + len(x_model_fake)    
+                    n_test  += len(x_model_real) + len(x_model_fake)    
                 
             if self.train: print("found data from {:<20}, train samples -> {:<10}".format(data_model, n_train))
             else: print("found data from {:<20}, train samples -> {:<10}".format(data_model, n_test))
@@ -435,9 +435,10 @@ class CDDB(Dataset):
             - train (bool, optional): boolean flag to retrieve trainset, otherwise testset. Defaults to True.
             - ood (bool, optional):   boolean flag to retrieve ID data, otherwise OOD. Defaults to False.
             - augment (bool, optional):   boolean flag to activate the data augmentation. Defaults to False.
-            - real_grouping (str): values: single, categories or models. string used to choose the modality to group the real labels, single means just 
-            one label for all the real images, category is for different labels of real images contains content like faces, cars, cats,etc.
-            while models separate the real images for each of the models present in the dataset. so real and fake labels have equal number
+            - real_grouping (str): values: "single", "categories" or "models". string used to choose the modality to group the real labels,
+                - "single" means just one label for all the real images,
+                - "category" is for different labels of real images contains content like faces, cars, cats,etc.
+                - "models" separate the real images for each of the models present in the dataset. so real and fake labels have equal number
         """
         super(CDDB,self).__init__()
         self.train              = train                      # boolean flag to select train or test data
@@ -543,9 +544,9 @@ class CDDB(Dataset):
                     ys = [*ys, *y_category_real, *y_category_fake]
                     
                     if self.train: 
-                        n_train = len(x_category_real) + len(x_category_fake)
+                        n_train += len(x_category_real) + len(x_category_fake)
                     else:
-                        n_test  = len(x_category_real) + len(x_category_fake)
+                        n_test  += len(x_category_real) + len(x_category_fake)
                     
             else:                                                               # 2 folder: "0_real", "1_fake"
                 path_real = os.path.join(path_set_model, real_folder)
@@ -563,9 +564,9 @@ class CDDB(Dataset):
                 ys = [*ys, *y_model_real, *y_model_fake]
                 
                 if self.train:
-                    n_train = len(x_model_real) + len(x_model_fake)
+                    n_train += len(x_model_real) + len(x_model_fake)
                 else:
-                    n_test  = len(x_model_real) + len(x_model_fake)    
+                    n_test  += len(x_model_real) + len(x_model_fake)    
                 
             if self.train: print("found data from {:<20}, train samples -> {:<10}".format(data_model, n_train))
             else: print("found data from {:<20}, train samples -> {:<10}".format(data_model, n_test))
@@ -654,9 +655,9 @@ class CDDB(Dataset):
                     ys = [*ys, *y_category_real, *y_category_fake]
                     
                     if self.train: 
-                        n_train = len(x_category_real) + len(x_category_fake)
+                        n_train += len(x_category_real) + len(x_category_fake)
                     else:
-                        n_test  = len(x_category_real) + len(x_category_fake)
+                        n_test  += len(x_category_real) + len(x_category_fake)
                     
             else:                                                               # 2 folder: "0_real", "1_fake"
                 path_real = os.path.join(path_set_model, real_folder)
@@ -694,9 +695,9 @@ class CDDB(Dataset):
                 ys = [*ys, *y_model_real, *y_model_fake]
                 
                 if self.train:
-                    n_train = len(x_model_real) + len(x_model_fake)
+                    n_train += len(x_model_real) + len(x_model_fake)
                 else:
-                    n_test  = len(x_model_real) + len(x_model_fake)    
+                    n_test  += len(x_model_real) + len(x_model_fake)    
                 
             if self.train: print("found data from {:<20}, train samples -> {:<10}".format(data_model, n_train))
             else: print("found data from {:<20}, train samples -> {:<10}".format(data_model, n_test))
@@ -763,9 +764,9 @@ class CDDB(Dataset):
                     ys = [*ys, *y_category_real, *y_category_fake]
                     
                     if self.train: 
-                        n_train = len(x_category_real) + len(x_category_fake)
+                        n_train += len(x_category_real) + len(x_category_fake)
                     else:
-                        n_test  = len(x_category_real) + len(x_category_fake)
+                        n_test  += len(x_category_real) + len(x_category_fake)
                     
             else:                                                               # 2 folder: "0_real", "1_fake"
                 path_real = os.path.join(path_set_model, real_folder)
@@ -783,9 +784,9 @@ class CDDB(Dataset):
                 ys = [*ys, *y_model_real, *y_model_fake]
                 
                 if self.train:
-                    n_train = len(x_model_real) + len(x_model_fake)
+                    n_train += len(x_model_real) + len(x_model_fake)
                 else:
-                    n_test  = len(x_model_real) + len(x_model_fake)    
+                    n_test  += len(x_model_real) + len(x_model_fake)    
                 
             if self.train: print("found data from {:<20}, train samples -> {:<10}".format(data_model, n_train))
             else: print("found data from {:<20}, train samples -> {:<10}".format(data_model, n_test))
@@ -839,11 +840,11 @@ class CDDB_Partial(Dataset):
 
         Args:
             - scenario (str): select between "content","group","mix" scenarios:
-                content: data (real/fake for each model that contains a certain type of images) from a pseudo-category,
+                - content: data (real/fake for each model that contains a certain type of images) from a pseudo-category,
                 chosen only samples with faces, OOD -> all other data that contains different subject from the one in ID.
-                group: ID -> assign wo data group from CDDB (deep-fake resources, non-deep-fake resources),
+                - group: ID -> assign wo data group from CDDB (deep-fake resources, non-deep-fake resources),
                 OOD-> the remaining data group (unknown models)
-                mix: mix ID and ODD without maintaining the integrity of the CDDB groups, i.e take models samples from
+                - mix: mix ID and ODD without maintaining the integrity of the CDDB groups, i.e take models samples from
                 1st ,2nd,3rd groups and do the same for OOD without intersection.
                 
             - width_img (int, optional): image width reshape. Defaults to 224.
@@ -851,9 +852,10 @@ class CDDB_Partial(Dataset):
             - train (bool, optional): boolean flag to retrieve trainset, otherwise testset. Defaults to True.
             - ood (bool, optional):   boolean flag to retrieve ID data, otherwise OOD. Defaults to False.
             - augment (bool, optional):   boolean flag to activate the data augmentation. Defaults to False.
-            - real_grouping (str): values: single, categories or models. string used to choose the modality to group the real labels, single means just 
-            one label for all the real images, category is for different labels of real images contains content like faces, cars, cats,etc.
-            while models separate the real images for each of the models present in the dataset. so real and fake labels have equal number
+            - real_grouping (str): values: "single", "categories" or "models". string used to choose the modality to group the real labels,
+                - "single" means just one label for all the real images,
+                - "category" is for different labels of real images contains content like faces, cars, cats,etc.
+                - "models" separate the real images for each of the models present in the dataset. so real and fake labels have equal number
         """
         super(CDDB_Partial,self).__init__()
         self.scenario           = scenario
@@ -891,8 +893,8 @@ class CDDB_Partial(Dataset):
         
         #TODO in this case being the dataset partial some labels should be removed from this list, before assigning the idx label 
         # define the labels
-        self.idx2label_id   = []
-        self.idx2label_ood  = []
+        
+        # idx2label list is reduced base on the scenario selected, moreover the labels presented in the list are based on the ood flag value
         if self.real_grouping == "single":    # only one label for the real labels, needs downsample or usage of weights during training 
             self.idx2label = ['biggan', 'crn', 'cyclegan', 'deepfake', 'gaugan', 'glow', 'imle', 'san', 'stargan_gf', 'stylegan', 'whichfaceisreal',
                               'wild', 'real']
@@ -939,6 +941,11 @@ class CDDB_Partial(Dataset):
         else:  
             ID_groups = cateogories
 
+        # get the model needed from the category is contains sub-directory, update In-Distribution group
+        for idx,name in enumerate(ID_groups.copy()):
+            if "/" in name:
+                ID_groups[idx] = name.split("/")[0]   # take just the model
+        
         # split OOD and ID models name
         data_models_ID = []; data_models_OOD = []
         for data_model_name in data_models:
@@ -953,6 +960,15 @@ class CDDB_Partial(Dataset):
         else:
             data_models = data_models_OOD 
         
+        # shrink the idx2label list
+        removed = 0
+        for idx, label in enumerate(self.idx2label.copy()):
+            if label in data_models or label == "real":
+                continue
+            else:
+                self.idx2label.pop(idx - removed)
+                removed += 1 
+                
         # take the integer value used to represent the real class
         idx_real_label = self.idx2label.index("real")
         
@@ -994,9 +1010,9 @@ class CDDB_Partial(Dataset):
                     ys = [*ys, *y_category_real, *y_category_fake]
                     
                     if self.train: 
-                        n_train = len(x_category_real) + len(x_category_fake)
+                        n_train += len(x_category_real) + len(x_category_fake)
                     else:
-                        n_test  = len(x_category_real) + len(x_category_fake)
+                        n_test  += len(x_category_real) + len(x_category_fake)
                     
             else:                                                               # 2 folder: "0_real", "1_fake"
                 path_real = os.path.join(path_set_model, real_folder)
@@ -1014,9 +1030,9 @@ class CDDB_Partial(Dataset):
                 ys = [*ys, *y_model_real, *y_model_fake]
                 
                 if self.train:
-                    n_train = len(x_model_real) + len(x_model_fake)
+                    n_train += len(x_model_real) + len(x_model_fake)
                 else:
-                    n_test  = len(x_model_real) + len(x_model_fake)    
+                    n_test  += len(x_model_real) + len(x_model_fake)    
                 
             if self.train: print("found data from {:<20}, train samples -> {:<10}".format(data_model, n_train))
             else: print("found data from {:<20}, train samples -> {:<10}".format(data_model, n_test))
@@ -1031,7 +1047,7 @@ class CDDB_Partial(Dataset):
         self.x = xs
         self.y = ys    # 0-> real, 1 -> fake
     
-    def _scanData_categoriesReal(self, real_folder = "0_real", fake_folder = "1_fake"):
+    def _scanData_categoriesReal(self, real_folder = "0_real", fake_folder = "1_fake", verbose = False):
         
         # initialize empty lists
         xs = []  # images path
@@ -1058,6 +1074,13 @@ class CDDB_Partial(Dataset):
         else:  
             ID_groups = cateogories
 
+        # get the model needed from the category is contains sub-directory, update In-Distribution group
+        for idx,name in enumerate(ID_groups.copy()):
+            if "/" in name:
+                ID_groups[idx] = name.split("/")[0]   # take just the model
+            
+        if verbose: print("In distribution groupds ->", ID_groups)
+        
         # split OOD and ID models name
         data_models_ID = []; data_models_OOD = []
         for data_model_name in data_models:
@@ -1071,6 +1094,57 @@ class CDDB_Partial(Dataset):
             data_models = data_models_ID
         else:
             data_models = data_models_OOD 
+        
+        if verbose: print("labels before shrinking -> ", self.idx2label)
+        
+        # shrink the idx2label list
+        
+        if self.scenario == "content":
+            removed = 0
+            for idx, label in enumerate(self.idx2label.copy()):
+                # belong to a fake model
+                if not "real_" in (label):
+                    if label in data_models:
+                        continue    #keep
+                    else:
+                        self.idx2label.pop(idx - removed)
+                        removed += 1
+                else: # belong to a real category
+                    category = label.replace("real_", "")
+                    models_in = [model_in.split("/")[0] for model_in in DF_GROUP_CONTENT[category]]
+                    if verbose: print(category, " -> ", models_in)
+                    if any(data_model in models_in for data_model in data_models) and category in CATEGORIES_SCENARIOS_ID[self.scenario]:
+                        continue #keep
+                    else:
+                        self.idx2label.pop(idx - removed)
+                        removed += 1
+                        
+        elif self.scenario == "group" or self.scenario == "mix":
+            removed = 0
+            for idx, label in enumerate(self.idx2label.copy()):
+                # belong to a fake model
+                if not "real_" in (label):
+                    if label in data_models:
+                        continue    #keep
+                    else:
+                        self.idx2label.pop(idx - removed)
+                        removed += 1
+                else: # belong to a real category
+                    category = label.replace("real_", "")
+                    models_in = [model_in.split("/")[0] for model_in in DF_GROUP_CONTENT[category]]
+                    if verbose:print(category, " -> ", models_in)
+                    if any(data_model in models_in for data_model in data_models):
+                        continue #keep
+                    else:
+                        self.idx2label.pop(idx - removed)
+                        removed += 1
+  
+        else:
+            raise Exception
+        
+        if verbose:    
+            print("labels: ", self.idx2label)
+            print("models: ",data_models)
         
         for data_model in data_models:                                      # loop over folders of each model
             
@@ -1109,17 +1183,20 @@ class CDDB_Partial(Dataset):
                     
                     # compute idx real label
                     idx_real_label = None
-                    if "hair" in category:                # sub categories for the faces
-                            idx_real_label = self.idx2label.index("real_faces")
-                            print("label ID real sample -> real_faces", idx_real_label)
-                    else:
-                        for k,v in DF_GROUP_CONTENT.items():
-                            if full_name_category in v:
-                                if k == "mix": break
-                                category = "real_" + k
-                                idx_real_label = self.idx2label.index(category)
-                                print("label ID real sample -> ", category,idx_real_label)
-                                break
+                    try:
+                        if "hair" in category and "faces" in CATEGORIES_SCENARIOS_ID["content"]:  # sub categories in the model forlder that are all under "faces" class
+                                idx_real_label = self.idx2label.index("real_faces")
+                                print("label ID real sample -> real_faces", idx_real_label)
+                        else:
+                            for k,v in DF_GROUP_CONTENT.items():
+                                if full_name_category in v:
+                                    if k == "mix": break
+                                    category = "real_" + k
+                                    idx_real_label = self.idx2label.index(category)
+                                    print("label ID real sample -> ", category,idx_real_label)
+                                    break
+                    except: 
+                        continue
                    
                     
                     # real samples paths, skip samples if contains mixed content (not classifiable)
@@ -1135,9 +1212,9 @@ class CDDB_Partial(Dataset):
                     ys = [*ys, *y_category_real, *y_category_fake]
                     
                     if self.train: 
-                        n_train = len(x_category_real) + len(x_category_fake)
+                        n_train += len(x_category_real) + len(x_category_fake)
                     else:
-                        n_test  = len(x_category_real) + len(x_category_fake)
+                        n_test  += len(x_category_real) + len(x_category_fake)
                     
             else:                                                               # 2 folder: "0_real", "1_fake"
                 path_real = os.path.join(path_set_model, real_folder)
@@ -1175,9 +1252,9 @@ class CDDB_Partial(Dataset):
                 ys = [*ys, *y_model_real, *y_model_fake]
                 
                 if self.train:
-                    n_train = len(x_model_real) + len(x_model_fake)
+                    n_train += len(x_model_real) + len(x_model_fake)
                 else:
-                    n_test  = len(x_model_real) + len(x_model_fake)    
+                    n_test  += len(x_model_real) + len(x_model_fake)    
                 
             if self.train: print("found data from {:<20}, train samples -> {:<10}".format(data_model, n_train))
             else: print("found data from {:<20}, train samples -> {:<10}".format(data_model, n_test))
@@ -1219,6 +1296,11 @@ class CDDB_Partial(Dataset):
         else:  
             ID_groups = cateogories
 
+         # get the model needed from the category is contains sub-directory, update In-Distribution group    
+        for idx,name in enumerate(ID_groups.copy()):
+            if "/" in name:
+                ID_groups[idx] = name.split("/")[0]   # take just the model
+        
         # split OOD and ID models name
         data_models_ID = []; data_models_OOD = []
         for data_model_name in data_models:
@@ -1232,6 +1314,17 @@ class CDDB_Partial(Dataset):
             data_models = data_models_ID
         else:
             data_models = data_models_OOD 
+        
+        # shrink the idx2label list
+        removed = 0
+        for idx, label in enumerate(self.idx2label.copy()):
+            if "_".join(label.split("_")[:-1]) in data_models:     # simple check if the name model is present in the idx2label despite "_real" or "_fake" specifics.
+                continue
+            else:
+                self.idx2label.pop(idx - removed)
+                removed += 1
+        
+        # print(self.idx2label)
         
         for data_model in data_models:                                      # loop over folders of each model
             
@@ -1253,8 +1346,8 @@ class CDDB_Partial(Dataset):
             idx_fake_label = self.idx2label.index(data_model + "_fake")
             idx_real_label = self.idx2label.index(data_model + "_real")
 
-            print(idx_fake_label)
-            print(idx_real_label)
+            # print(idx_fake_label)
+            # print(idx_real_label)
             
             if not (real_folder in sub_dir_model and fake_folder in sub_dir_model):   # contains sub-categories
                 for category in sub_dir_model:
@@ -1274,9 +1367,9 @@ class CDDB_Partial(Dataset):
                     ys = [*ys, *y_category_real, *y_category_fake]
                     
                     if self.train: 
-                        n_train = len(x_category_real) + len(x_category_fake)
+                        n_train += len(x_category_real) + len(x_category_fake)
                     else:
-                        n_test  = len(x_category_real) + len(x_category_fake)
+                        n_test  += len(x_category_real) + len(x_category_fake)
                     
             else:                                                               # 2 folder: "0_real", "1_fake"
                 path_real = os.path.join(path_set_model, real_folder)
@@ -1294,9 +1387,9 @@ class CDDB_Partial(Dataset):
                 ys = [*ys, *y_model_real, *y_model_fake]
                 
                 if self.train:
-                    n_train = len(x_model_real) + len(x_model_fake)
+                    n_train += len(x_model_real) + len(x_model_fake)
                 else:
-                    n_test  = len(x_model_real) + len(x_model_fake)    
+                    n_test  += len(x_model_real) + len(x_model_fake)    
                 
             if self.train: print("found data from {:<20}, train samples -> {:<10}".format(data_model, n_train))
             else: print("found data from {:<20}, train samples -> {:<10}".format(data_model, n_test))
@@ -1600,10 +1693,11 @@ if __name__ == "__main__":
         showImage(x)
         
     def test_multi_CDDB():
-        # tmp = CDDB_binary()
-        # data = CDDB(real_grouping= "models")
-        data = CDDB_binary_Partial(scenario="content")
-        data = CDDB_Partial(scenario="content", real_grouping="categories")
+        # tmp = CDDB_binary(train = False)
+        # data = CDDB(real_grouping= "single")
+        # data = CDDB_binary_Partial(scenario="content")
+        data = CDDB_Partial(scenario="mix", real_grouping="categories", ood = True)
+        print(data.idx2label)
         # x,y = data.__getitem__(7000)
         # print(y, data.idx2label[y])
         # showImage(x)

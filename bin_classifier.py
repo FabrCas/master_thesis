@@ -433,6 +433,7 @@ class DFD_BinClassifier_v2(BinaryClassifier):
             return accuracy_valid
     
     def train(self, name_train):
+        """name_train (str) should include the scenario selected and the model name (i.e. ResNet50), keep this convention {scenario}_{model_name}"""
         
         # define train dataloader
         train_dataloader = DataLoader(self.train_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
