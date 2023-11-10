@@ -59,3 +59,9 @@ def focal_loss(y_pred, y_true, alpha=None, gamma=2, reduction='sum'):
         focal_loss = focal_loss.sum()
 
     return focal_loss
+
+
+
+"""
+                        Simple fully connected classifier for image classification
+"""

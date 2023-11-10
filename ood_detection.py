@@ -6,7 +6,7 @@ from    torch.utils.data    import DataLoader
 from    torch.cuda.amp      import autocast
 from    tqdm                import tqdm
 
-from    dataset             import CDDB_binary, getCIFAR100_dataset,OOD_dataset
+from    dataset             import CDDB_binary, CDDB_binary_Partial, getCIFAR100_dataset, OOD_dataset
 from    sklearn.metrics     import precision_recall_curve, auc, roc_auc_score
 from    bin_classifier      import DFD_BinClassifier_v1
 from    utilities           import saveJson, loadJson, metrics_binClass, metrics_OOD
@@ -14,13 +14,26 @@ from    utilities           import saveJson, loadJson, metrics_binClass, metrics
 
 types_classifier = ["bin_class", "multi_class", "multi_label_class"]
 
-
-
-class OOD_Baseline(object):
+# TODO, superclass for OOD classifier
+class OOD_Classifier(object):
+    def __init__(self, useGPU):
+        super(OOD_Classifier, self).__init__()
+        
+        # general paths
+        self.path_models    = "./models/ood_detection"
+        self.path_results   = "./results/ood_detection"
+        
+        # execution specs
+        self.useGPU = useGPU
+        if self.useGPU: self.device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
+        else: self.device = "cpu"
+        self.batch_size     = 32
+        
+class OOD_Baseline(OOD_Classifier):
     """
-        Detector for OOD data
+        Classifier for OOD data
     """
-    def __init__(self, classifier,  ood_data_test, ood_data_train, useGPU = True):
+    def __init__(self, classifier,  id_data_test, ood_data_test, useGPU = True):
         """
         Class-Constructor
 
@@ -30,7 +43,7 @@ class OOD_Baseline(object):
             ood_data_train (torch.utils.data.Dataset): train set out of distribution
             useGPU (bool, optional): flag to enable usage of GPU. Defaults to True.
         """
-        
+        super(OOD_Baseline, self).__init__(useGPU = useGPU)
         # classfier used
         self.classifier  = classifier
         
@@ -43,22 +56,15 @@ class OOD_Baseline(object):
         # self.dataset_train  = OOD_dataset(self.id_data_train, self.ood_data_train, balancing_mode = None)
         
         # test sets
-        self.id_data_test  = CDDB_binary(train = False)
+        self.id_data_test  = id_data_test
         self.ood_data_test = ood_data_test
-        self.dataset_test  = OOD_dataset(self.id_data_test, self.ood_data_test, balancing_mode = "max")
+        try:
+            self.dataset_test  = OOD_dataset(self.id_data_test, self.ood_data_test, balancing_mode = "max")
+        except:
+            print("Dataset data is not valid, please use instances of class torch.Dataset")
         
-        # paths and name
-        self.path_models    = "./models/ood_detection"
-        self.path_results   = "./results/ood_detection"
+        # name of the classifier
         self.name           = "baseline"
-        
-        # execution specs
-        self.useGPU = useGPU
-        if self.useGPU: self.device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
-        else: self.device = "cpu"
-        
-        # learning-testing parameters
-        self.batch_size     = 32
         
     #                                       math aux functions
     def sigmoid(self,x):
@@ -76,18 +82,11 @@ class OOD_Baseline(object):
         return np.log(10.) + np.sum(distibution * np.log(np.abs(distibution) + 1e-11), axis=1, keepdims=True)
     
     #                                     analysis aux functions
-    def compute_aupr(self, labels, pred):
-        # p_id, r_id, _ = precision_recall_curve(id_labels, prob)
-        # aupr_id     = auc(r_id,p_id)
-        # p_ood, r_ood, _ = precision_recall_curve(ood_labels, prob)
-        # aupr_ood    =  auc(r_ood, p_ood)
-        
+    def compute_aupr(self, labels, pred):        
         p, r, _ = precision_recall_curve(labels, pred)
         return  auc(r, p)
     
     def compute_auroc(self, labels, pred):
-        # auroc_id    = roc_auc_score(id_labels, prob)
-        # auroc_ood   = roc_auc_score(ood_labels, prob)
         return roc_auc_score(labels, pred)
         
     def compute_curves(self, id_data, ood_data, positive_reversed = False):
@@ -186,12 +185,13 @@ class OOD_Baseline(object):
 
         Args:
             name_classifier (str): deepfake detection model used (name from models folder)
-            task_type (int): 3 possible values: 0 for binary classification, 1 for multi-class classificaiton, 2 multi-label classification
-        
+            task_type_prog (int): 3 possible values: 0 for binary classification, 1 for multi-class classificaiton, 2 multi-label classification
+            name_ood_data (str): name of the dataset used as ood data, is is a partition of CDDB specify the scenario: "content","group","mix", Default is None. 
+            if None, the results will be not saved
         """
         
         # define the dataloader 
-        id_ood_dataloader   = DataLoader(self.dataset_test,  batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
+        id_ood_dataloader   = DataLoader(self.dataset_test,  batch_size= self.batch_size, num_workers= 8, shuffle= False, pin_memory= True)
         
         # use model on selected device
         self.classifier.model.to(self.device)
@@ -272,7 +272,7 @@ class OOD_Baseline(object):
         metrics_abnorm = self.compute_metrics_ood(1-maximum_prob_id, 1-maximum_prob_ood, positive_reversed= True)
         print("OOD metrics:\n", metrics_abnorm)   
                      
-        # store statistics in a dictionary
+        # store statistics/metrics in a dictionary
         data = {
             "ID_max_prob": {
                 "mean":  float(max_prob_id_mean), 
@@ -334,15 +334,32 @@ class OOD_Baseline(object):
             
             saveJson(path = path_result_save, data = data)
     
-    def test_binClass(self, name_classifier, task_type_prog, name_ood_data, thr_type = "trp95"):
+    def test_implementation(self):
         """
-            This test compute metrics that are threshold related (discriminator)
+            Function used to verify the correct implementation of the baseline, re-creating the original experiment of the paper
+        """
+        print("ciao")
+        
+    
+    def testing_binary_class(self, name_classifier, task_type_prog, name_ood_data, thr_type = "fpr95"):
+        """
+            This test compute metrics (binary classification ID/OOD) that are threshold related (discriminator)
+            
+                Args:
+            x (torch.Tensor): input image to be discriminated (real/fake)
+
+            name_classifier (str): deepfake detection model used (name from models folder)
+            task_type_prog (int): 3 possible values: 0 for binary classification, 1 for multi-class classificaiton, 2 multi-label classification
+            name_ood_data (str): name of the dataset used as ood data, is is a partition of CDDB specify the scenario: "content","group","mix", Default is None. 
+            if None, the results will be not saved
+            thr_type (str): choose which kind of threhsold use between "fpr95" (fpr at tpr 95%) or "avg_confidence", or "thr_de",  Default is "fpr95".
+            
         """
         
         # load data from analyze
         name_task                   = self.types_classifier[task_type_prog]
-        path_results_ood_classifier = os.path.join(self.path_results, name_task)
-        path_results_baseline       = os.path.join(path_results_ood_classifier, self.name)
+        path_results_ood_bin        = os.path.join(self.path_results, name_task)
+        path_results_baseline       = os.path.join(path_results_ood_bin, self.name)
         path_results_folder         = os.path.join(path_results_baseline, name_classifier)    
         name_result_file            = 'metrics_ood_{}.json'.format(name_ood_data)
         path_result_save            = os.path.join(path_results_folder, name_result_file)   # full path to json file
@@ -355,14 +372,14 @@ class OOD_Baseline(object):
             print("No data found at path {}".format(path_result_save))
         
         # choose the threshold to use for the discrimination ID/OOD
-        
-        # t
-        if thr_type == "tpr95":
+        if thr_type == "fpr95":
+            threshold = data['fpr95']
+        elif thr_type == "thr_de":
             threshold = data['threshold']
         else:                                       # use avg max prob confidence as thr (proven to be misleading)
             threshold = data['avg_confidence']
         
-        id_ood_dataloader   = DataLoader(self.dataset_test,  batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
+        id_ood_dataloader   = DataLoader(self.dataset_test,  batch_size= self.batch_size, num_workers= 8, shuffle= False, pin_memory= True)
         
         # use model on selected device
         self.classifier.model.to(self.device)
@@ -372,9 +389,8 @@ class OOD_Baseline(object):
         test_labels     = np.empty((0,2), dtype= np.int32)
         
         for idx, (x,y) in tqdm(enumerate(id_ood_dataloader), total= len(id_ood_dataloader)):
-            
             # to test
-            if idx >= 5: break
+            # if idx >= 5: break
             
             x = x.to(self.device)
             with T.no_grad():
@@ -399,62 +415,119 @@ class OOD_Baseline(object):
             if prob < threshold: pred.append(1)  # OOD
             else: pred.append(0)                 # ID
         
+        # get the list with the binary labels
         pred = np.array(pred)
         target = test_labels[:,1]
-        print(pred)
-        print(target)
         
-        metrics_class =  metrics_binClass(preds = pred, targets= target, pred_probs = None)
-        print(metrics_class)
-        
-        # save data (JSON)
+        # print(pred)
+        # print(target)
+    
         # prepare file-system
-        if (not os.path.exists(path_results_ood_classifier)):
-            os.makedirs(path_results_ood_classifier) 
+        if (not os.path.exists(path_results_ood_bin)):
+            os.makedirs(path_results_ood_bin) 
         if (not os.path.exists(path_results_baseline)):
             os.makedirs(path_results_baseline) 
         if (not os.path.exists(path_results_folder)):
             os.makedirs(path_results_folder)
         
-        name_resultClass_file         = 'metrics_ood_classification_{}.json'.format(name_ood_data)
-        path_resultClass_file         = os.path.join(path_results_folder, name_resultClass_file)
+        # compute and save metrics 
+        name_resultClass_file  = 'metrics_ood_classification_{}.json'.format(name_ood_data)
+        metrics_class =  metrics_binClass(preds = pred, targets= target, pred_probs = None, path_save = path_results_folder, name_ood_file = name_resultClass_file)
+        
+        print(metrics_class)
 
-        
-        saveJson(path=path_resultClass_file, data= metrics_class)
-        
-    def forward(self, x):
+    def forward(self, x, name_classifier, task_type_prog, name_ood_data, thr_type = "fpr95"):
         """ discriminator forward
 
         Args:
             x (torch.Tensor): input image to be discriminated (real/fake)
-        """
-        
-        
+
+            name_classifier (str): deepfake detection model used (name from models folder)
+            task_type_prog (int): 3 possible values: 0 for binary classification, 1 for multi-class classificaiton, 2 multi-label classification
+            name_ood_data (str): name of the dataset used as ood data, is is a partition of CDDB specify the scenario: "content","group","mix", Default is None. 
+            if None, the results will be not saved
+            thr_type (str): choose which kind of threhsold use between "fpr95" (fpr at tpr 95%) or "avg_confidence", or "thr_de",  Default is "fpr95".
+            
+        """        
         if not(isinstance(x, T.Tensor)):
             x = T.tensor(x)
             
-        # handle single image, increasing dimensions for batch
+        # adjust to handle single image, increasing dimensions for batch
         if len(x.shape) == 3:
             x = T.expand(1,-1,-1,-1)
+        
+        # load the threshold
+        # load data from analyze
+        name_task                   = self.types_classifier[task_type_prog]
+        path_results_ood_bin        = os.path.join(self.path_results, name_task)
+        path_results_baseline       = os.path.join(path_results_ood_bin, self.name)
+        path_results_folder         = os.path.join(path_results_baseline, name_classifier)    
+        name_result_file            = 'metrics_ood_{}.json'.format(name_ood_data)
+        path_result_save            = os.path.join(path_results_folder, name_result_file)   # full path to json file
+        
+        try:
+            data = loadJson(path_result_save)
+        except Exception as e:
+            print(e)
+            print("No data found at path {}".format(path_result_save))
+            
+        if thr_type == "fpr95":
+            threshold = data['fpr95']
+        elif thr_type == "thr_de":
+            threshold = data['threshold']
+        else:                                      
+            threshold = data['avg_confidence']
+        
+        # compute mx prob 
+        x = x.to(self.device)
+        with T.no_grad():
+             with autocast():
+                _ ,_, logits =self.classifier.forward(x)
+                
+        # to numpy array
+        logits  = logits.cpu().numpy()
+        probs = self.sigmoid(logits)
+        maximum_prob = np.max(probs, axis=1)
+        
+        # apply binary threshold
+        pred = np.where(condition= maximum_prob < threshold, x=1, y=0)
+        return pred
     
 if __name__ == "__main__":
     
-    # select executions
-    exe = [1,0]
     
-    # [1] load deep fake classifier
-    bin_classifier = DFD_BinClassifier_v1(model_type="resnet_pretrained")
-    bin_classifier.load("resnet50_ImageNet_13-10-2023", 20)
+    def test_baseline_implementation():
+        ood_detector = OOD_Baseline(classifier= None, id_data_test = None, ood_data_test = None, useGPU= True)
+        ood_detector.test_implementation()
+     
+    def baseline_resnet50_CDDB_CIFAR(name_model, epoch):
+        # select executions
+        exe = [1,1]
+        
+        # [1] load deep fake classifier
+        bin_classifier = DFD_BinClassifier_v1(model_type="resnet_pretrained")
+        bin_classifier.load(name_model, epoch)
+        
+        # [2] define the id/ood data
+        
+        # id_data_train    = CDDB_binary(train = True, augment = False
+        id_data_test     = CDDB_binary(train = False, augment = False)
+        # ood_data_train   = getCIFAR100_dataset(train = True)
+        ood_data_test    = getCIFAR100_dataset(train = False)
+        
+        # [3] define the detector
+        ood_detector = OOD_Baseline(classifier=bin_classifier, id_data_test = id_data_test, ood_data_test = ood_data_test, useGPU= True)
+        
+        # [4] launch analyzer/training
+        if exe[0]: ood_detector.analyze(name_classifier=name_model, task_type_prog= 0, name_ood_data="cifar100")
+        
+        # [5] launch testing
+        if exe[1]: ood_detector.testing_binary_class(name_classifier=name_model, task_type_prog = 0, name_ood_data="cifar100", thr_type= "")
+        
+    test_baseline_implementation()
     
-    # [2] define the ood data
-    cifar_data_train = getCIFAR100_dataset(train = True)
-    cifar_data_test  = getCIFAR100_dataset(train = False)
-    
-    # [3] define the detector
-    ood_detector = OOD_Baseline(classifier=bin_classifier, ood_data_train=cifar_data_train, ood_data_test= cifar_data_test, useGPU= True)
-    
-    # [4] launch analyzer/training
-    if exe[0]: ood_detector.analyze(name_classifier="resnet50_ImageNet_13-10-2023", task_type_prog= 0, name_ood_data="cifar100")
-    
-    # [5] launch testing
-    if exe[1]: ood_detector.test_binClass(name_classifier="resnet50_ImageNet_13-10-2023", task_type_prog = 0, name_ood_data="cifar100")
+
+# baseline_resnet50_CDDB_CIFAR("faces_resnet50_ImageNet_04-11-2023", 24)
+# baseline_resnet50_CDDB_CIFAR("groups_resnet50_ImageNet_05-11-2023", 26)
+# baseline_resnet50_CDDB_CIFAR("mix_resnet50_ImageNet_05-11-2023", 21)
+

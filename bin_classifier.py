@@ -23,8 +23,6 @@ from    models              import ResNet_ImageNet, ResNet
                         Binary Deepfake classifiers trained on CDDB dataset with different presets
 """
 
-
-
 class BinaryClassifier(object):
     
     def __init__(self, useGPU, batch_size, model_type):
@@ -585,7 +583,7 @@ if __name__ == "__main__":
         dataset = CDDB_binary()
         test_num_workers(dataset, batch_size  =32)   # use n_workers = 8
     
-    def binary_classifier_v1():
+    def test_binary_classifier_v1():
         bin_classifier = DFD_BinClassifier_v1(useGPU = True, model_type="resnet_pretrained")
         # bin_classifier.train(name_train="resnet50_ImageNet")
         # print(bin_classifier.device)

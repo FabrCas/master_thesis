@@ -231,13 +231,13 @@ class ResNet(nn.Module):
     
         # last block
         x = self.ap(x)
-        x = x.reshape(x.shape[0], -1)
+        x = x.reshape(x.shape[0], -1)  #(batch_size, all_values)
         x = self.do(x)
         x = self.fc(x)
         
         return x
     
-#_____________________________________ResNet 50 ImageNet__________________________________________
+#_____________________________________ResNet 50 ImageNet___________________________________________
 
 class ResNet_ImageNet():   # modfify first layer if use grayscale images
     """ 
@@ -292,22 +292,105 @@ class ResNet_ImageNet():   # modfify first layer if use grayscale images
         x = self.model(x)
         return x
     
-#_____________________________________Vision Transformer (ViT)__________________________________________        
+#_____________________________________Vision Transformer (ViT)_____________________________________        
+
+
+#_____________________________________Other models_________________________________________________ 
+
+
+class FC_classifier(nn.Module):
+    """ 
+    A simple ANN with fully connected layer + batch normalziation
+    """
+    def __init__(self, n_channel = 1, width = 28, height = 28):   # Default value for MNISt
+        super(FC_classifier, self).__init__()
+
+        self.flatten = nn.Flatten()  #input layer, flattening the image
+        
+        self.batch_norm1 = nn.BatchNorm1d(width * height * n_channel)
+        self.fc1 = nn.Linear(width * height * n_channel, 256)
+
+        self.batch_norm2 = nn.BatchNorm1d(256)
+        self.fc2 = nn.Linear(256, 256)
+
+        self.batch_norm3 = nn.BatchNorm1d(256)
+        self.fc3 = nn.Linear(256, 256)
+
+        self.batch_norm4 = nn.BatchNorm1d(256)
+        self.fc4 = nn.Linear(256, 10)
+        
+        # activation functinos
+        self.relu = nn.ReLU()
+        self.softmax = nn.Softmax(dim=1)
+
+    def forward(self, x):
+        x = self.flatten(x)
+        
+        x = self.batch_norm1(x)
+        x = self.fc1(x)
+        x = self.relu(x)
+
+        x = self.batch_norm2(x)
+        x = self.fc2(x)
+        x = self.relu(x)
+
+        x = self.batch_norm3(x)
+        x = self.fc3(x)
+        x = self.relu(x)
+
+        x = self.batch_norm4(x)
+        x = self.fc4(x)
+        x = self.softmax(x)
+
+        return x
+    
+    def getSummary(self, input_shape = (None,None,None,None)):  #shape: batch,color,width,height
+        """
+            input_shape -> tuple with simulated dimension used for the model summary
+            expected input of this type -> batch,color,width,height
+        """
+        summary(self, input_shape)
+     
+    def getLayers(self):
+        return dict(self.named_parameters())
+    
+    def freeze(self):
+        for name, param in self.named_parameters():
+            param.requires_grad = False
+    
+    def isCuda(self):
+        return next(self.parameters()).is_cuda
+         
+    
 
 if __name__ == "__main__":
-    device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
-    # resnet = ResNet()
-    # resnet.to(device)
-    # print(resnet.isCuda())
     
-    # input_example = T.rand(size=(3,224,224))
+    def test_ResNet():
+        device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
+        resnet = ResNet()
+        resnet.to(device)
+        print(resnet.isCuda())
+        
+        input_example = T.rand(size=(3,224,224))
+        batch_example = input_example.unsqueeze(0)
+        # print(batch_example.shape)
+        resnet.getSummary(input_shape= input_example.shape)
+        
+    def test_ResNet50ImageNet():
+        device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
+        resnet = ResNet_ImageNet(n_channels=3)
+        resnet.to(device)
+        input_example = T.rand(size=(3,224,224)).to(device)
+        resnet.getSummary(input_shape= input_example.shape)
+        
+    def test_simpleClassifier():
+        device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
+        classifier = FC_classifier(n_channel= 3, width = 256, height= 256)
+        classifier.to(device)
+        input_example = T.rand(size=(3,256,256))
+        classifier.getSummary(input_shape= input_example.shape)
+        
     
-    # batch_example = input_example.unsqueeze(0)
-    # print(batch_example.shape)
-    # resnet.getSummary(input_shape= input_example.shape)
+    test_simpleClassifier()
     
-    resnet = ResNet_ImageNet(n_channels=3)
-    resnet.to(device)
-    input_example = T.rand(size=(3,224,224)).to(device)
-    # print(input_example.is_cuda)
-    resnet.getSummary(input_shape= input_example.shape)
+    

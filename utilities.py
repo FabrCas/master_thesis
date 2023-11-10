@@ -234,6 +234,9 @@ class NormalizeByChannelMeanStd(T.nn.Module):
         self.register_buffer("mean", mean)
         self.register_buffer("std", std)
 
+    def _compute_mean_std(self, data): 
+        raise NotImplementedError
+    
     def forward(self, tensor):
         return normalize_fn(tensor, self.mean, self.std)
 
@@ -504,7 +507,10 @@ def plot_PR_curve(recalls, precisions, path_save = None, duration_timer = 2500):
 
 ##################################################  Metrics functions #################################################################
 
-def metrics_binClass(preds, targets, pred_probs, epoch_model="unknown", path_save = None, average = "macro"):
+def metrics_binClass(preds, targets, pred_probs, epoch_model="unknown", path_save = None, average = "macro", name_ood_file  = None):
+    """ 
+        use name_ood_file parameter only if you want to save results for OOD classification
+    """
     
     if pred_probs is not None:
         # roc curve/auroc computation
@@ -560,10 +566,14 @@ def metrics_binClass(preds, targets, pred_probs, epoch_model="unknown", path_sav
     metrics_results['confusion_matrix'] = metrics_results['confusion_matrix'].tolist()
     
     # save the results (JSON file) if a path has been provided
-    if path_save is not None:
+    if path_save is not None and not(name_ood_file is None):
         # metrics_results_ = metrics_results.copy()
         # metrics_results_['confusion_matrix'] = metrics_results_['confusion_matrix'].tolist()
-        saveJson(os.path.join(path_save, 'binaryMetrics_' + epoch_model + '.json'), metrics_results)
+        
+        if name_ood_file is None:    # save for binary classification real/fake
+            saveJson(os.path.join(path_save, 'binaryMetrics_' + epoch_model + '.json'), metrics_results)
+        else:                       # save for binary classification ID/OOD
+            saveJson(os.path.join(path_save, name_ood_file), metrics_results)
     
     return metrics_results
 

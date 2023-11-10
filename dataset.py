@@ -16,6 +16,9 @@ random.seed(22)
 # Paths and data structure
 CDDB_PATH       = "./data/CDDB"
 CIFAR100_PATH   = "./data/cifar100"
+MNIST_PATH      = "./data/MNIST"
+FMNIST_PATH      = "./data/FashionMNIST"
+
 
 # dictionary to explicit the content in each model folder of the dataset, DON'T MODIFY
 DF_GROUP_CONTENT    = {
@@ -38,9 +41,9 @@ DF_GROUP_CONTENT    = {
 
 # dictionary to separate the 3 main groups of the CDDB dataset, DON'T MODIFY
 DF_GROUP_CLASSES    = {
-                        "deepfake sources": ["biggan","cyclegan","gaugan","stargan_gf","stylegan"],
-                        "non-deepfake sources": ["glow", "crn", "imle", "san", "deepfake"],
-                        "unknown models":["whichfaceisreal", "wild"]
+                        "deepfake sources": ["biggan","cyclegan","gaugan","stargan_gf","stylegan"],  # GAN models
+                        "non-deepfake sources": ["glow", "crn", "imle", "san", "deepfake"],          # NON-GAN models
+                        "unknown models":["whichfaceisreal", "wild"]                                 
                     }
 
 
@@ -221,7 +224,7 @@ class CDDB_binary_Partial(Dataset):
         """ CDDB_binary_Partial constructor
 
         Args:
-            - scenario (str): select between "content","group","mix" scenarios:
+            - scenario (str): modality division ID and OOD. select between "content","group","mix" scenarios:
                 - content: data (real/fake for each model that contains a certain type of images) from a pseudo-category,
                 chosen only samples with faces, OOD -> all other data that contains different subject from the one in ID.
                 - group: ID -> assign wo data group from CDDB (deep-fake resources, non-deep-fake resources),
@@ -828,7 +831,6 @@ class CDDB(Dataset):
         return img, label
 
 # Used for ID-OOD study
-# TODO to complete and test
 class CDDB_Partial(Dataset):
     """_
         Dataset class that uses partial data from CDDB dataset as In-Distribuion (ID) for multi-label deepfake detection,
@@ -839,7 +841,7 @@ class CDDB_Partial(Dataset):
         """CDDB_Partial constructor
 
         Args:
-            - scenario (str): select between "content","group","mix" scenarios:
+            - scenario (str): modality division ID and OOD. select between "content","group","mix" scenarios:
                 - content: data (real/fake for each model that contains a certain type of images) from a pseudo-category,
                 chosen only samples with faces, OOD -> all other data that contains different subject from the one in ID.
                 - group: ID -> assign wo data group from CDDB (deep-fake resources, non-deep-fake resources),
@@ -891,9 +893,7 @@ class CDDB_Partial(Dataset):
         self.x = None
         self.y = None
         
-        #TODO in this case being the dataset partial some labels should be removed from this list, before assigning the idx label 
         # define the labels
-        
         # idx2label list is reduced base on the scenario selected, moreover the labels presented in the list are based on the ood flag value
         if self.real_grouping == "single":    # only one label for the real labels, needs downsample or usage of weights during training 
             self.idx2label = ['biggan', 'crn', 'cyclegan', 'deepfake', 'gaugan', 'glow', 'imle', 'san', 'stargan_gf', 'stylegan', 'whichfaceisreal',
@@ -1430,7 +1430,6 @@ class CDDB_Partial(Dataset):
         label = self.y[idx]    # if it's necessary the encoding, use self._one_hot_encoding(self.y[idx])
         return img, label
 
-
 ##################################################### [Out-Of-Distribution Detection] ################################################################
 
 def getCIFAR100_dataset(train, width_img= 224, height_img = 224):
@@ -1449,19 +1448,121 @@ def getCIFAR100_dataset(train, width_img= 224, height_img = 224):
         transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
     ])
     
-    download_files = False
-    # create folder if not exists
+    # create folder if not exists and download locally
     if not(os.path.exists(CIFAR100_PATH)):
         os.mkdir(CIFAR100_PATH)
-        download_files = True
+        torchvision.datasets.CIFAR100(root=CIFAR100_PATH, train=True,  download = True, transform=transform_ops)
+        torchvision.datasets.CIFAR100(root=CIFAR100_PATH, train=False, download = True, transform=transform_ops)
     
     # load cifar data
     if train:
-        cifar100 = torchvision.datasets.CIFAR100(root=CIFAR100_PATH, train=True, download=download_files, transform=transform_ops)
+        cifar100 = torchvision.datasets.CIFAR100(root=CIFAR100_PATH, train=True, download = False, transform=transform_ops)
     else:
-        cifar100 = torchvision.datasets.CIFAR100(root=CIFAR100_PATH, train=False, download=download_files, transform=transform_ops)
+        cifar100 = torchvision.datasets.CIFAR100(root=CIFAR100_PATH, train=False, download = False, transform=transform_ops)
     
     return cifar100
+
+def getMNIST_dataset(train, width_img = 28, height_img = 28):
+    """ get MNIST dataset
+
+    Args:
+        train (bool): choose between the train or test set. Defaults to True.
+        width_img (int, optional): img width for the resize. Defaults to 28.
+        height_img (int, optional): img height for the resize. Defaults to 28.
+        
+    Returns:
+        torch.Dataset : Cifar100 dataset object
+    """
+    transform_ops = transforms.Compose([
+        transforms.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
+        transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+    ])
+    
+    # create folder if not exists and download the dataset
+    if not(os.path.exists(MNIST_PATH)):
+        os.mkdir(MNIST_PATH)
+        torchvision.datasets.MNIST(root=MNIST_PATH, train=True, download = True, transform=transform_ops)
+        torchvision.datasets.MNIST(root=MNIST_PATH, train=False, download = True, transform=transform_ops)
+    
+    # load cifar data
+    if train:
+        mnist = torchvision.datasets.MNIST(root=MNIST_PATH, train=True, download=False, transform=transform_ops)
+    else:
+        mnist = torchvision.datasets.MNIST(root=MNIST_PATH, train=False, download=False, transform=transform_ops)
+    
+    return mnist
+    
+def getFashionMNIST_dataset(train, width_img = 28, height_img = 28):
+    """ get MNIST dataset
+
+    Args:
+        train (bool): choose between the train or test set. Defaults to True.
+        width_img (int, optional): img width for the resize. Defaults to 28.
+        height_img (int, optional): img height for the resize. Defaults to 28.
+        
+    Returns:
+        torch.Dataset : Cifar100 dataset object
+    """
+    transform_ops = transforms.Compose([
+        transforms.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
+        transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+    ])
+    
+    # create folder if not exists and download the dataset
+    if not(os.path.exists(FMNIST_PATH)):
+        os.mkdir(FMNIST_PATH)
+        torchvision.datasets.MNIST(root=FMNIST_PATH, train=True,  download = True, transform=transform_ops)
+        torchvision.datasets.MNIST(root=FMNIST_PATH, train=False, download = True, transform=transform_ops)
+    
+    # load cifar data
+    if train:
+        fmnist = torchvision.datasets.MNIST(root=FMNIST_PATH, train=True, download=False, transform=transform_ops)
+    else:
+        fmnist = torchvision.datasets.MNIST(root=FMNIST_PATH, train=False, download=False, transform=transform_ops)
+    
+    return fmnist
+    
+# synthetic datasets using noise distributions
+class GaussianNoise(Dataset):
+    """Gaussian Noise Dataset"""
+
+    def __init__(self, size=(3, 224, 224), n_samples=10000, mean=0.5, variance=1.0):
+        """ 
+            size (int,int,int) -> tuple representing size of the sample to be generated, respecting (n° of channels, height, width)
+        """
+        self.size = size
+        self.n_samples = n_samples
+        self.mean = mean
+        self.variance = variance
+        self.data = np.random.normal(loc=self.mean, scale=self.variance, size=(self.n_samples,) + self.size)
+        self.data = np.clip(self.data, 0, 1)
+        self.data = self.data.astype(np.float32)
+
+    def __len__(self):
+        return self.n_samples
+
+    def __getitem__(self, idx):
+        return self.data[idx]
+
+class UniformNoise(Dataset):
+    """Uniform Noise Dataset"""
+
+    def __init__(self, size=(3, 224, 224), n_samples=10000, low=0, high=1):
+        """ 
+            size (int,int,int) -> tuple representing size of the sample to be generated, respecting (n° of channels, height, width)
+        """
+        self.size = size
+        self.n_samples = n_samples
+        self.low = low
+        self.high = high
+        self.data = np.random.uniform(low=self.low, high=self.high, size=(self.n_samples,) + self.size)
+        self.data = self.data.astype(np.float32)
+
+    def __len__(self):
+        return self.n_samples
+
+    def __getitem__(self, idx):
+        return self.data[idx]
 
 # To generate the dataloader containing both ID and OOD data, with the real and fake labels
 class OOD_dataset(Dataset):
@@ -1553,7 +1654,7 @@ class OOD_dataset(Dataset):
         # label to one-hot-encoding
         y_vector    = [0,0]             # zero vector
         y_vector[y] = 1                 # mark with one the correct position: [1,0] -> ID, [0,1]-> OOD
-        y_vector = T.tensor(y_vector) 
+        y_vector    = T.tensor(y_vector) 
         
         return x, y_vector
             
@@ -1701,5 +1802,23 @@ if __name__ == "__main__":
         # x,y = data.__getitem__(7000)
         # print(y, data.idx2label[y])
         # showImage(x)
+    
+    def test_getters(name):
         
-    test_multi_CDDB()
+        # use getters
+        if name == "cifar":
+            dl_train    = getCIFAR100_dataset(train = True)
+            dl_test     = getCIFAR100_dataset(train = False)
+        elif name == "mnist":
+            dl_train    = getMNIST_dataset(train = True)
+            dl_test     = getMNIST_dataset(train = False)
+        elif name == "fmnist":
+            dl_train    = getFashionMNIST_dataset(train = True)
+            dl_test     = getFashionMNIST_dataset(train = False)
+        else:
+            print("The dataset with name {} is not available".format(name))
+            
+    
+        print(f"train samples number: {len(dl_train)}, test samples number {len(dl_test)}")
+        
+    test_getters(name="fmnist")
