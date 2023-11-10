@@ -83,14 +83,14 @@ class BinaryClassifier(object):
         if not(isinstance(x, T.Tensor)):
             x = T.tensor(x)
         
-        # handle single image, increasing dimensions for batch
+        # handle single image, increasing dimensions simulating a batch
         if len(x.shape) == 3:
             x = T.expand(1,-1,-1,-1)
         elif len(x.shape) <= 2 or len(x.shape) >= 5:
             raise ValueError("The input shape is not compatiple, expected a batch or a single image")
         
         # correct the dtype
-        if not (T.dtype is T.float32):
+        if not (x.dtype is T.float32):
             x = x.to(T.float32)
          
         x = x.to(self.device)
@@ -618,7 +618,7 @@ if __name__ == "__main__":
         bin_classifier.early_stopping_trigger = "acc"
         bin_classifier.train(name_train="mix_resnet50_ImageNet")   #name with the pattern {data scenario}_{model name}, the algorithm include other name decorations
     
-    def test_v2(name_model, epoch, scenario):
+    def test_v2_metrics(name_model, epoch, scenario):
         bin_classifier = DFD_BinClassifier_v2(scenario = scenario, useGPU= True, model_type="resnet_pretrained")
         bin_classifier.load(name_model, epoch)
         bin_classifier.test()

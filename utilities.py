@@ -13,11 +13,11 @@ from    torchvision.transforms              import v2    # new version for tranf
 from    torchvision.transforms.functional   import InterpolationMode
 from    time                                import time
 
-#  binary classification metrics
-from    sklearn.metrics     import precision_score, recall_score, f1_score, confusion_matrix, hamming_loss, jaccard_score, accuracy_score
-#  multi-class classification metrics
-from    sklearn.metrics     import auc, roc_curve, average_precision_score, precision_recall_curve
 
+#  classification metrics
+from    sklearn.metrics     import precision_score, recall_score, f1_score, confusion_matrix, hamming_loss, jaccard_score, accuracy_score, classification_report, matthews_corrcoef
+#  binary classification metrics
+from    sklearn.metrics     import auc, roc_curve, average_precision_score, precision_recall_curve
 
 
 
@@ -431,8 +431,6 @@ def plot_cm(cm, labels, title_plot = None, path_save = None, duration_timer = 25
         for j in range(cm.shape[1]):
             ax.text(x= j, y = i, s= round(cm[i, j], 3), va='center', ha='center', size='xx-large')
         
-        
-    
     # change labels name on the matrix
     ax.set_xticks(range(len(labels)))
     ax.set_yticks(range(len(labels)))
@@ -509,6 +507,7 @@ def plot_PR_curve(recalls, precisions, path_save = None, duration_timer = 2500):
 
 def metrics_binClass(preds, targets, pred_probs, epoch_model="unknown", path_save = None, average = "macro", name_ood_file  = None):
     """ 
+        Computation of metrics for binary classification task.
         use name_ood_file parameter only if you want to save results for OOD classification
     """
     
@@ -527,7 +526,7 @@ def metrics_binClass(preds, targets, pred_probs, epoch_model="unknown", path_sav
         # plot PR curve
         plot_PR_curve(r,p,path_save) 
         
-        # compute everage precision 
+        # compute everage precision (almost equal to AUPR)
         avg_precision = average_precision_score(targets, pred_probs, average= average, pos_label=1),         \
     
     else: 
@@ -541,7 +540,7 @@ def metrics_binClass(preds, targets, pred_probs, epoch_model="unknown", path_sav
         "precision":                    precision_score(targets, preds, average = "binary", zero_division=1, pos_label=1),   \
         "recall":                       recall_score(targets, preds, average = "binary", zero_division=1, pos_label=1),      \
         "f1-score":                     f1_score(targets, preds, average= "binary", zero_division=1, pos_label=1),           \
-        "average_precision/":           avg_precision,                                                                        \
+        "average_precision":           avg_precision,                                                                        \
         "ROC_AUC":                      roc_auc,                                                                             \
         "PR_AUC":                       aupr,                                                                                \
         "hamming_loss":                 hamming_loss(targets, preds),                                                        \
@@ -578,16 +577,18 @@ def metrics_binClass(preds, targets, pred_probs, epoch_model="unknown", path_sav
     return metrics_results
 
 def metrics_OOD(targets, pred_probs, pos_label = 1, path_save = None):
+    """ 
+        Computation of metrics for the OOD classification task
+    """
+    fpr, tpr, _ = roc_curve(targets, pred_probs, pos_label=1,  drop_intermediate= False)
+    auroc = auc(fpr, tpr)
     
-    # fpr, tpr, _ = roc_curve(targets, pred_probs, pos_label=1,  drop_intermediate= False)
-    # auroc = auc(fpr, tpr)
-    
-    fpr95   = fpr_at_95_tpr(pred_probs, targets, pos_label)
+    fpr95 = fpr_at_95_tpr(pred_probs, targets, pos_label)
     
     det_err, thr_err = detection_error(pred_probs, targets, pos_label= pos_label)
     
     metric_results = {
-        # "auroc":            auroc,
+        "auroc":            auroc,
         "fpr95":            fpr95,
         "detection_error":  det_err,
         "thr_de":           thr_err
@@ -615,7 +616,7 @@ def fpr_at_95_tpr(preds, labels, pos_label = 1):
         # Linear interp between values to get FPR at TPR == 0.95
         return np.interp(x = 0.95, xp = tpr,fp = fpr)   # x->y(x) interpolated, xp->[x1,..,xn], fp-> [y1,..-,yn]
 
-def detection_error(preds, labels, pos_label = 1, verbose = False):
+def detection_error(preds, labels, pos_label = 1, verbose = False):   # look also det_curve from sklearn metrics
     '''
     Return the misclassification probability when TPR is 95%.
     '''
@@ -649,9 +650,56 @@ def detection_error(preds, labels, pos_label = 1, verbose = False):
     
     return detection_error, threshold_de
 
-#TODO metrics for multi-label scenario
-def metrics_multiClass():
-    pass
+def metrics_multiClass(preds, targets, labels_indices, labels_name, average = "macro", epoch_model="unknown", path_save = None):
+    """ 
+        Computation of metrics for multi-label classification task.
+        "average" parameter, choose between "macro" (over classes) and "micro" (over samples)
+        labels_indices and labels_name should be in the same order of representation
+    """
+    
+    # compute classification report
+    report = classification_report(y_true=targets, y_pred=preds, labels = labels_indices, target_names= labels_name, output_dict= True)
+    
+    # compute metrics and store into a dictionary
+    metrics_results = {
+        "accuracy"          : accuracy_score(targets, preds, normalize= True),
+        "precision"         : precision_score(targets, preds, average = average, zero_division=1),      \
+        "recall"            : recall_score(targets, preds, average = average, zero_division=1),         \
+        "f1-score"          : f1_score(targets, preds, average= average, zero_division=1),              \
+        "hamming_loss"      : hamming_loss(targets, preds),                                             \
+        "jaccard_score"     : jaccard_score(targets,preds, average = average, zero_division=1),         \
+        "matthew_correlation_coefficient"                                                              
+                            : matthews_corrcoef(targets, preds),                                        \
+        "confusion_matrix"  : confusion_matrix(targets, preds, labels=labels_indices, normalize="true") \
+         
+    }
+    
+    # concat metrics computed
+    metrics_results = concat_dict(metrics_results, report)
+    
+    # print metrics
+    for k,v in metrics_results.items():
+        if k != "confusion_matrix":
+            print("\nmetric: {}, result: {}".format(k,v))
+        else:
+            print("Confusion matrix")
+            print(v)
+    
+    
+    # plot and save (if path specified) confusion matrix
+    plot_cm(cm = metrics_results['confusion_matrix'], labels = labels_name, title_plot = None, path_save = path_save)
+    
+    
+    metrics_results['confusion_matrix'] = metrics_results['confusion_matrix'].tolist()
+    
+    # save the results (JSON file) if a path has been provided
+    if path_save is not None :
+        # metrics_results_ = metrics_results.copy()
+        # metrics_results_['confusion_matrix'] = metrics_results_['confusion_matrix'].tolist()
+        saveJson(os.path.join(path_save, 'binaryMetrics_' + epoch_model + '.json'), metrics_results)
+
+    
+    return metrics_results
 
 ##################################################  performance testing functions #####################################################
 
@@ -699,3 +747,15 @@ def duration(function):
         result = list(map(pow, a))
         print(result)
     """
+    
+##################################################  General Python utilities ##########################################################
+
+concat_dict = lambda x,y: {**x, **y}
+
+def print_dict(x):
+    for idx,(k,v) in enumerate(x.items()):
+        print("{:>3}) {:<15} -> {:>15}".format(idx,k,v))
+
+def print_list(x):
+    for idx, elem in enumerate(x): 
+        print("{:>3}){}".format(idx, elem))

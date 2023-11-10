@@ -5,9 +5,11 @@ from    torch.nn            import functional as F
 from    torch.utils.data    import DataLoader
 from    torch.cuda.amp      import autocast
 from    tqdm                import tqdm
-
-from    dataset             import CDDB_binary, CDDB_binary_Partial, getCIFAR100_dataset, OOD_dataset
 from    sklearn.metrics     import precision_recall_curve, auc, roc_auc_score
+
+# local import
+from    dataset             import CDDB_binary, CDDB_binary_Partial, getCIFAR100_dataset, OOD_dataset
+from    mnist_classifier    import MNISTClassifier
 from    bin_classifier      import DFD_BinClassifier_v1
 from    utilities           import saveJson, loadJson, metrics_binClass, metrics_OOD
 
@@ -500,7 +502,7 @@ if __name__ == "__main__":
         ood_detector = OOD_Baseline(classifier= None, id_data_test = None, ood_data_test = None, useGPU= True)
         ood_detector.test_implementation()
      
-    def baseline_resnet50_CDDB_CIFAR(name_model, epoch):
+    def test_baseline_resnet50_CDDB_CIFAR(name_model, epoch):
         # select executions
         exe = [1,1]
         
@@ -523,11 +525,13 @@ if __name__ == "__main__":
         
         # [5] launch testing
         if exe[1]: ood_detector.testing_binary_class(name_classifier=name_model, task_type_prog = 0, name_ood_data="cifar100", thr_type= "")
-        
+    
+    #TODO define test for the other scenarios
+    
     test_baseline_implementation()
     
-
-# baseline_resnet50_CDDB_CIFAR("faces_resnet50_ImageNet_04-11-2023", 24)
-# baseline_resnet50_CDDB_CIFAR("groups_resnet50_ImageNet_05-11-2023", 26)
-# baseline_resnet50_CDDB_CIFAR("mix_resnet50_ImageNet_05-11-2023", 21)
+# test_baseline_resnet50_CDDB_CIFAR("resnet50_ImageNet_13-10-2023", 20)
+# test_baseline_resnet50_CDDB_CIFAR("faces_resnet50_ImageNet_04-11-2023", 24)
+# test_baseline_resnet50_CDDB_CIFAR("groups_resnet50_ImageNet_05-11-2023", 26)
+# test_baseline_resnet50_CDDB_CIFAR("mix_resnet50_ImageNet_05-11-2023", 21)
 

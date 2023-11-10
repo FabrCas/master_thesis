@@ -302,7 +302,7 @@ class FC_classifier(nn.Module):
     """ 
     A simple ANN with fully connected layer + batch normalziation
     """
-    def __init__(self, n_channel = 1, width = 28, height = 28):   # Default value for MNISt
+    def __init__(self, n_channel = 1, width = 28, height = 28, n_classes = 10):   # Default value for MNISt
         super(FC_classifier, self).__init__()
 
         self.flatten = nn.Flatten()  #input layer, flattening the image
@@ -317,11 +317,11 @@ class FC_classifier(nn.Module):
         self.fc3 = nn.Linear(256, 256)
 
         self.batch_norm4 = nn.BatchNorm1d(256)
-        self.fc4 = nn.Linear(256, 10)
+        self.fc4 = nn.Linear(256, n_classes)
         
-        # activation functinos
+        # activation functions
         self.relu = nn.ReLU()
-        self.softmax = nn.Softmax(dim=1)
+        # self.softmax = nn.Softmax(dim=1)
 
     def forward(self, x):
         x = self.flatten(x)
@@ -340,7 +340,7 @@ class FC_classifier(nn.Module):
 
         x = self.batch_norm4(x)
         x = self.fc4(x)
-        x = self.softmax(x)
+        # x = self.softmax(x)     # don't use softmax, return the logits
 
         return x
     
