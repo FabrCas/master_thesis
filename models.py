@@ -7,6 +7,7 @@ from torchsummary import summary
 from torchvision import models
 from torchvision.models import ResNet50_Weights
 
+
 import tensorflow as tf
 from tensorflow import keras
 
@@ -308,20 +309,25 @@ class FC_classifier(nn.Module):
     """
     def __init__(self, n_channel = 1, width = 28, height = 28, n_classes = 10):   # Default value for MNISt
         super(FC_classifier, self).__init__()
+        
+        # feature map
+        fm          = 256       #256
+        epsilon     = 0.001
+        momentum    = 0.99
 
         self.flatten = nn.Flatten()  #input layer, flattening the image
         
-        self.batch_norm1 = nn.BatchNorm1d(width * height * n_channel)
-        self.fc1 = nn.Linear(width * height * n_channel, 256)
+        self.batch_norm1 = nn.BatchNorm1d(width * height * n_channel, eps= epsilon, momentum=momentum)
+        self.fc1 = nn.Linear(width * height * n_channel, fm)
 
-        self.batch_norm2 = nn.BatchNorm1d(256)
-        self.fc2 = nn.Linear(256, 256)
+        self.batch_norm2 = nn.BatchNorm1d(fm, eps= epsilon, momentum=momentum)
+        self.fc2 = nn.Linear(fm, fm)
 
-        self.batch_norm3 = nn.BatchNorm1d(256)
-        self.fc3 = nn.Linear(256, 256)
+        self.batch_norm3 = nn.BatchNorm1d(fm, eps= epsilon, momentum=momentum)
+        self.fc3 = nn.Linear(fm, fm)
 
-        self.batch_norm4 = nn.BatchNorm1d(256)
-        self.fc4 = nn.Linear(256, n_classes)
+        self.batch_norm4 = nn.BatchNorm1d(fm, eps= epsilon, momentum=momentum)
+        self.fc4 = nn.Linear(fm, n_classes)
         
         # activation functions
         self.relu = nn.ReLU()

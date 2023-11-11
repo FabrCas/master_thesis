@@ -6,13 +6,15 @@ from    torch.utils.data    import DataLoader
 from    torch.cuda.amp      import autocast
 from    tqdm                import tqdm
 from    sklearn.metrics     import precision_recall_curve, auc, roc_auc_score
+from    tensorflow          import keras
 
 # local import
 from    dataset             import CDDB_binary, CDDB_binary_Partial, OOD_dataset, getCIFAR100_dataset, getMNIST_dataset, getFMNIST_dataset
-from    toy_classifier      import MNISTClassifier
+from    toy_classifier      import MNISTClassifier, MNISTClassifier_keras
 from    bin_classifier      import DFD_BinClassifier_v1
-from    utilities           import saveJson, loadJson, metrics_binClass, metrics_OOD, print_dict, showImage
+from    utilities           import saveJson, loadJson, metrics_binClass, metrics_OOD, print_dict, showImage, check_folder
 
+# from tensorflow import keras
 
 types_classifier = ["bin_class", "multi_class", "multi_label_class"]
 
@@ -118,7 +120,7 @@ class OOD_Baseline(OOD_Classifier):
 
     def compute_metrics_ood(self, id_data, ood_data, positive_reversed = False):
         """_
-            function used to compute fpr95, detection error and relative threshold.
+            aux function used to compute fpr95, detection error and relative threshold.
             con be selected the positive label, the defulat one is for ID data, set to False
             with the parameter "positive_reversed" for abnormality detection (OOD).
         """
@@ -165,12 +167,9 @@ class OOD_Baseline(OOD_Classifier):
         Returns:
             confidences (np.array): list of confidences for each prediction
         """
-        
-        # print(probabilties.shape)
         pred_value      = np.max(probabilities, -1)
-        # print(pred_value.shape)
+        # add a fictitious dimension
         confidences     = np.reshape(pred_value, (len(pred_value), 1))
-        # print(confidence.shape)
         
         return confidences
     
@@ -328,23 +327,28 @@ class OOD_Baseline(OOD_Classifier):
             print(path_result_save)
             
             # prepare file-system
-            if (not os.path.exists(path_results_ood_classifier)):
-                os.makedirs(path_results_ood_classifier) 
-            if (not os.path.exists(path_results_baseline)):
-                os.makedirs(path_results_baseline) 
-            if (not os.path.exists(path_results_folder)):
-                os.makedirs(path_results_folder) 
+            check_folder(path_results_ood_classifier)
+            check_folder(path_results_baseline)
+            check_folder(path_results_folder)
+            
+            # if (not os.path.exists(path_results_ood_classifier)):
+            #     os.makedirs(path_results_ood_classifier) 
+            # if (not os.path.exists(path_results_baseline)):
+            #     os.makedirs(path_results_baseline) 
+            # if (not os.path.exists(path_results_folder)):
+            #     os.makedirs(path_results_folder) 
             
             saveJson(path = path_result_save, data = data)
     
     def test_implementation(self):
         """
             Function used to verify the correct implementation of the baseline, re-creating the original experiment of the paper
+            recreating the experiment carried out in the notebook: https://github.com/2sang/OOD-baseline/tree/master/notebooks
         """
-        classifier = MNISTClassifier()
-        classifier.load()
-        
-        # define the dataset and the dataloader
+    
+        classifier = MNISTClassifier_keras()
+        classifier.load_model()
+               
         mnist_testset   = getMNIST_dataset(train = False)
         fmnist_testset  = getFMNIST_dataset(train = False)
         dataset_ood     = OOD_dataset(id_data= mnist_testset, ood_data=fmnist_testset, balancing_mode = None, grayscale= True)
@@ -356,59 +360,20 @@ class OOD_Baseline(OOD_Classifier):
                 
         for idx, (x,y) in tqdm(enumerate(dataloader_ood), total= len(dataloader_ood)):
             
-            # to test
-            # if idx >= 10: break
-
-            # for idx, x in enumerate(x[:]):
-            #     print(x.shape)
-            #     showImage(x, name = str(y[idx]), has_color = False)
-            
-            x = x.to(self.device)
-            with T.no_grad():
-                with autocast():
-                    _, probs, _ = classifier.forward(x)
-                    
-            # to numpy array
+            x = x.cpu().numpy().squeeze(axis=1)
             y = y.cpu().numpy()
-            
-            
-            # print(probs.shape)
+
+            probs = classifier.model.predict(x, verbose=0)
+               
             pred_probs = np.append(pred_probs, probs, axis= 0)
             dl_labels = np.append(dl_labels, y, axis= 0)
-        
-        # separation of id/ood labels and probabilities
+
+        # from now on same custom code present in the analyzer function
         
         id_labels  =  dl_labels[:,0]                # filter by label column
         ood_labels =  dl_labels[:,1]
-        prob_id     = pred_probs[id_labels == 1]         # split forward probabilites between ID adn OOD, still a list of probabilities for each class learned by the model
+        prob_id     = pred_probs[id_labels == 1]    # split probabilites between ID adn OOD,
         prob_ood    = pred_probs[ood_labels == 1]
-
-        # print(id_labels.shape)
-        # print(ood_labels.shape)
-        # print(prob_id.shape)
-        # print(prob_ood.shape)
-        
-        def entropy_from_distribution(p, axis):
-            return np.log(10.) + np.sum(p * np.log(np.abs(p) + 1e-11), axis=1, keepdims=True)
-        
-        def entropy_stats(softmax):
-            s_prob = np.amax(softmax, axis=1, keepdims=True)
-            kl_all = entropy_from_distribution(softmax, axis=1)
-            mean_all, var_all = np.mean(kl_all), np.var(kl_all)
-            return s_prob, kl_all, mean_all, var_all
-        
-        
-        (s_prob_in, kl_in, mean_in, var_in) = entropy_stats(prob_id)
-        (s_prob_out, kl_out, mean_out, var_out) = entropy_stats(prob_ood)
-
-        print("\n[MNIST-FMINIST anomaly detection]")
-        print('In-dist max softmax distribution (mean, std):')
-        print(np.mean(s_prob_in), np.std(s_prob_in))
-
-        print('Out-of-dist max softmax distribution(mean, std):')
-        print(np.mean(s_prob_out), np.std(s_prob_out))
-        
-        # same code from analyze function
         
         # compute confidence (all)
         conf_all = round(self.compute_avgConfidence(pred_probs),3)
@@ -429,8 +394,6 @@ class OOD_Baseline(OOD_Classifier):
         print("In-Distribution Entropy          [mean,std]                  -> ", mean_e_id, std_e_id)
         print("Out-Of-Distribution Entropy      [mean,std]                  -> ", mean_e_ood, std_e_ood)
         
-        return
-    
         # normality detection
         print("Normality detection:")
         norm_base_rate = round(100*(prob_id.shape[0]/(prob_id.shape[0] + prob_ood.shape[0])),2)
@@ -450,16 +413,11 @@ class OOD_Baseline(OOD_Classifier):
         print("\tPrediction probability")
         p_abnorm_aupr, p_abnorm_auroc = self.compute_curves(-maximum_prob_id, -maximum_prob_ood, positive_reversed= True)
         # p_abnorm_aupr, p_abnorm_auroc = self.compute_curves(1-maximum_prob_id, 1-maximum_prob_ood, positive_reversed= True)
-
-        return
     
         # compute fpr95, detection_error and threshold_error 
         metrics_norm = self.compute_metrics_ood(maximum_prob_id, maximum_prob_ood)
         print("OOD metrics:\n", metrics_norm)  
-        metrics_abnorm = self.compute_metrics_ood(1-maximum_prob_id, 1-maximum_prob_ood, positive_reversed= True)
-        print("OOD metrics:\n", metrics_abnorm)   
-                 
-        
+
         # store statistics/metrics in a dictionary
         data = {
             "ID_max_prob": {
@@ -503,11 +461,15 @@ class OOD_Baseline(OOD_Classifier):
         
         print_dict(data)
         
-        
+        # save results
+        path_model_test_results = "./results/ood_detection/model_test"
+        check_folder(path_model_test_results)
+        name_file = "baseline_simulated_experiment.json"
+        saveJson(path_file = os.path.join(path_model_test_results, name_file), data = data)
         
     def testing_binary_class(self, name_classifier, task_type_prog, name_ood_data, thr_type = "fpr95"):
         """
-            This test compute metrics (binary classification ID/OOD) that are threshold related (discriminator)
+            This function compute metrics (binary classification ID/OOD) that are threshold related (discriminator)
             
                 Args:
             x (torch.Tensor): input image to be discriminated (real/fake)
@@ -587,12 +549,17 @@ class OOD_Baseline(OOD_Classifier):
         # print(target)
     
         # prepare file-system
-        if (not os.path.exists(path_results_ood_bin)):
-            os.makedirs(path_results_ood_bin) 
-        if (not os.path.exists(path_results_baseline)):
-            os.makedirs(path_results_baseline) 
-        if (not os.path.exists(path_results_folder)):
-            os.makedirs(path_results_folder)
+        check_folder(path_results_ood_bin)
+        check_folder(path_results_baseline)
+        check_folder(path_results_folder)
+        
+        
+        # if (not os.path.exists(path_results_ood_bin)):
+        #     os.makedirs(path_results_ood_bin) 
+        # if (not os.path.exists(path_results_baseline)):
+        #     os.makedirs(path_results_baseline) 
+        # if (not os.path.exists(path_results_folder)):
+        #     os.makedirs(path_results_folder)
         
         # compute and save metrics 
         name_resultClass_file  = 'metrics_ood_classification_{}.json'.format(name_ood_data)
@@ -689,10 +656,11 @@ if __name__ == "__main__":
     
     #TODO define test for the other scenarios
     
-    test_baseline_implementation()
+    # test_baseline_implementation()
+    pass
     
-# test_baseline_resnet50_CDDB_CIFAR("resnet50_ImageNet_13-10-2023", 20)
-# test_baseline_resnet50_CDDB_CIFAR("faces_resnet50_ImageNet_04-11-2023", 24)
-# test_baseline_resnet50_CDDB_CIFAR("groups_resnet50_ImageNet_05-11-2023", 26)
-# test_baseline_resnet50_CDDB_CIFAR("mix_resnet50_ImageNet_05-11-2023", 21)
+    # test_baseline_resnet50_CDDB_CIFAR("resnet50_ImageNet_13-10-2023", 20)
+    # test_baseline_resnet50_CDDB_CIFAR("faces_resnet50_ImageNet_04-11-2023", 24)
+    # test_baseline_resnet50_CDDB_CIFAR("groups_resnet50_ImageNet_05-11-2023", 26)
+    # test_baseline_resnet50_CDDB_CIFAR("mix_resnet50_ImageNet_05-11-2023", 21)
 

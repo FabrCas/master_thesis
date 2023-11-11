@@ -1,0 +1,23 @@
+[MNIST-FashionMNIST anomaly detection]
+In-dist max softmax distribution (mean, std):
+0.9899579 0.052967437
+Out-of-dist max softmax distribution(mean, std):
+0.91532385 0.14896864
+
+Normality Detection
+Normality base rate (%): 50.0
+KL[p||u]: Normality Detection
+AUPR (%): 68.46
+AUROC (%): 76.07
+Prediction Prob: Normality Detection
+AUPR (%): 69.86
+AUROC (%): 76.32
+
+Abnormality Detection
+Abnormality base rate (%): 50.0
+KL[p||u]: Abnormality Detection
+AUPR (%): 78.06
+AUROC (%): 76.07
+Prediction Prob: Abnormality Detection
+AUPR (%): 77.78
+AUROC (%): 76.32

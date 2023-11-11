@@ -103,12 +103,13 @@ class MNISTClassifier(object):
                 x = x.to(self.device)
                 x.requires_grad_()
                 y = y.to(self.device)
+                
                 # zeroing the gradient  
                 optimizer.zero_grad()
                 
-                with autocast():
-                    logits = self.model.forward(x)
-                    loss   = self.cce(input=logits, target=y)
+                # with autocast():
+                logits = self.model.forward(x)  
+                loss   = self.cce(input=logits, target=y)
                 
                 # update total loss    
                 loss_epoch += loss.item()
@@ -185,7 +186,7 @@ class MNISTClassifier(object):
 
 
 class MNISTClassifier_keras(object):
-    def __init__(self, batch_size = 128,):
+    def __init__(self, batch_size = 128):
         super(MNISTClassifier_keras, self).__init__()
         self.model = get_fc_classifier_Keras()
         # learning hyper-parameters
@@ -246,15 +247,17 @@ class MNISTClassifier_keras(object):
         path  = os.path.join(self.path_test_models, self.name_dataset, self.name_model)
         
         self.model = load_model(path)
-        print(f"Keras model has beeen saved to {path}")
+        print(f"Keras model has beeen loaded from {path}")
                   
 if __name__ == "__main__":
     # 1) pytorch implementation
     # classifier = MNISTClassifier()
     # classifier.train()
+    # classifier.load()
     
     # tensorflow implementation
-    classifier = MNISTClassifier_keras()
-    classifier.train()
+    # classifier = MNISTClassifier_keras()
+    # classifier.train()
+    # classifier.load_model()
     
     pass

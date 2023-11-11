@@ -1,4 +1,5 @@
 import  os 
+import  re
 import  json
 from    time                                import time
 import  multiprocessing                     as mp
@@ -121,7 +122,6 @@ def sampleValidSet(trainset,testset,useTestSet = True, verbose = False):
 
         return validset, testset
         
-
 def balanceLabels(self, dataloader, verbose = False):
     """ 
         used to make the dataset more balanced (downsampling)
@@ -281,17 +281,17 @@ def loadModel(model, path_load):
     ckpt = T.load(path_load)
     model.load_state_dict(ckpt)
       
-def saveJson(path, data):
+def saveJson(path_file, data):
     """ save file using JSON format
 
     Args:
-        path (str): path to the JSON file
+        path_file (str): path to the JSON file
         data (JSON like object: dict or list): data to make persistent
     """
-    with open(path, "w") as file:
+    with open(path_file, "w") as file:
         json.dump(data, file, indent= 4)
     
-def loadJson(path):
+def loadJson(path_file):
     """ load file using json format
 
     Args:
@@ -300,7 +300,7 @@ def loadJson(path):
     Returns:
         JSON like object (dict or list): JSON data from the path
     """
-    with open(path, "r") as file:
+    with open(path_file, "r") as file:
         json_data = file.read()
     data =  json.loads(json_data)
     return data
@@ -758,8 +758,23 @@ concat_dict = lambda x,y: {**x, **y}
 
 def print_dict(x):
     for idx,(k,v) in enumerate(x.items()):
-        print("{:>3}) {:<15} -> {:>15}".format(idx,k,v))
+        print("{:>3}) {:<15} -> {:<15}".format(str(idx),str(k),str(v)))
 
 def print_list(x):
     for idx, elem in enumerate(x): 
-        print("{:>3}){}".format(idx, elem))
+        print("{:>3}){}".format(str(idx), str(elem)))
+
+def isFolder(path):
+    """ simple check if a path (relative or absolute) is related to a folder (returns True) or a file (returns False)"""
+    match_file = re.match(r"^.+\..*$", path)
+    if match_file is None: return True
+    else: return False
+      
+def check_folder(path):
+    """ check if a folder exists, otherwise create """
+    
+    if(isFolder(path)):
+        if(not os.path.exists(path)):
+            os.makedirs(path) 
+    else:
+        raise ValueError("Impossible to create a folder, the path {} is relative to a file!".format(path))
