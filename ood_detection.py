@@ -18,10 +18,20 @@ from    utilities           import saveJson, loadJson, metrics_binClass, metrics
 
 types_classifier = ["bin_class", "multi_class", "multi_label_class"]
 
-# TODO, superclass for OOD classifier
 class OOD_Classifier(object):
-    def __init__(self, useGPU):
+    def __init__(self, id_data_test, ood_data_test, id_data_train, ood_data_train, useGPU):
         super(OOD_Classifier, self).__init__()
+        
+        
+        # train data
+        self.id_data_train  = id_data_train
+        self.ood_data_train = ood_data_train
+        # test sets
+        self.id_data_test   = id_data_test
+        self.ood_data_test  = ood_data_test
+        
+        # classifier types
+        self.types_classifier = ["bin_class", "multi_class", "multi_label_class"]
         
         # general paths
         self.path_models    = "./models/ood_detection"
@@ -33,44 +43,7 @@ class OOD_Classifier(object):
         else: self.device = "cpu"
         self.batch_size     = 32
         
-class OOD_Baseline(OOD_Classifier):
-    """
-        Classifier for OOD data
-    """
-    def __init__(self, classifier,  id_data_test, ood_data_test, useGPU = True):
-        """
-        Class-Constructor
-
-        Args:
-            classifier (DFD_BinClassifier): classifier used for the main Deepfake detection task
-            ood_data_test (torch.utils.data.Dataset): test set out of distribution
-            ood_data_train (torch.utils.data.Dataset): train set out of distribution
-            useGPU (bool, optional): flag to enable usage of GPU. Defaults to True.
-        """
-        super(OOD_Baseline, self).__init__(useGPU = useGPU)
-        # classfier used
-        self.classifier  = classifier
-        
-        # classifier types
-        self.types_classifier = ["bin_class", "multi_class", "multi_label_class"]
-        
-        # train
-        # self.id_data_train  = CDDB_binary(train = True)
-        # self.ood_data_train = ood_data_train
-        # self.dataset_train  = OOD_dataset(self.id_data_train, self.ood_data_train, balancing_mode = None)
-        
-        # test sets
-        self.id_data_test  = id_data_test
-        self.ood_data_test = ood_data_test
-        try:
-            self.dataset_test  = OOD_dataset(self.id_data_test, self.ood_data_test, balancing_mode = "max")
-        except:
-            print("Dataset data is not valid, please use instances of class torch.Dataset")
-        
-        # name of the classifier
-        self.name           = "baseline"
-        
-    #                                       math aux functions
+        #                                       math/statistics aux functions
     def sigmoid(self,x):
             return 1.0 / (1.0 + np.exp(-x))
         
@@ -85,7 +58,27 @@ class OOD_Baseline(OOD_Classifier):
         """
         return np.log(10.) + np.sum(distibution * np.log(np.abs(distibution) + 1e-11), axis=1, keepdims=True)
     
-    #                                     analysis aux functions
+    def compute_statsProb(self, probability):
+        """ get statistics from probability
+
+        Args:
+            probability (_type_):is the output from softmax-sigmoid function using the logits
+
+        Returns:
+            maximum_prob (np.array): max probability for each prediction (keepsdim = True)
+            entropy (np.array): entropy from KL divergence with uniform distribution and data distribution
+            mean_e (np.array): entropy's mean
+            std_e (np.array): standard deviation entropy
+        """
+        # get the max probability
+        maximum_prob    = np.max(probability, axis=1, keepdims= True)
+        entropy         = self.entropy(probability)
+        mean_e          = np.mean(entropy)
+        std_e           = np.std(entropy)
+        
+        return maximum_prob, entropy, mean_e, std_e
+    
+    #                                           matrics aux functions
     def compute_aupr(self, labels, pred):        
         p, r, _ = precision_recall_curve(labels, pred)
         return  auc(r, p)
@@ -136,30 +129,38 @@ class OOD_Baseline(OOD_Classifier):
         predictions = np.squeeze(np.vstack((id_data, ood_data)))
         metrics_ood = metrics_OOD(targets=target, pred_probs= predictions)
         return metrics_ood 
-        
-    
-    def compute_statsProb(self, probability):
-        """ get statistics from probability
+           
+class OOD_Baseline(OOD_Classifier):
+    """
+        Classifier for OOD data
+    """
+    def __init__(self, classifier,  id_data_test = None, ood_data_test = None, id_data_train = None, ood_data_train = None, useGPU = True):
+        """
+        Class-Constructor
 
         Args:
-            probability (_type_):is the output from softmax-sigmoid function using the logits
-
-        Returns:
-            maximum_prob (np.array): max probability for each prediction (keepsdim = True)
-            entropy (np.array): entropy from KL divergence with uniform distribution and data distribution
-            mean_e (np.array): entropy's mean
-            std_e (np.array): standard deviation entropy
+            classifier (DFD_BinClassifier): classifier used for the main Deepfake detection task
+            ood_data_test (torch.utils.data.Dataset): test set out of distribution
+            ood_data_train (torch.utils.data.Dataset): train set out of distribution
+            useGPU (bool, optional): flag to enable usage of GPU. Defaults to True.
         """
-        # get the max probability
-        maximum_prob    = np.max(probability, axis=1, keepdims= True)
-        entropy         = self.entropy(probability)
-        mean_e          = np.mean(entropy)
-        std_e           = np.std(entropy)
+        super(OOD_Baseline, self).__init__(id_data_test = id_data_test, ood_data_test = ood_data_test,                  \
+                                           id_data_train = id_data_train, ood_data_train = id_data_train, useGPU = useGPU)
+        # set the classifier
+        self.classifier  = classifier
         
-        return maximum_prob, entropy, mean_e, std_e
+        # load the Pytorch dataset here
+        try:
+            self.dataset_test  = OOD_dataset(self.id_data_test, self.ood_data_test, balancing_mode = "max")
+        except:
+            print("Dataset data is not valid, please use instances of class torch.Dataset")
+        
+        # name of the classifier
+        self.name = "baseline"
     
-    def compute_confidences(self, probabilities):     # should be not translated as direct measure of confidence
-        """ computation of the baseline performance: maximm softmax performance (MSP)
+    
+    def compute_MSP(self, probabilities):     # should be not translated as direct measure of confidence
+        """ computation of the baseline performance: maximum softmax performance (MSP)
 
         Args:
             probabilties (np.array): probabilities from logits
@@ -173,13 +174,13 @@ class OOD_Baseline(OOD_Classifier):
         
         return confidences
     
-    def compute_avgConfidence(self, probabilities):
+    def compute_avgMSP(self, probabilities):
         """_
             computes the average using max probabilities from test instances.
         """
         pred_value      = np.max(probabilities, -1)   # max among class probabilities
         return np.average(pred_value)
-    
+     
     #                                     analysis and testing functions
     def analyze(self, name_classifier, task_type_prog, name_ood_data = None):
         """ analyze function, computing OOD metrics that are not threshold related
@@ -230,7 +231,7 @@ class OOD_Baseline(OOD_Classifier):
         
 
         # compute confidence (all)
-        conf_all = round(self.compute_avgConfidence(probs),3)
+        conf_all = round(self.compute_avgMSP(probs),3)
         print("Confidence ID+OOD\t{}".format(conf_all))
         
         maximum_prob_id,  entropy_id,  mean_e_id,  std_e_id  = self.compute_statsProb(prob_id)
@@ -331,19 +332,12 @@ class OOD_Baseline(OOD_Classifier):
             check_folder(path_results_baseline)
             check_folder(path_results_folder)
             
-            # if (not os.path.exists(path_results_ood_classifier)):
-            #     os.makedirs(path_results_ood_classifier) 
-            # if (not os.path.exists(path_results_baseline)):
-            #     os.makedirs(path_results_baseline) 
-            # if (not os.path.exists(path_results_folder)):
-            #     os.makedirs(path_results_folder) 
-            
             saveJson(path = path_result_save, data = data)
     
-    def test_implementation(self):
+    def validation_method(self):
         """
-            Function used to verify the correct implementation of the baseline, re-creating the original experiment of the paper
-            recreating the experiment carried out in the notebook: https://github.com/2sang/OOD-baseline/tree/master/notebooks
+            Function used to verify the correct implementation of the baseline.
+            Recreating the experiment carried out in the notebook: https://github.com/2sang/OOD-baseline/tree/master/notebooks
         """
     
         classifier = MNISTClassifier_keras()
@@ -376,7 +370,7 @@ class OOD_Baseline(OOD_Classifier):
         prob_ood    = pred_probs[ood_labels == 1]
         
         # compute confidence (all)
-        conf_all = round(self.compute_avgConfidence(pred_probs),3)
+        conf_all = round(self.compute_avgMSP(pred_probs),3)
         print("Confidence ID+OOD\t{}".format(conf_all))
         
         maximum_prob_id,  entropy_id,  mean_e_id,  std_e_id  = self.compute_statsProb(prob_id)
@@ -628,7 +622,7 @@ if __name__ == "__main__":
     
     def test_baseline_implementation():
         ood_detector = OOD_Baseline(classifier= None, id_data_test = None, ood_data_test = None, useGPU= True)
-        ood_detector.test_implementation()
+        ood_detector.validation_method()
      
     def test_baseline_resnet50_CDDB_CIFAR(name_model, epoch):
         # select executions
