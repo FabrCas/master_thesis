@@ -8,10 +8,10 @@ from    tqdm                import tqdm
 from    sklearn.metrics     import precision_recall_curve, auc, roc_auc_score
 
 # local import
-from    dataset             import CDDB_binary, CDDB_binary_Partial, getCIFAR100_dataset, OOD_dataset
-from    mnist_classifier    import MNISTClassifier
+from    dataset             import CDDB_binary, CDDB_binary_Partial, OOD_dataset, getCIFAR100_dataset, getMNIST_dataset, getFMNIST_dataset
+from    toy_classifier      import MNISTClassifier
 from    bin_classifier      import DFD_BinClassifier_v1
-from    utilities           import saveJson, loadJson, metrics_binClass, metrics_OOD
+from    utilities           import saveJson, loadJson, metrics_binClass, metrics_OOD, print_dict, showImage
 
 
 types_classifier = ["bin_class", "multi_class", "multi_label_class"]
@@ -198,7 +198,7 @@ class OOD_Baseline(OOD_Classifier):
         # use model on selected device
         self.classifier.model.to(self.device)
         
-        # define empty lsit to store outcomes
+        # define empty list to store outcomes
         pred_logits = np.empty((0,2), dtype= np.float32)
         dl_labels = np.empty((0,2), dtype= np.int32)            # dataloader labels, binary one-hot encoding, ID -> [1,0], OOD -> [0,1]
         
@@ -229,6 +229,7 @@ class OOD_Baseline(OOD_Classifier):
         prob_id     = probs[id_labels == 1]         # split forward probabilites between ID adn OOD, still a list of probabilities for each class learned by the model
         prob_ood    = probs[ood_labels == 1]
         
+
         # compute confidence (all)
         conf_all = round(self.compute_avgConfidence(probs),3)
         print("Confidence ID+OOD\t{}".format(conf_all))
@@ -340,9 +341,170 @@ class OOD_Baseline(OOD_Classifier):
         """
             Function used to verify the correct implementation of the baseline, re-creating the original experiment of the paper
         """
-        print("ciao")
+        classifier = MNISTClassifier()
+        classifier.load()
         
+        # define the dataset and the dataloader
+        mnist_testset   = getMNIST_dataset(train = False)
+        fmnist_testset  = getFMNIST_dataset(train = False)
+        dataset_ood     = OOD_dataset(id_data= mnist_testset, ood_data=fmnist_testset, balancing_mode = None, grayscale= True)
+        dataloader_ood  = DataLoader(dataset_ood,  batch_size= 128, num_workers= 8, shuffle= False, pin_memory= True)   # set shuffle to False, batch_size = 128
+        
+        # empty lists to store results
+        pred_probs = np.empty((0,10), dtype= np.float32)
+        dl_labels = np.empty((0,2), dtype= np.int32)   
+                
+        for idx, (x,y) in tqdm(enumerate(dataloader_ood), total= len(dataloader_ood)):
+            
+            # to test
+            # if idx >= 10: break
+
+            # for idx, x in enumerate(x[:]):
+            #     print(x.shape)
+            #     showImage(x, name = str(y[idx]), has_color = False)
+            
+            x = x.to(self.device)
+            with T.no_grad():
+                with autocast():
+                    _, probs, _ = classifier.forward(x)
+                    
+            # to numpy array
+            y = y.cpu().numpy()
+            
+            
+            # print(probs.shape)
+            pred_probs = np.append(pred_probs, probs, axis= 0)
+            dl_labels = np.append(dl_labels, y, axis= 0)
+        
+        # separation of id/ood labels and probabilities
+        
+        id_labels  =  dl_labels[:,0]                # filter by label column
+        ood_labels =  dl_labels[:,1]
+        prob_id     = pred_probs[id_labels == 1]         # split forward probabilites between ID adn OOD, still a list of probabilities for each class learned by the model
+        prob_ood    = pred_probs[ood_labels == 1]
+
+        # print(id_labels.shape)
+        # print(ood_labels.shape)
+        # print(prob_id.shape)
+        # print(prob_ood.shape)
+        
+        def entropy_from_distribution(p, axis):
+            return np.log(10.) + np.sum(p * np.log(np.abs(p) + 1e-11), axis=1, keepdims=True)
+        
+        def entropy_stats(softmax):
+            s_prob = np.amax(softmax, axis=1, keepdims=True)
+            kl_all = entropy_from_distribution(softmax, axis=1)
+            mean_all, var_all = np.mean(kl_all), np.var(kl_all)
+            return s_prob, kl_all, mean_all, var_all
+        
+        
+        (s_prob_in, kl_in, mean_in, var_in) = entropy_stats(prob_id)
+        (s_prob_out, kl_out, mean_out, var_out) = entropy_stats(prob_ood)
+
+        print("\n[MNIST-FMINIST anomaly detection]")
+        print('In-dist max softmax distribution (mean, std):')
+        print(np.mean(s_prob_in), np.std(s_prob_in))
+
+        print('Out-of-dist max softmax distribution(mean, std):')
+        print(np.mean(s_prob_out), np.std(s_prob_out))
+        
+        # same code from analyze function
+        
+        # compute confidence (all)
+        conf_all = round(self.compute_avgConfidence(pred_probs),3)
+        print("Confidence ID+OOD\t{}".format(conf_all))
+        
+        maximum_prob_id,  entropy_id,  mean_e_id,  std_e_id  = self.compute_statsProb(prob_id)
+        maximum_prob_ood, entropy_ood, mean_e_ood, std_e_ood = self.compute_statsProb(prob_ood)
+        
+        # moments maximum prob 
+        max_prob_id_mean    = np.mean(maximum_prob_id);     max_prob_id_std     = np.std(maximum_prob_id)
+        max_prob_ood_mean   = np.mean(maximum_prob_ood);    max_prob_ood_std    = np.std(maximum_prob_ood)
+        
+        
+        # in-out of distribution moments
+        print("In-Distribution max prob         [mean (confidence ID),std]  -> ", max_prob_id_mean, max_prob_id_std)
+        print("Out-Of-Distribution max prob     [mean (confidence OOD),std] -> ", max_prob_ood_mean, max_prob_ood_std)
+        
+        print("In-Distribution Entropy          [mean,std]                  -> ", mean_e_id, std_e_id)
+        print("Out-Of-Distribution Entropy      [mean,std]                  -> ", mean_e_ood, std_e_ood)
+        
+        return
     
+        # normality detection
+        print("Normality detection:")
+        norm_base_rate = round(100*(prob_id.shape[0]/(prob_id.shape[0] + prob_ood.shape[0])),2)
+        print("\tbase rate(%): {}".format(norm_base_rate))
+        print("\tKL divergence (entropy)")
+        kl_norm_aupr, kl_norm_auroc = self.compute_curves(entropy_id, entropy_ood)
+        print("\tPrediction probability")
+        p_norm_aupr, p_norm_auroc = self.compute_curves(maximum_prob_id, maximum_prob_ood)
+    
+        # abnormality detection
+        print("Abnormality detection:")
+        abnorm_base_rate = round(100*(prob_ood.shape[0]/(prob_id.shape[0] + prob_ood.shape[0])),2)
+        print("\tbase rate(%): {}".format(abnorm_base_rate))
+        print("\tKL divergence (entropy)")
+        kl_abnorm_aupr, kl_abnorm_auroc = self.compute_curves(-entropy_id, -entropy_ood, positive_reversed= True)
+        # kl_abnorm_aupr, kl_abnorm_auroc = self.compute_curves(1-entropy_id, 1-entropy_ood, positive_reversed= True)
+        print("\tPrediction probability")
+        p_abnorm_aupr, p_abnorm_auroc = self.compute_curves(-maximum_prob_id, -maximum_prob_ood, positive_reversed= True)
+        # p_abnorm_aupr, p_abnorm_auroc = self.compute_curves(1-maximum_prob_id, 1-maximum_prob_ood, positive_reversed= True)
+
+        return
+    
+        # compute fpr95, detection_error and threshold_error 
+        metrics_norm = self.compute_metrics_ood(maximum_prob_id, maximum_prob_ood)
+        print("OOD metrics:\n", metrics_norm)  
+        metrics_abnorm = self.compute_metrics_ood(1-maximum_prob_id, 1-maximum_prob_ood, positive_reversed= True)
+        print("OOD metrics:\n", metrics_abnorm)   
+                 
+        
+        # store statistics/metrics in a dictionary
+        data = {
+            "ID_max_prob": {
+                "mean":  float(max_prob_id_mean), 
+                "var":   float(max_prob_id_std)
+            },
+            "OOD_max_prob": {
+                "mean": float(max_prob_ood_mean), 
+                "var":  float(max_prob_ood_std) 
+            },
+            "ID_entropy":   {
+                "mean": float(mean_e_id), 
+                "var":  float(std_e_id)
+            },
+            "OOD_entropy":  {
+                "mean": float(mean_e_ood), 
+                "var":  float(std_e_ood)
+            },
+            
+            "normality": {
+                "base_rate":        float(norm_base_rate),
+                "KL_AUPR":          float(kl_norm_aupr),
+                "KL_AUROC":         float(kl_norm_auroc),
+                "Prob_AUPR":        float(p_norm_aupr),   
+                "Prob_AUROC":       float(p_norm_auroc)
+            },
+            "abnormality":{
+                "base_rate":        float(abnorm_base_rate),
+                "KL_AUPR":          float(kl_abnorm_aupr),
+                "KL_AUROC":         float(kl_abnorm_auroc),
+                "Prob_AUPR":        float(p_abnorm_aupr),   
+                "Prob_AUROC":       float(p_abnorm_auroc),
+
+            },
+            "avg_confidence":   float(conf_all),
+            "fpr95":            float(metrics_norm['fpr95']),
+            "detection_error":  float(metrics_norm['detection_error']),
+            "threshold":        float(metrics_norm['thr_de'])
+            
+        }
+        
+        print_dict(data)
+        
+        
+        
     def testing_binary_class(self, name_classifier, task_type_prog, name_ood_data, thr_type = "fpr95"):
         """
             This test compute metrics (binary classification ID/OOD) that are threshold related (discriminator)
@@ -456,7 +618,7 @@ class OOD_Baseline(OOD_Classifier):
             
         # adjust to handle single image, increasing dimensions for batch
         if len(x.shape) == 3:
-            x = T.expand(1,-1,-1,-1)
+            x = x.expand(1,-1,-1,-1)
         
         # load the threshold
         # load data from analyze
@@ -496,7 +658,6 @@ class OOD_Baseline(OOD_Classifier):
         return pred
     
 if __name__ == "__main__":
-    
     
     def test_baseline_implementation():
         ood_detector = OOD_Baseline(classifier= None, id_data_test = None, ood_data_test = None, useGPU= True)

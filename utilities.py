@@ -15,9 +15,10 @@ from    time                                import time
 
 
 #  classification metrics
-from    sklearn.metrics     import precision_score, recall_score, f1_score, confusion_matrix, hamming_loss, jaccard_score, accuracy_score, classification_report, matthews_corrcoef
+from    sklearn.metrics     import  precision_score, recall_score, f1_score, confusion_matrix, hamming_loss,\
+                                    jaccard_score, accuracy_score, classification_report, matthews_corrcoef
 #  binary classification metrics
-from    sklearn.metrics     import auc, roc_curve, average_precision_score, precision_recall_curve
+from    sklearn.metrics     import  auc, roc_curve, average_precision_score, precision_recall_curve
 
 
 
@@ -334,8 +335,11 @@ def showImage(img, name= "unknown", has_color = True):
                 img = np.moveaxis(img,0,-1)
             elif not(has_color) and img.shape[2] != 1:
                 img = np.moveaxis(img,0,-1)
-        plt.title(name)       
-        plt.imshow(img)
+        plt.title(name)
+        if has_color:
+            plt.imshow(img)
+        else: 
+            plt.imshow(img, cmap="gray")
         plt.show()
     else:
         print("img data is not valid for the printing")

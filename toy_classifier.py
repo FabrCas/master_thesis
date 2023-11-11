@@ -1,16 +1,22 @@
 import  os
 from    tqdm                import tqdm
 import  numpy               as np
+from    sklearn.metrics     import accuracy_score
+
+# pytorch
 import  torch               as T
 from    torch.nn            import functional as F
 from    torch.utils.data    import DataLoader
 from    torch.optim         import Adam
 from    torch.cuda.amp      import autocast
-from    sklearn.metrics     import accuracy_score
+
+# tensorflow
+from tensorflow import keras
+from keras.models import load_model
 
 # local modules
 from    dataset             import getMNIST_dataset
-from    models              import FC_classifier
+from    models              import FC_classifier, get_fc_classifier_Keras
 from    utilities           import duration, saveModel, loadModel
 
 
@@ -19,7 +25,7 @@ from    utilities           import duration, saveModel, loadModel
 """
 
 class MNISTClassifier(object):
-    """ simple classifier for the MNIST dataset on handwritten digits """
+    """ simple classifier for the MNIST dataset on handwritten digits, implemented using pytorch """
     def __init__(self, batch_size = 128, useGPU = True):
         super(MNISTClassifier, self).__init__()
         self.useGPU         = useGPU
@@ -56,7 +62,8 @@ class MNISTClassifier(object):
                 T.nn.init.normal_(param, mean=0, std=0.01) 
      
     def load(self):
-        path_model = os.path.joint(self.path_test_models, self.name_dataset, self.name_model)
+        path_model = os.path.join(self.path_test_models, self.name_dataset, self.name_model)
+        print(f"Loading the model at location: {path_model}")
         try:
             loadModel(self.model, path_model)
             self.model.eval()
@@ -160,7 +167,7 @@ class MNISTClassifier(object):
         
         # handle single image, increasing dimensions simulating a batch
         if len(x.shape) == 3:
-            x = T.expand(1,-1,-1,-1)
+            x = x.expand(1,-1,-1,-1)
         elif len(x.shape) <= 2 or len(x.shape) >= 5:
             raise ValueError("The input shape is not compatiple, expected a batch or a single image")
         
@@ -168,12 +175,86 @@ class MNISTClassifier(object):
         with T.no_grad():
             logits      = self.model.forward(x)
             probs       = self.softmax(logits, dim=1)
-            pred        = T.argmax(probs, dim=1).cpu().numpy()
+            pred        = T.argmax(probs, dim=1)
         
-        return pred
-            
+        logits  = logits.cpu().numpy()
+        probs   = probs.cpu().numpy()
+        pred    = pred.cpu().numpy()
+        
+        return pred, probs, logits
+
+
+class MNISTClassifier_keras(object):
+    def __init__(self, batch_size = 128,):
+        super(MNISTClassifier_keras, self).__init__()
+        self.model = get_fc_classifier_Keras()
+        # learning hyper-parameters
+        self.batch_size     = batch_size
+        self.epochs         = 10
+        self.lr             = 1e-3
+        
+        self.path_test_models   = "./models/test_models"
+        self.name_dataset       = "MNIST"
+        self.name_model         = "FCClassifierKeras_{}epochs.h5".format(self.epochs)
+        
+        self._load_mnist()
+
+    def _load_mnist(self):
+        mnist = keras.datasets.mnist
+        (mnist_train_x, mnist_train_y), (mnist_test_x, mnist_test_y) = mnist.load_data()
+        mnist_train_x, mnist_test_x = mnist_train_x/255., mnist_test_x/255.
+        self.x_train = mnist_train_x
+        self.y_train = mnist_train_y
+        self.x_test  = mnist_test_x
+        self.y_test  = mnist_test_y
+
+
+    def train(self):
+
+        self.model.compile(optimizer=keras.optimizers.Adam(lr=self.lr),
+                    loss='sparse_categorical_crossentropy',
+                    metrics=['accuracy'])
+
+        self.model.fit(self.x_train, self.y_train,
+                epochs=self.epochs,
+                batch_size=self.batch_size)
+
+        test_loss, test_acc = self.model.evaluate(self.x_test, self.y_test)
+        print("Training done, test accuracy: {}".format(test_acc))
+
+        # SAVE MODEL
+        self.save_model()
+        
+    def save_model(self):
+        """
+        Save a Keras model to a file.
+        """
+        if (not os.path.exists(self.path_test_models)):
+                os.makedirs(self.path_test_models)
+        if (not os.path.exists(os.path.join(self.path_test_models, self.name_dataset))):
+                os.makedirs(os.path.join(self.path_test_models, self.name_dataset))
+        path  = os.path.join(self.path_test_models, self.name_dataset, self.name_model)
+                
+        self.model.save(path)
+        print(f"Keras model has beeen saved to {path}")
+
+    def load_model(self):
+        """
+        Load a Keras model from a file.
+        """
+        
+        path  = os.path.join(self.path_test_models, self.name_dataset, self.name_model)
+        
+        self.model = load_model(path)
+        print(f"Keras model has beeen saved to {path}")
                   
 if __name__ == "__main__":
-    classifier = MNISTClassifier()
+    # 1) pytorch implementation
+    # classifier = MNISTClassifier()
+    # classifier.train()
+    
+    # tensorflow implementation
+    classifier = MNISTClassifier_keras()
     classifier.train()
     
+    pass

@@ -1492,8 +1492,8 @@ def getMNIST_dataset(train, width_img = 28, height_img = 28):
     
     return mnist
     
-def getFashionMNIST_dataset(train, width_img = 28, height_img = 28):
-    """ get MNIST dataset
+def getFMNIST_dataset(train, width_img = 28, height_img = 28):
+    """ get FashionMNIST dataset
 
     Args:
         train (bool): choose between the train or test set. Defaults to True.
@@ -1511,14 +1511,14 @@ def getFashionMNIST_dataset(train, width_img = 28, height_img = 28):
     # create folder if not exists and download the dataset
     if not(os.path.exists(FMNIST_PATH)):
         os.mkdir(FMNIST_PATH)
-        torchvision.datasets.MNIST(root=FMNIST_PATH, train=True,  download = True, transform=transform_ops)
-        torchvision.datasets.MNIST(root=FMNIST_PATH, train=False, download = True, transform=transform_ops)
+        torchvision.datasets.FashionMNIST(root=FMNIST_PATH, train=True,  download = True, transform=transform_ops)
+        torchvision.datasets.FashionMNIST(root=FMNIST_PATH, train=False, download = True, transform=transform_ops)
     
     # load cifar data
     if train:
-        fmnist = torchvision.datasets.MNIST(root=FMNIST_PATH, train=True, download=False, transform=transform_ops)
+        fmnist = torchvision.datasets.FashionMNIST(root=FMNIST_PATH, train=True, download=False, transform=transform_ops)
     else:
-        fmnist = torchvision.datasets.MNIST(root=FMNIST_PATH, train=False, download=False, transform=transform_ops)
+        fmnist = torchvision.datasets.FashionMNIST(root=FMNIST_PATH, train=False, download=False, transform=transform_ops)
     
     return fmnist
     
@@ -1566,7 +1566,7 @@ class UniformNoise(Dataset):
 
 # To generate the dataloader containing both ID and OOD data, with the real and fake labels
 class OOD_dataset(Dataset):
-    def __init__(self, id_data, ood_data, balancing_mode:str = None, exact_samples:int = None):  # balancing_mode = "max","exact" or None
+    def __init__(self, id_data, ood_data, balancing_mode:str = None, exact_samples:int = None, grayscale = False):  # balancing_mode = "max","exact" or None
         """ Dataset for ID and OOD data
 
         Args:
@@ -1577,6 +1577,7 @@ class OOD_dataset(Dataset):
                 exact (str):use an exact number of samples for both ID and OOD data (to be specifed with the "exact_samples" parameter)
                 None: No balance is providen
             exact_samples (int, optional): Number of exact samples to specify whether the balancing_mode "exact" is chosen. Defaults to None.
+            grayscale (boolean, optional): specify whether samples are in grayscale, Defaults to None
         """
         super(OOD_dataset, self).__init__()
     
@@ -1588,6 +1589,7 @@ class OOD_dataset(Dataset):
         self.ood_data       = ood_data
         self.balancing_mode = balancing_mode
         self.exact_samples  = exact_samples
+        self.grayscale      = grayscale
         self._count_samples()
 
     def _count_samples(self):
@@ -1648,7 +1650,7 @@ class OOD_dataset(Dataset):
             y = 1
     
         # check whether grayscale image, perform pseudocolor inversion 
-        if x.shape[0] == 1:
+        if x.shape[0] == 1 and not(self.grayscale):
             x = x.expand(3, -1, -1)
         
         # label to one-hot-encoding
@@ -1813,8 +1815,8 @@ if __name__ == "__main__":
             dl_train    = getMNIST_dataset(train = True)
             dl_test     = getMNIST_dataset(train = False)
         elif name == "fmnist":
-            dl_train    = getFashionMNIST_dataset(train = True)
-            dl_test     = getFashionMNIST_dataset(train = False)
+            dl_train    = getFMNIST_dataset(train = True)
+            dl_test     = getFMNIST_dataset(train = False)
         else:
             print("The dataset with name {} is not available".format(name))
             

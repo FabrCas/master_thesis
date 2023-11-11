@@ -1,3 +1,5 @@
+import time
+
 import torch as T
 from torch import Tensor
 import torch.nn as nn
@@ -5,7 +7,9 @@ from torchsummary import summary
 from torchvision import models
 from torchvision.models import ResNet50_Weights
 
-import time
+import tensorflow as tf
+from tensorflow import keras
+
 
 #_________________________________________ ResNet__________________________________________
 
@@ -361,7 +365,25 @@ class FC_classifier(nn.Module):
     def isCuda(self):
         return next(self.parameters()).is_cuda
          
+def get_fc_classifier_Keras(input_shape = (28,28)):
+    """ same as FC classifier implemented using keras moduel from tensorflows""" 
     
+    model = keras.Sequential([
+    keras.layers.Flatten(input_shape=input_shape),
+    keras.layers.BatchNormalization(),
+    keras.layers.Dense(256, activation=tf.nn.relu),
+
+    keras.layers.BatchNormalization(),
+    keras.layers.Dense(256, activation=tf.nn.relu),
+
+    keras.layers.BatchNormalization(),
+    keras.layers.Dense(256, activation=tf.nn.relu),
+
+    keras.layers.BatchNormalization(),
+    keras.layers.Dense(10, activation=tf.nn.softmax)
+    ])
+
+    return model
 
 if __name__ == "__main__":
     

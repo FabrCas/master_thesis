@@ -85,7 +85,7 @@ class BinaryClassifier(object):
         
         # handle single image, increasing dimensions simulating a batch
         if len(x.shape) == 3:
-            x = T.expand(1,-1,-1,-1)
+            x = x.expand(1,-1,-1,-1)
         elif len(x.shape) <= 2 or len(x.shape) >= 5:
             raise ValueError("The input shape is not compatiple, expected a batch or a single image")
         
