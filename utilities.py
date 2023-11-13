@@ -224,6 +224,62 @@ def augment_v1(x,w  =224,h=224):
     x = v2.RandAugment(num_ops = 1, magnitude= 7, num_magnitude_bins= 51, interpolation = InterpolationMode.BILINEAR)(x)
     return x
 
+
+# cutmix technique: https://arxiv.org/abs/1905.04899
+def rand_bbox(size, lamb):
+    """ Generate random bounding box 
+    Args:
+        - size: [width, breadth] of the bounding box
+        - lamb: (lambda) cut ratio parameter, sampled from Beta distribution
+    Returns:
+        - Bounding box
+    """
+    W = size[0]
+    H = size[1]
+    cut_rat = np.sqrt(1. - lamb)
+    cut_w = np.int(W * cut_rat)
+    cut_h = np.int(H * cut_rat)
+
+    # uniform
+    cx = np.random.randint(W)
+    cy = np.random.randint(H)
+
+    bbx1 = np.clip(cx - cut_w // 2, 0, W)
+    bby1 = np.clip(cy - cut_h // 2, 0, H)
+    bbx2 = np.clip(cx + cut_w // 2, 0, W)
+    bby2 = np.clip(cy + cut_h // 2, 0, H)
+
+    return bbx1, bby1, bbx2, bby2
+
+
+
+def cutmix_image(image_batch, image_batch_labels, beta = 1.0):
+    """ Generate a CutMix augmented image from a batch 
+    Args:
+        - image_batch: a batch of input images
+        - image_batch_labels: labels corresponding to the image batch
+        - beta: a parameter of Beta distribution.
+    Returns:
+        - CutMix image batch, updated labels
+    """
+    # generate mixed sample
+    lam = np.random.beta(beta, beta)
+    rand_index = np.random.permutation(len(image_batch))
+    target_a = image_batch_labels
+    target_b = image_batch_labels[rand_index]
+    bbx1, bby1, bbx2, bby2 = rand_bbox(image_batch[0].shape, lam)
+    image_batch_updated = image_batch.copy()
+    image_batch_updated[:, bbx1:bbx2, bby1:bby2, :] = image_batch[rand_index, bbx1:bbx2, bby1:bby2, :]
+    
+    # adjust lambda to exactly match pixel ratio
+    lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (image_batch.shape[1] * image_batch.shape[2]))
+    label = target_a * lam + target_b * (1. - lam)
+    
+    return image_batch_updated, label
+
+
+
+
 #TODO implement normalizer for learning 
 class NormalizeByChannelMeanStd(T.nn.Module):
     def __init__(self, mean, std):
@@ -765,8 +821,10 @@ def print_list(x):
         print("{:>3}){}".format(str(idx), str(elem)))
 
 def isFolder(path):
-    """ simple check if a path (relative or absolute) is related to a folder (returns True) or a file (returns False)"""
-    match_file = re.match(r"^.+\..*$", path)
+    """ simple check if a path (relative or absolute) is related to a folder (returns True) or a file (returns False)
+        (are also considere the hidden file)
+    """
+    match_file = re.match(r"^[^.]+\..*$", path)
     if match_file is None: return True
     else: return False
       

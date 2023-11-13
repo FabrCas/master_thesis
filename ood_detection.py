@@ -19,6 +19,7 @@ from    utilities           import saveJson, loadJson, metrics_binClass, metrics
 types_classifier = ["bin_class", "multi_class", "multi_label_class"]
 
 class OOD_Classifier(object):
+    
     def __init__(self, id_data_test, ood_data_test, id_data_train, ood_data_train, useGPU):
         super(OOD_Classifier, self).__init__()
         
@@ -44,6 +45,7 @@ class OOD_Classifier(object):
         self.batch_size     = 32
         
         #                                       math/statistics aux functions
+    
     def sigmoid(self,x):
             return 1.0 / (1.0 + np.exp(-x))
         
@@ -109,7 +111,6 @@ class OOD_Classifier(object):
         print("\tAUPR (%)-> {}".format(aupr))
         
         return aupr, auroc
-    
 
     def compute_metrics_ood(self, id_data, ood_data, positive_reversed = False):
         """_
@@ -617,7 +618,15 @@ class OOD_Baseline(OOD_Classifier):
         # apply binary threshold
         pred = np.where(condition= maximum_prob < threshold, x=1, y=0)
         return pred
-    
+   
+class Abnormality_module(OOD_Classifier):
+    def __init__(self, classifier,  id_data_test = None, ood_data_test = None, id_data_train = None, ood_data_train = None, useGPU = True):
+        super(OOD_Baseline, self).__init__(id_data_test = id_data_test, ood_data_test = ood_data_test,                  \
+                                           id_data_train = id_data_train, ood_data_train = id_data_train, useGPU = useGPU)
+        # set the classifier
+        self.classifier  = classifier
+        
+        
 if __name__ == "__main__":
     
     def test_baseline_implementation():

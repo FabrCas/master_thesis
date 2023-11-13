@@ -244,7 +244,7 @@ class ResNet(nn.Module):
     
 #_____________________________________ResNet 50 ImageNet___________________________________________
 
-class ResNet_ImageNet():   # modfify first layer if use grayscale images
+class ResNet_ImageNet():   # not nn.Module subclass, but still implement forward method calling the one of the model
     """ 
     This is a wrap class for pretraiend Resnet use the getModel function to get the nn.module implementation.
     The model expects color images in RGB standard, of size 244x244
@@ -296,6 +296,25 @@ class ResNet_ImageNet():   # modfify first layer if use grayscale images
     def forward(self, x):
         x = self.model(x)
         return x
+    
+#_____________________________________ OOD modules (ResNet relative)_______________________________
+class Decoder_ResNet(nn.Module):
+    def __init__(self, encoder, train_dataset):
+        super(Decoder_ResNet, self).__init__()
+        self.encoder        = encoder
+        self.train_dataset  = train_dataset
+        
+        
+    def train(self):
+        pass
+    
+    def test():
+        pass
+
+
+class abnormality_module(nn.Module): 
+    def __init__():
+        super(abnormality_module, self).__init__()
     
 #_____________________________________Vision Transformer (ViT)_____________________________________        
 
