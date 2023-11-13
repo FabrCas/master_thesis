@@ -43,12 +43,14 @@ class OOD_Classifier(object):
         #                                       math/statistics aux functions
     
     def sigmoid(self,x):
-            return 1.0 / (1.0 + np.exp(-x))
+        """ numpy implementation of sigmoid actiavtion function"""
+        return 1.0 / (1.0 + np.exp(-x))
         
     def softmax(self,x):
-            e = np.exp(x)
-            return  e/e.sum(axis=1, keepdims=True)
-            # return  e/e.sum()
+        """ numpy implementation of softmax actiavtion function"""
+        e = np.exp(x)
+        return  e/e.sum(axis=1, keepdims=True)
+        # return  e/e.sum()
         
     def entropy(self, distibution):
         """
@@ -76,7 +78,91 @@ class OOD_Classifier(object):
         
         return maximum_prob, entropy, mean_e, std_e
     
-    #                                           matrics aux functions
+    def compute_MSP(self, probabilities):     # should be not translated as direct measure of confidence
+        """ computation of the baseline performance: maximum softmax performance (MSP)
+
+        Args:
+            probabilties (np.array): probabilities from logits
+
+        Returns:
+            confidences (np.array): list of confidences for each prediction
+        """
+        pred_value      = np.max(probabilities, -1)
+        # add a fictitious dimension
+        confidences     = np.reshape(pred_value, (len(pred_value), 1))
+        
+        return confidences
+    
+    def compute_avgMSP(self, probabilities):
+        """_
+            computes the average using max probabilities from test instances.
+        """
+        pred_value      = np.max(probabilities, -1)   # max among class probabilities
+        return np.average(pred_value)
+    
+    # functions for ODIN framework    (https://arxiv.org/pdf/2109.14162v2.pdf)  # don't use during training of the model but just in the inference phase (forward + testing)
+
+    def softmax_temperature(self,x,t = 1000):
+        """ ODIN softmax scaled with temperature t to enhance separation between ID and OOD
+
+        Args:
+            x (numpy.ndarray or torch.Tensor): input array/tensor, sample or batch
+            t (int, optional): Temperature scaling. Defaults to 1000.
+
+        Returns:
+            T: _description_
+        """
+        
+        if isinstance(x, T.tensor):
+            transform_back = True
+        else:
+            transform_back = False
+        
+        x = x.numpy()
+        
+        x = x/t
+        prob = self.softmax(x)
+        if transform_back: 
+            return T.tensor(prob)
+        else:
+            return prob
+        
+    def odin_perturbations(x, classifier, is_batch = False, loss_function = F.cross_entropy, epsilon = 12e-4):
+        """ Perturbation from ODIN framework
+
+        Args:
+            x (T.tensor): input
+            classifier (T.nn.Module): classifier module from pytorch framework
+            is_batch (bool, optional): True if x is batch, False otherwise. Defaults to False.
+            loss_function (function, optional): loss function to compute the loss for backpropagation. Defaults to F.cross_entropy.
+            epsilon (float, optional): magnitude of perturbation. Defaults to 12e-4.
+
+        Returns:
+            perturbed_input (T.tensor): The perturbed input
+        """
+        
+        # prepare
+        classifier.eval()  # Set the model to evaluation mode
+        x.requires_grad_(True)  # Enable gradient computation for the input
+        
+        # forward and loss
+        _, _, logits = classifier.forward(x)
+        if is_batch:
+            loss = loss_function(logits, T.argmax(logits, dim=-1))
+        else:
+            loss = loss_function(logits, T.argmax(logits))  # Assuming cross-entropy loss for illustration
+        
+        # backprogation
+        classifier.zero_grad()  # Clear previous gradients
+        loss.backward()         # Compute gradients
+
+        # gradient based perturbation
+        perturbation = epsilon * T.sign(x.grad.data)
+        perturbed_input = x + perturbation
+
+        return perturbed_input
+    
+    #                                           metrics aux functions
     def compute_aupr(self, labels, pred):        
         p, r, _ = precision_recall_curve(labels, pred)
         return  auc(r, p)
@@ -129,11 +215,11 @@ class OOD_Classifier(object):
            
 class OOD_Baseline(OOD_Classifier):
     """
-        Classifier for OOD data
+        OOD detection baseline using softmax probability
     """
     def __init__(self, classifier,  id_data_test = None, ood_data_test = None, id_data_train = None, ood_data_train = None, useGPU = True):
         """
-        Class-Constructor
+        OOD_Baseline instantiation 
 
         Args:
             classifier (DFD_BinClassifier): classifier used for the main Deepfake detection task
@@ -155,29 +241,6 @@ class OOD_Baseline(OOD_Classifier):
         # name of the classifier
         self.name = "baseline"
     
-    
-    def compute_MSP(self, probabilities):     # should be not translated as direct measure of confidence
-        """ computation of the baseline performance: maximum softmax performance (MSP)
-
-        Args:
-            probabilties (np.array): probabilities from logits
-
-        Returns:
-            confidences (np.array): list of confidences for each prediction
-        """
-        pred_value      = np.max(probabilities, -1)
-        # add a fictitious dimension
-        confidences     = np.reshape(pred_value, (len(pred_value), 1))
-        
-        return confidences
-    
-    def compute_avgMSP(self, probabilities):
-        """_
-            computes the average using max probabilities from test instances.
-        """
-        pred_value      = np.max(probabilities, -1)   # max among class probabilities
-        return np.average(pred_value)
-     
     #                                     analysis and testing functions
     def analyze(self, name_classifier, task_type_prog, name_ood_data = None):
         """ analyze function, computing OOD metrics that are not threshold related
@@ -216,8 +279,8 @@ class OOD_Baseline(OOD_Classifier):
             pred_logits = np.append(pred_logits, logits, axis= 0)
             dl_labels = np.append(dl_labels, y, axis= 0)
             
-        # to softmax/sigmoid probabilities
-        probs = self.sigmoid(pred_logits)
+        # to softmax probabilities
+        probs = self.softmax(pred_logits)
         
         
         # separation of id/ood labels and probabilities
@@ -331,7 +394,7 @@ class OOD_Baseline(OOD_Classifier):
             
             saveJson(path = path_result_save, data = data)
     
-    def validation_method(self):
+    def verify_implementation(self):
         """
             Function used to verify the correct implementation of the baseline.
             Recreating the experiment carried out in the notebook: https://github.com/2sang/OOD-baseline/tree/master/notebooks
@@ -468,7 +531,6 @@ class OOD_Baseline(OOD_Classifier):
             name_classifier (str): deepfake detection model used (name from models folder)
             task_type_prog (int): 3 possible values: 0 for binary classification, 1 for multi-class classificaiton, 2 multi-label classification
             name_ood_data (str): name of the dataset used as ood data, is is a partition of CDDB specify the scenario: "content","group","mix", Default is None. 
-            if None, the results will be not saved
             thr_type (str): choose which kind of threhsold use between "fpr95" (fpr at tpr 95%) or "avg_confidence", or "thr_de",  Default is "fpr95".
             
         """
@@ -521,8 +583,8 @@ class OOD_Baseline(OOD_Classifier):
             test_logits = np.append(test_logits, logits, axis= 0)
             test_labels = np.append(test_labels, y, axis= 0)
         
+        probs = self.softmax(test_logits)
         
-        probs = self.sigmoid(test_logits)
         print(probs.shape)
         maximum_prob    = np.max(probs, axis=1)
         print(maximum_prob.shape)
@@ -543,15 +605,7 @@ class OOD_Baseline(OOD_Classifier):
         check_folder(path_results_ood_bin)
         check_folder(path_results_baseline)
         check_folder(path_results_folder)
-        
-        
-        # if (not os.path.exists(path_results_ood_bin)):
-        #     os.makedirs(path_results_ood_bin) 
-        # if (not os.path.exists(path_results_baseline)):
-        #     os.makedirs(path_results_baseline) 
-        # if (not os.path.exists(path_results_folder)):
-        #     os.makedirs(path_results_folder)
-        
+            
         # compute and save metrics 
         name_resultClass_file  = 'metrics_ood_classification_{}.json'.format(name_ood_data)
         metrics_class =  metrics_binClass(preds = pred, targets= target, pred_probs = None, path_save = path_results_folder, name_ood_file = name_resultClass_file)
@@ -566,8 +620,7 @@ class OOD_Baseline(OOD_Classifier):
 
             name_classifier (str): deepfake detection model used (name from models folder)
             task_type_prog (int): 3 possible values: 0 for binary classification, 1 for multi-class classificaiton, 2 multi-label classification
-            name_ood_data (str): name of the dataset used as ood data, is is a partition of CDDB specify the scenario: "content","group","mix", Default is None. 
-            if None, the results will be not saved
+            name_ood_data (str): name of the dataset/CDDB scenario used as ood data, if is a partition of CDDB specify the scenario: "content","group","mix", Default is None. 
             thr_type (str): choose which kind of threhsold use between "fpr95" (fpr at tpr 95%) or "avg_confidence", or "thr_de",  Default is "fpr95".
             
         """        
@@ -608,13 +661,43 @@ class OOD_Baseline(OOD_Classifier):
                 
         # to numpy array
         logits  = logits.cpu().numpy()
-        probs = self.sigmoid(logits)
+        probs = self.softmax(logits)
         maximum_prob = np.max(probs, axis=1)
         
         # apply binary threshold
         pred = np.where(condition= maximum_prob < threshold, x=1, y=0)
         return pred
-   
+
+# TODO
+class Baseline_ODIN(OOD_Classifier):
+    """
+        OOD detection baseline using softmax probability + ODIN framework
+    """
+    def __init__(self, classifier,  id_data_test = None, ood_data_test = None, id_data_train = None, ood_data_train = None, useGPU = True):
+        """
+        OOD_Baseline instantiation 
+
+        Args:
+            classifier (DFD_BinClassifier): classifier used for the main Deepfake detection task
+            ood_data_test (torch.utils.data.Dataset): test set out of distribution
+            ood_data_train (torch.utils.data.Dataset): train set out of distribution
+            useGPU (bool, optional): flag to enable usage of GPU. Defaults to True.
+        """
+        super(OOD_Baseline, self).__init__(id_data_test = id_data_test, ood_data_test = ood_data_test,                  \
+                                           id_data_train = id_data_train, ood_data_train = id_data_train, useGPU = useGPU)
+        # set the classifier
+        self.classifier  = classifier
+        
+        # load the Pytorch dataset here
+        try:
+            self.dataset_test  = OOD_dataset(self.id_data_test, self.ood_data_test, balancing_mode = "max")
+        except:
+            print("Dataset data is not valid, please use instances of class torch.Dataset")
+        
+        # name of the classifier
+        self.name = "ODIN+baseline"
+
+# TODO
 class Abnormality_module(OOD_Classifier):
     """ Custom implementation of the abnormality module using ResNet, look https://arxiv.org/abs/1610.02136 chapter 4"""
     def __init__(self, classifier,  id_data_test = None, ood_data_test = None, id_data_train = None, ood_data_train = None, useGPU = True):
@@ -628,7 +711,7 @@ if __name__ == "__main__":
     
     def test_baseline_implementation():
         ood_detector = OOD_Baseline(classifier= None, id_data_test = None, ood_data_test = None, useGPU= True)
-        ood_detector.validation_method()
+        ood_detector.verify_implementation()
      
     def test_baseline_resnet50_CDDB_CIFAR(name_model, epoch):
         # select executions

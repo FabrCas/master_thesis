@@ -13,3 +13,7 @@ The data can be downloaded at the following [link](https://drive.google.com/file
 
  - A **Baseline** for Detecting Misclassified and Out-of-Distribution Examples in Neural Networks.
  [paper page](https://arxiv.org/abs/1610.02136)
+ - **CutMix**, Regularization Strategy to Train Strong Classifiers with Localizable Features.
+ [paper page](https://arxiv.org/abs/1905.04899)
+ - **ODIIN**, Enhancing The Reliability of Out-of-distribution Image Detection in Neural Networks.
+ [paper page](https://arxiv.org/abs/1706.02690)

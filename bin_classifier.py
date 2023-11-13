@@ -171,9 +171,7 @@ class BinaryClassifier(object):
             return x_cutmix, y_cutmix
         else:
             return x,y
-    
-
-            
+             
 class DFD_BinClassifier_v1(BinaryClassifier):
     """
         binary classifier for deepfake detection using CDDB dataset, first version
@@ -206,6 +204,7 @@ class DFD_BinClassifier_v1(BinaryClassifier):
             self.path2model_results   = os.path.join(self.path_results, "RandomIntialization")
             
         self.model.to(self.device)
+        self.model.eval()
         
         # define loss and final activation function
         self.sigmoid = F.sigmoid
@@ -376,8 +375,8 @@ class DFD_BinClassifier_v2(BinaryClassifier):
             self.init_weights_kaimingNormal()    # initializaton of the wights
             self.path2model_results   = os.path.join(self.path_results, "RandomIntialization")
             
-            
         self.model.to(self.device)
+        self.model.eval()
         
         # define loss and final activation function
         self.sigmoid = F.sigmoid
@@ -603,10 +602,11 @@ class DFD_BinClassifier_v3(BinaryClassifier):
     """
         binary classifier for deepfake detection using partial CDDB dataset for the chosen scenario configuration.
         This third version extends the 2nd version. Including:
-        - dynamic learning rate using validation set
-        - CutMix usage      (https://arxiv.org/abs/1905.04899)
-        - ODIN framework    (https://arxiv.org/pdf/2109.14162v2.pdf)
         
+        - dynamic learning rate using validation set
+        - CutMix usage (https://arxiv.org/abs/1905.04899)
+        - Simulataneous learning of a decoder module
+        - new loss as alpha * classification loss + beta* reconstruction loss
         
         training model folders:
         
@@ -644,9 +644,9 @@ class DFD_BinClassifier_v3(BinaryClassifier):
             self.model = ResNet(depth_level= 2)
             self.init_weights_kaimingNormal()    # initializaton of the wights
             self.path2model_results   = os.path.join(self.path_results, "RandomIntialization")
-            
-            
+             
         self.model.to(self.device)
+        self.model.eval()
         
         # define loss and final activation function
         self.sigmoid = F.sigmoid
@@ -790,12 +790,11 @@ class DFD_BinClassifier_v3(BinaryClassifier):
             for step_idx,(x,y) in tqdm(enumerate(train_dataloader), total= n_steps):
                 
                 if step_idx > 5: break
-                print(y.shape)
+                # print(y.shape)
                 
                 # adjust labels if cutmix has been not applied (from indices to one-hot encoding)
                 if len(y.shape) == 1:
                     y = T.nn.functional.one_hot(y)
-                
                 
                 # prepare samples/targets batches 
                 x = x.to(self.device)
@@ -925,7 +924,7 @@ if __name__ == "__main__":
             # x,y torch tensor 
             print(x.shape, y.shape)
             
-            # since we are using cutmix and "label_vector"= False in the Dataset parameters
+            # since we are using cutmix and "label_vector"= False in the Dataset parameters, adjust y if is the case
             if len(y.shape) == 1:
                 y = T.nn.functional.one_hot(y)
             
@@ -1008,7 +1007,7 @@ if __name__ == "__main__":
         bin_classifier.train(name_train= "test")
 
    
-    # test_binary_classifier_v3()
+    test_binary_classifier_v3()
    
     # test_cutmix()
     test_cutmix2()

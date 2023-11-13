@@ -251,14 +251,12 @@ def rand_bbox(size, lamb):
 
     return bbx1, bby1, bbx2, bby2
 
-
-
 def cutmix_image(image_batch, image_batch_labels, beta = 1):
     """ Generate a CutMix augmented image from a batch 
     Args:
-        - image_batch: a batch of input images
-        - image_batch_labels: labels corresponding to the image batch
-        - beta: a parameter of Beta distribution.
+        - image_batch (numpy.Array): a batch of input images
+        - image_batch_labels (numpy.Array): labels corresponding to the image batch
+        - beta (int): a parameter of Beta distribution.
     Returns:
         - CutMix image batch, updated labels
     """
@@ -281,8 +279,8 @@ def cutmix_image(image_batch, image_batch_labels, beta = 1):
     
     return image_batch_updated, label
 
-
-
+# ODIN perturbations: https://arxiv.org/abs/1706.02690
+# def perturbate_ODIN(x):pass
 
 #TODO implement normalizer for learning 
 class NormalizeByChannelMeanStd(T.nn.Module):
