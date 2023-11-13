@@ -8,9 +8,6 @@ from torchvision import models
 from torchvision.models import ResNet50_Weights
 
 
-import tensorflow as tf
-from tensorflow import keras
-
 
 #_________________________________________ ResNet__________________________________________
 
@@ -311,7 +308,6 @@ class Decoder_ResNet(nn.Module):
     def test():
         pass
 
-
 class abnormality_module(nn.Module): 
     def __init__():
         super(abnormality_module, self).__init__()
@@ -392,6 +388,10 @@ class FC_classifier(nn.Module):
          
 def get_fc_classifier_Keras(input_shape = (28,28)):
     """ same as FC classifier implemented using keras moduel from tensorflows""" 
+    
+    # import_tf
+    import tensorflow as tf
+    from tensorflow import keras
     
     model = keras.Sequential([
     keras.layers.Flatten(input_shape=input_shape),

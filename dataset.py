@@ -61,7 +61,7 @@ class CDDB_binary(Dataset):
     """_
         Dataset class that uses the full data from CDDB dataset as In-Distribuion (ID) for binary deepfake detection
     """
-    def __init__(self, width_img= 224, height_img = 224, train = True, augment = False):
+    def __init__(self, width_img= 224, height_img = 224, train = True, augment = False, label_vector = True):
         """ CDDB_binary constructor
 
         Args:                
@@ -70,11 +70,14 @@ class CDDB_binary(Dataset):
             - train (bool, optional): boolean flag to retrieve trainset, otherwise testset. Defaults to True.
             - ood (bool, optional):   boolean flag to retrieve ID data, otherwise OOD. Defaults to False.
             - augment (bool, optional):   boolean flag to activate the data augmentation. Defaults to False.
+            - label_vector (bool, optional): boolean flag to indicate the label format in output for the labels.
+                if True one-hot encoding labels are returned, otherwise index based representation is used.Defaults to True.
         """
         
         super(CDDB_binary,self).__init__()
         self.train = train                      # boolean flag to select train or test data
         self.augment  = False
+        self.label_vector = label_vector
         self.width_img = width_img
         self.height_img = height_img
         if self.augment:
@@ -207,11 +210,15 @@ class CDDB_binary(Dataset):
         label = self.y[idx]
         
         # binary encoding to compute BCE (one-hot)
-        label_vector = [0,0]
-        label_vector[label] = 1
-        label_vector = T.tensor(label_vector)     
+        if self.label_vector:
+            label_vector = [0,0]
+            label_vector[label] = 1
+            label_vector = T.tensor(label_vector)     
         
-        return img, label_vector
+            return img, label_vector
+
+        else:
+            return img, label
 
 # Used for ID-OOD study
 class CDDB_binary_Partial(Dataset):
@@ -220,7 +227,7 @@ class CDDB_binary_Partial(Dataset):
         Selecting the study case ("content","group","mix") the data are organized,
         using remaining samples as OOD data.
     """
-    def __init__(self, scenario, width_img= 224, height_img = 224, train = True, ood = False, augment = False):
+    def __init__(self, scenario, width_img= 224, height_img = 224, train = True, ood = False, augment = False, label_vector = True):
         """ CDDB_binary_Partial constructor
 
         Args:
@@ -237,14 +244,17 @@ class CDDB_binary_Partial(Dataset):
             - train (bool, optional): boolean flag to retrieve trainset, otherwise testset. Defaults to True.
             - ood (bool, optional):   boolean flag to retrieve ID data, otherwise OOD. Defaults to False.
             - augment (bool, optional):   boolean flag to activate the data augmentation. Defaults to False.
+            - label_vector (bool, optional): boolean flag to indicate the label format in output for the labels.
+                if True one-hot encoding labels are returned, otherwise index based representation is used.Defaults to True.
         """
         super(CDDB_binary_Partial,self).__init__()
         
         # boolean flags for data to return
-        self.scenario   = scenario.lower().strip()
-        self.train      = train
-        self.ood        = ood
-        self.augment    = augment
+        self.scenario       = scenario.lower().strip()
+        self.train          = train
+        self.ood            = ood
+        self.augment        = augment
+        self.label_vector   = label_vector
         
              
         self.width_img = width_img
@@ -280,7 +290,6 @@ class CDDB_binary_Partial(Dataset):
         else:
             raise ValueError("wrong selection for the scenario parameter, choose between: content, group and mix")
         
-
     def _scanData(self, scenario, real_folder = "0_real", fake_folder = "1_fake"):
         """
             use face img as ID, the rest is OOD 
@@ -417,18 +426,21 @@ class CDDB_binary_Partial(Dataset):
         label = self.y[idx]
         
         # binary encoding to compute BCE (one-hot)
-        label_vector = [0,0]
-        label_vector[label] = 1
-        label_vector = T.tensor(label_vector)     
-        
-        return img, label_vector
+        if self.label_vector:
+            label_vector = [0,0]
+            label_vector[label] = 1
+            label_vector = T.tensor(label_vector)     
+            
+            return img, label_vector
+        else:
+            return img, label
 
 ##################################################### [Multi-Class Deepfake classification] ############################################################
 class CDDB(Dataset):
     """_
         Dataset class that uses the full data from CDDB dataset as In-Distribuion (ID) for multi-label deepfake detection
     """
-    def __init__(self, width_img= 224, height_img = 224, train = True, augment = False, real_grouping = "single"):
+    def __init__(self, width_img= 224, height_img = 224, train = True, augment = False, real_grouping = "single", label_vector = False):
         """
         CDDB_binary_Partial constructor
 
@@ -442,10 +454,13 @@ class CDDB(Dataset):
                 - "single" means just one label for all the real images,
                 - "category" is for different labels of real images contains content like faces, cars, cats,etc.
                 - "models" separate the real images for each of the models present in the dataset. so real and fake labels have equal number
+            - label_vector (bool, optional): boolean flag to indicate the label format in output for the labels.
+                if True one-hot encoding labels are returned, otherwise index based representation is used.Defaults to True.
         """
         super(CDDB,self).__init__()
         self.train              = train                      # boolean flag to select train or test data
         self.augment            = augment
+        self.label_vector       = label_vector
         self.real_grouping      = real_grouping
         self.width_img          = width_img
         self.height_img         = height_img
@@ -828,7 +843,12 @@ class CDDB(Dataset):
 
         # sample the label
         label = self.y[idx]    # if it's necessary the encoding, use self._one_hot_encoding(self.y[idx])
-        return img, label
+        
+        if self.label_vector:
+            label_vector = self._one_hot_encoding(label)
+            return img, label_vector
+        else:
+            return img, label
 
 # Used for ID-OOD study
 class CDDB_Partial(Dataset):
@@ -837,7 +857,7 @@ class CDDB_Partial(Dataset):
         Selecting the study case ("content","group","mix") the data are organized,
         using remaining samples as OOD data.
     """
-    def __init__(self, scenario, width_img= 224, height_img = 224, train = True, ood = False, augment = False, real_grouping = "single"):
+    def __init__(self, scenario, width_img= 224, height_img = 224, train = True, ood = False, augment = False, real_grouping = "single", label_vector = False):
         """CDDB_Partial constructor
 
         Args:
@@ -858,12 +878,16 @@ class CDDB_Partial(Dataset):
                 - "single" means just one label for all the real images,
                 - "category" is for different labels of real images contains content like faces, cars, cats,etc.
                 - "models" separate the real images for each of the models present in the dataset. so real and fake labels have equal number
+                
+            - label_vector (bool, optional): boolean flag to indicate the label format in output for the labels.
+            if True one-hot encoding labels are returned, otherwise index based representation is used.Defaults to True.
         """
         super(CDDB_Partial,self).__init__()
         self.scenario           = scenario
         self.train              = train                      # boolean flag to select train or test data
         self.augment            = augment
         self.ood                = ood
+        self.label_vector       = label_vector
         self.real_grouping      = real_grouping
         self.width_img          = width_img
         self.height_img         = height_img
@@ -1428,7 +1452,12 @@ class CDDB_Partial(Dataset):
 
         # sample the label
         label = self.y[idx]    # if it's necessary the encoding, use self._one_hot_encoding(self.y[idx])
-        return img, label
+        
+        if self.label_vector:
+            label_vector = self._one_hot_encoding(label)
+            return img, label_vector
+        else:
+            return img, label
 
 ##################################################### [Out-Of-Distribution Detection] ################################################################
 

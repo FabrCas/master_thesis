@@ -1,21 +1,23 @@
-from    time                import time
-import  random
-from    tqdm                import tqdm
-from    datetime            import date
+from    time                                import time
+import  random              
+from    tqdm                                import tqdm
+from    datetime                            import date
 
-import  torch               as T
-import  numpy               as np
-import  os
+import  torch                               as T
+import  numpy                               as np
+import  os              
 
-from    torch.nn            import functional as F
-from    torch.optim         import Adam, lr_scheduler
-from    torch.cuda.amp      import GradScaler, autocast
-from    torch.utils.data    import DataLoader
+from    torch.nn                            import functional as F
+from    torch.optim                         import Adam, lr_scheduler
+from    torch.cuda.amp                      import GradScaler, autocast
+from    torch.utils.data                    import DataLoader
+from    torchvision.transforms              import v2
+from    torch.utils.data                    import default_collate
 
-from    utilities           import plot_loss, saveModel, metrics_binClass, loadModel, test_num_workers, sampleValidSet, \
-                            duration, check_folder, cutmix_image
-from    dataset             import CDDB_binary, CDDB_binary_Partial
-from    models              import ResNet_ImageNet, ResNet
+from    utilities                           import plot_loss, saveModel, metrics_binClass, loadModel, test_num_workers, sampleValidSet, \
+                                            duration, check_folder, cutmix_image, showImage
+from    dataset                             import CDDB_binary, CDDB_binary_Partial
+from    models                              import ResNet_ImageNet, ResNet
 
 
 # from    sklearn.metrics     import precision_recall_curve, auc, roc_auc_score
@@ -45,7 +47,7 @@ class BinaryClassifier(object):
         
         # initialize None variables
         self.model = None
-    
+        
     def init_weights_normal(self):
         print("Initializing weights using Gaussian distribution")
         # Initialize the weights with Gaussian distribution
@@ -160,11 +162,17 @@ class BinaryClassifier(object):
         # compute metrics from test data
         metrics_binClass(predictions, targets, predicted_probabilities, epoch_model= str(self.modelEpochs), path_save = self.path2model_results)
     
-    def Cutmix(self, x, y, prob = 0.5):
-        if random .random() < prob:
-            x,y = cutmix_image(x,y)
+    def cutmix_custom(self, x, y, prob = 0.5, verbose = False):
+        
+        uniform_sampled = random .random()
+        if  uniform_sampled< prob:
+            if verbose: print("Applied CutMix")
+            x_cutmix,y_cutmix = cutmix_image(x,y)
+            return x_cutmix, y_cutmix
         else:
             return x,y
+    
+
             
 class DFD_BinClassifier_v1(BinaryClassifier):
     """
@@ -624,7 +632,7 @@ class DFD_BinClassifier_v3(BinaryClassifier):
         self.scenario = scenario
             
         # load dataset: train, validation and test.
-        self.train_dataset  = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False, augment= True)
+        self.train_dataset  = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False, augment= True, label_vector= False)  # label_vector = False for CutMix collate
         test_dataset        = CDDB_binary_Partial(scenario = self.scenario, train = False, ood = False, augment= False)
         self.valid_dataset, self.test_dataset = sampleValidSet(trainset= self.train_dataset, testset= test_dataset, useTestSet = True, verbose = True)
         
@@ -715,10 +723,28 @@ class DFD_BinClassifier_v3(BinaryClassifier):
     
     @duration
     def train(self, name_train):
-        """name_train (str) should include the scenario selected and the model name (i.e. ResNet50), keep this convention {scenario}_{model_name}"""
+        """
+        Args:
+            name_train (str) should include the scenario selected and the model name (i.e. ResNet50), keep this convention {scenario}_{model_name}
+        """
+        
+        # intiialize CutMix (data augmentation/regularization) module and collate function
+        
+        cutmix = v2.CutMix(num_classes=2)                   # change for non-binary case!
+        def collate_cutmix(batch):
+            """
+            this function apply the CutMix technique with a certain probability (half probability). the batch should be
+            defined with idx labels, but cutmix returns a sequence of values (n classes) for each label based on the composition.
+            """
+            prob = 0.5
+            if random .random() < prob:
+                return cutmix(*default_collate(batch))
+            else:
+                return default_collate(batch) 
+        
         
         # define train dataloader
-        train_dataloader = DataLoader(self.train_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
+        train_dataloader = DataLoader(self.train_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True, collate_fn = collate_cutmix)
         
         # define valid dataloader
         valid_dataloader = DataLoader(self.valid_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= False, pin_memory= True)
@@ -735,6 +761,7 @@ class DFD_BinClassifier_v3(BinaryClassifier):
             scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor = 0.5, patience = 5, cooldown = 2, min_lr = self.lr, verbose = True) # reduce of a half the learning rate 
         elif self.early_stopping_trigger == "acc":
             scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor = 0.5, patience = 5, cooldown = 2, min_lr = self.lr, verbose = True) # reduce of a half the learning rate 
+        
         # model in training mode
         self.model.train()
         
@@ -763,8 +790,11 @@ class DFD_BinClassifier_v3(BinaryClassifier):
             for step_idx,(x,y) in tqdm(enumerate(train_dataloader), total= n_steps):
                 
                 if step_idx > 5: break
+                print(y.shape)
                 
-                # apply CutMix
+                # adjust labels if cutmix has been not applied (from indices to one-hot encoding)
+                if len(y.shape) == 1:
+                    y = T.nn.functional.one_hot(y)
                 
                 
                 # prepare samples/targets batches 
@@ -870,6 +900,64 @@ if __name__ == "__main__":
         dataset = CDDB_binary()
         test_num_workers(dataset, batch_size  =32)   # use n_workers = 8
     
+    def test_cutmix1():
+        
+        cutmix = v2.CutMix(num_classes=2)
+   
+        def collate_cutmix(batch):
+            """
+            this function apply the CutMix technique with a certain probability (half probability)
+            the batch should be defined with idx labels, but cutmix returns a sequence of values (n classes) for each label
+            based on the composition
+            """
+            prob = 0.5
+            if random .random() < prob:
+                return cutmix(*default_collate(batch))
+            else:
+                return default_collate(batch)
+        
+        dl = DataLoader(CDDB_binary_Partial(scenario = "content", train = True,  ood = False, augment= False, label_vector= False), batch_size=8, shuffle= True, collate_fn= collate_cutmix)
+        # classifier = BinaryClassifier(useGPU=True, batch_size=8, model_type = "")
+        
+        show = False
+        
+        for idx_out, (x,y) in enumerate(dl):
+            # x,y torch tensor 
+            print(x.shape, y.shape)
+            
+            # since we are using cutmix and "label_vector"= False in the Dataset parameters
+            if len(y.shape) == 1:
+                y = T.nn.functional.one_hot(y)
+            
+            # x_ ,y_ = cutmix(x,y)
+           
+            for idx in range(len(x)):
+                print(y[idx])
+                if show :
+                    showImage(x[idx])
+                
+            if idx_out > 5: break
+
+    def test_cutmix2():
+        dl = DataLoader(CDDB_binary_Partial(scenario = "content", train = True,  ood = False, augment= False, label_vector=True), batch_size=2, shuffle= True)
+        classifier = BinaryClassifier(useGPU=True, batch_size=8, model_type = "")
+        
+        show = True
+        
+        for idx_out, (x,y) in enumerate(dl):
+            # x,y torch tensor 
+            # print(x.shape, y.shape)
+        
+            x_ ,y_ = classifier.cutmix_custom(x.numpy(),y.numpy(), prob= 0.5, verbose= True)
+           
+            for idx in range(len(x)):
+                print("original labels: ",y[idx]," new labels: ", y_[idx])
+                if show :
+                    showImage(x_[idx])
+            print()
+                
+            if idx_out > 5: break   
+            
     # ________________________________ v1  ________________________________
 
     def test_binary_classifier_v1():
@@ -917,9 +1005,13 @@ if __name__ == "__main__":
 
     def test_binary_classifier_v3():
         bin_classifier = DFD_BinClassifier_v3(scenario = "content", useGPU= True, model_type="resnet_pretrained")
+        bin_classifier.train(name_train= "test")
 
    
-    test_binary_classifier_v3()
+    # test_binary_classifier_v3()
+   
+    # test_cutmix()
+    test_cutmix2()
 
     
     

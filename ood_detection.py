@@ -14,10 +14,6 @@ from    toy_classifier      import MNISTClassifier, MNISTClassifier_keras
 from    bin_classifier      import DFD_BinClassifier_v1
 from    utilities           import saveJson, loadJson, metrics_binClass, metrics_OOD, print_dict, showImage, check_folder
 
-# from tensorflow import keras
-
-types_classifier = ["bin_class", "multi_class", "multi_label_class"]
-
 class OOD_Classifier(object):
     
     def __init__(self, id_data_test, ood_data_test, id_data_train, ood_data_train, useGPU):
@@ -620,6 +616,7 @@ class OOD_Baseline(OOD_Classifier):
         return pred
    
 class Abnormality_module(OOD_Classifier):
+    """ Custom implementation of the abnormality module using ResNet, look https://arxiv.org/abs/1610.02136 chapter 4"""
     def __init__(self, classifier,  id_data_test = None, ood_data_test = None, id_data_train = None, ood_data_train = None, useGPU = True):
         super(OOD_Baseline, self).__init__(id_data_test = id_data_test, ood_data_test = ood_data_test,                  \
                                            id_data_train = id_data_train, ood_data_train = id_data_train, useGPU = useGPU)

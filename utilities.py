@@ -237,8 +237,8 @@ def rand_bbox(size, lamb):
     W = size[0]
     H = size[1]
     cut_rat = np.sqrt(1. - lamb)
-    cut_w = np.int(W * cut_rat)
-    cut_h = np.int(H * cut_rat)
+    cut_w = int(W * cut_rat)
+    cut_h = int(H * cut_rat)
 
     # uniform
     cx = np.random.randint(W)
@@ -253,7 +253,7 @@ def rand_bbox(size, lamb):
 
 
 
-def cutmix_image(image_batch, image_batch_labels, beta = 1.0):
+def cutmix_image(image_batch, image_batch_labels, beta = 1):
     """ Generate a CutMix augmented image from a batch 
     Args:
         - image_batch: a batch of input images
@@ -267,12 +267,16 @@ def cutmix_image(image_batch, image_batch_labels, beta = 1.0):
     rand_index = np.random.permutation(len(image_batch))
     target_a = image_batch_labels
     target_b = image_batch_labels[rand_index]
-    bbx1, bby1, bbx2, bby2 = rand_bbox(image_batch[0].shape, lam)
+    bbx1, bby1, bbx2, bby2 = rand_bbox((image_batch.shape[2], image_batch.shape[3]), lam)
+    # print(bbx1, bby1, bbx2, bby2)
     image_batch_updated = image_batch.copy()
-    image_batch_updated[:, bbx1:bbx2, bby1:bby2, :] = image_batch[rand_index, bbx1:bbx2, bby1:bby2, :]
+    
+    # image_batch_updated[:, bbx1:bbx2, bby1:bby2, :] = image_batch[rand_index, bbx1:bbx2, bby1:bby2, :]
+    image_batch_updated[:, :, bbx1:bbx2, bby1:bby2] = image_batch[rand_index, :, bbx1:bbx2, bby1:bby2]
+    # image_batch_updated[:, :, 100:150, 100:150] = image_batch[rand_index, :, 100:150, 100:150]
     
     # adjust lambda to exactly match pixel ratio
-    lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (image_batch.shape[1] * image_batch.shape[2]))
+    lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (image_batch.shape[2] * image_batch.shape[3]))
     label = target_a * lam + target_b * (1. - lam)
     
     return image_batch_updated, label
