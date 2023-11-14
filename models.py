@@ -1,11 +1,12 @@
 import time
 
-import torch as T
-from torch import Tensor
-import torch.nn as nn
-from torchsummary import summary
-from torchvision import models
+import torch            as T
+from torch              import Tensor
+import torch.nn         as nn
+from torchsummary       import summary
+from torchvision        import models
 from torchvision.models import ResNet50_Weights
+from utilities          import print_dict, print_list
 
 
 
@@ -295,18 +296,103 @@ class ResNet_ImageNet():   # not nn.Module subclass, but still implement forward
         return x
     
 #_____________________________________ OOD modules (ResNet relative)_______________________________
-class Decoder_ResNet(nn.Module):
-    def __init__(self, encoder, train_dataset):
-        super(Decoder_ResNet, self).__init__()
-        self.encoder        = encoder
-        self.train_dataset  = train_dataset
+class ResNet_EncoderDecoder(nn.Module):  
+    def __init__(self, n_channels = 3, n_classes = 10):  # expect image of shape 224x224
+        super(ResNet_EncoderDecoder, self).__init__()
+        self.gelu = nn.GELU()
+        self.n_channels = n_channels
+        self.n_classes = n_classes
+        self.weight_name =  ResNet50_Weights.IMAGENET1K_V2  # weights with accuracy 80.858% on ImageNet 
+        self._createModel()
+        
+    def _createModel(self):
+        # load pre-trained ResNet50
+        model = models.resnet50(weights= self.weight_name)
+        # replace RelU with GELU function
+        self._replaceReLU(model)
+        
+        # edit first layer to accept grayscale images if its the case
+        if self.n_channels == 1:
+            model.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        
+        # define the bottleneck dimension
+        bottleneck_size = model.fc.in_features
+        
+        # remove last fully connected layer for classification
+        model.fc = nn.Identity()
+        self.encoder = model
+        
+        # Define the classification head
+        self.classifier_head = nn.Linear(bottleneck_size, self.n_classes)
+        
+        # define the Decoder
+        self.decoder_head = nn.Sequential(
+            nn.ConvTranspose2d(bottleneck_size, 256, kernel_size=4, stride=2, padding=1),
+            nn.GELU(),
+            nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),
+            nn.GELU(),
+            nn.ConvTranspose2d(128, 3, kernel_size=4, stride=2, padding=1),
+            # nn.Sigmoid()  # Assuming image pixels are in [0, 1] range
+            nn.Identity()    
+        )
         
         
-    def train(self):
-        pass
     
-    def test():
-        pass
+    def _replaceReLU(self, model, verbose = False):
+        """ function used to replace the ReLU acitvation function with another one, default is the GELU"""
+        
+        full_name = ""
+        for name, m in model.named_children():
+            full_name = f"{full_name}.{name}"
+
+            if isinstance(m, nn.ReLU):
+                setattr(model, name, nn.GELU())
+                if verbose: print(f"replaced {full_name}: {nn.ReLU}->{nn.GELU}")
+                
+            elif len(list(m.children())) > 0:
+                self._replaceReLU(m)
+    
+    def getEncoder(self):
+        return self.encoder
+    
+    def getDecoderHea(self):
+        return self.decoder_head
+
+    def getClassifierHead(self):
+        return self.classifier_head
+    
+    def getSummary(self, input_shape = (None,None,None,None)):  #shape: batch,color,width,height
+        """
+            input_shape -> tuple with simulated dimension used for the model summary
+            expected input of this type -> batch,color,width,height
+        """
+        summary(self.model, input_shape)
+    
+    def to(self, device):
+        self.model.to(device)
+    
+    def getLayers(self):
+        return dict(self.model.named_parameters())
+    
+    def freeze(self):
+        for name, param in self.model.named_parameters():
+            param.requires_grad = False
+    
+    def isCuda(self):
+        return next(self.model.parameters()).is_cuda
+         
+    def forward(self, x):
+        
+        # encoder forward
+        features = self.model(x)
+        
+        # classification forward
+        logits = self.classifier_head(features)
+        
+        # decoder forward
+        reconstruction = self.decoder_head(features)
+        
+        return features, logits, reconstruction
 
 class abnormality_module(nn.Module): 
     def __init__():
@@ -325,8 +411,7 @@ class FC_classifier(nn.Module):
     def __init__(self, n_channel = 1, width = 28, height = 28, n_classes = 10):   # Default value for MNISt
         super(FC_classifier, self).__init__()
         
-        # feature map
-        fm          = 256       #256
+        fm          = 256 # feature map
         epsilon     = 0.001
         momentum    = 0.99
 
@@ -411,33 +496,37 @@ def get_fc_classifier_Keras(input_shape = (28,28)):
     return model
 
 if __name__ == "__main__":
-    
+    device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
+    input_example = T.rand(size=(3,224,224))
     def test_ResNet():
-        device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
         resnet = ResNet()
         resnet.to(device)
         print(resnet.isCuda())
         
-        input_example = T.rand(size=(3,224,224))
+       
         batch_example = input_example.unsqueeze(0)
         # print(batch_example.shape)
         resnet.getSummary(input_shape= input_example.shape)
         
     def test_ResNet50ImageNet():
-        device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
         resnet = ResNet_ImageNet(n_channels=3)
         resnet.to(device)
         input_example = T.rand(size=(3,224,224)).to(device)
         resnet.getSummary(input_shape= input_example.shape)
         
     def test_simpleClassifier():
-        device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
         classifier = FC_classifier(n_channel= 3, width = 256, height= 256)
         classifier.to(device)
         input_example = T.rand(size=(3,256,256))
         classifier.getSummary(input_shape= input_example.shape)
         
-    
-    test_simpleClassifier()
+    def test_ResNet_Encoder_Decoder():
+        
+        model = ResNet_EncoderDecoder(n_channels=3, n_classes=2)
+        model.to(device)
+        print_list(list(model.getLayers().keys()))
+        model.getSummary(input_shape= input_example.shape)
+        
+    test_ResNet_Encoder_Decoder()
     
     

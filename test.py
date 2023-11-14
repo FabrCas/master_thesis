@@ -34,6 +34,8 @@ def sigmoid_with_softmax(logits, temperature):
 
 # logits = torch.tensor([1.0, 2.0, 3.0])
 
+image = np.array([[1,1,1,0],[0.5,0.7,0.9,1]])
+
 logits = torch.Tensor([[0.6, 3],[0.76,0.56]])
 # logits = np.array([[0.6, 3],[0.76,0.56]])
 temperature = 1.0

@@ -174,7 +174,7 @@ class BinaryClassifier(object):
              
 class DFD_BinClassifier_v1(BinaryClassifier):
     """
-        binary classifier for deepfake detection using CDDB dataset, first version
+        binary classifier for deepfake detection using CDDB dataset, first version.
         including usage of ResNet model, no validation set used during training (70% training, 30% testing),
         no data augementation.
         
@@ -331,6 +331,7 @@ class DFD_BinClassifier_v1(BinaryClassifier):
 class DFD_BinClassifier_v2(BinaryClassifier):
     """
         binary classifier for deepfake detection using partial CDDB dataset for the chosen scenario configuration.
+        Model used: ResNet 50 pre-trained on ImageNet and fine-tuned (all layers)
         This second version includes usage of ResNet model, with validation set used during training (70% training, 10% validation, 20% testing),
         and data augementation.
         Respect the v1 this version also includes the use of validation set for early stopping.
@@ -601,6 +602,7 @@ class DFD_BinClassifier_v2(BinaryClassifier):
 class DFD_BinClassifier_v3(BinaryClassifier):
     """
         binary classifier for deepfake detection using partial CDDB dataset for the chosen scenario configuration.
+        Model used: Custom ResNet50 with encoder/decoder structure
         This third version extends the 2nd version. Including:
         
         - dynamic learning rate using validation set
@@ -658,6 +660,10 @@ class DFD_BinClassifier_v3(BinaryClassifier):
         self.weight_decay           = 0.001          # L2 regularization term 
         self.patience               = 5              # early stopping patience
         self.early_stopping_trigger = "acc"        # values "acc" or "loss"
+        
+        # interpolation values for the new loss
+        self.alpha_loss             = 0.9
+        self.beta_beta              = 0.1
         
         self._check_parameters()
      

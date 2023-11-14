@@ -1,6 +1,7 @@
 import  os 
 import  re
 import  json
+import  math
 from    time                                import time
 import  multiprocessing                     as mp
 import  numpy                               as np
@@ -13,7 +14,7 @@ from    torchvision                         import transforms
 from    torchvision.transforms              import v2    # new version for tranformation methods
 from    torchvision.transforms.functional   import InterpolationMode
 from    time                                import time
-
+from    skimage.filters                     import gaussian
 
 #  classification metrics
 from    sklearn.metrics     import  precision_score, recall_score, f1_score, confusion_matrix, hamming_loss,\
@@ -279,19 +280,22 @@ def cutmix_image(image_batch, image_batch_labels, beta = 1):
     
     return image_batch_updated, label
 
-# ODIN perturbations: https://arxiv.org/abs/1706.02690
-# def perturbate_ODIN(x):pass
-
 #TODO implement normalizer for learning 
 class NormalizeByChannelMeanStd(T.nn.Module):
-    def __init__(self, mean, std):
+    def __init__(self, data):
         super(NormalizeByChannelMeanStd, self).__init__()
-        if not isinstance(mean, T.Tensor):
-            mean = T.tensor(mean)
-        if not isinstance(std, T.Tensor):
-            std = T.tensor(std)
-        self.register_buffer("mean", mean)
-        self.register_buffer("std", std)
+        # if not isinstance(mean, T.Tensor):
+        #     mean = T.tensor(mean)
+        # if not isinstance(std, T.Tensor):
+        #     std = T.tensor(std)
+        
+        if not isinstance(data, T.Tensor):
+            data = T.tensor(data)
+
+        self.mean   = T.mean(data)
+        self.std    = T.std(data)
+        self.register_buffer("mean", self.mean)
+        self.register_buffer("std", self.std)
 
     def _compute_mean_std(self, data): 
         raise NotImplementedError
@@ -311,6 +315,13 @@ def normalize_fn(tensor, mean, std):
 
 def add_noise(batch_input, complexity=0.5):
     return batch_input + np.random.normal(size=batch_input.shape, scale=1e-9 + complexity)
+
+def add_blur(img, complexity=0.5):
+    """ img as fist dimension we have the color channel."""
+    # image = img.reshape((-1, 28, 28))
+    shape = img.shape
+    # return gaussian(img, sigma=5*complexity).reshape((-1, 28*28))
+    return gaussian(img, sigma=5*complexity)
 
 def add_distortion_noise(batch_input):
     distortion = np.random.uniform(low=0.9, high=1.2)
@@ -809,7 +820,114 @@ def duration(function):
         result = list(map(pow, a))
         print(result)
     """
+
+##################################################  Neural Network utilities ##########################################################
+
+#                                       get dimensions and n°parameters for layers
+# 2D Convolutional layer
+def conv2d_shapes(input_shape, n_filters, kernel_size, padding = 0, stride = 1):
+    conv2d_out_shape(input_shape, n_filters, kernel_size, padding = padding, stride = stride)
+    conv2d_n_parameters(input_shape, n_filters, kernel_size)
+
+def conv2d_out_shape(input_shape, n_filters, kernel_size, padding = 0, stride = 1):
+    # input_shape: [batch, channels, height, width] or [channels, height, width], is a tuple
+    print("Dimensions after 2D Convolutional layer application, with filter size: {}x{}, stride: {} and padding: {}\n".format(kernel_size, kernel_size, stride, padding))
+    c_out = n_filters
+    if len(input_shape) > 3:  
+        # batch case
+        print("The input shape is ->\t\t[batch: {}, channels: {}, height: {}, width: {}]".format(input_shape[0], str(input_shape[1]), str(input_shape[2]), str(input_shape[3])))
+        print("The filter (x{}) shape is ->\t[depth: {}, height: {}, width: {}]:".format(str(n_filters), str(input_shape[1]), str(kernel_size), str(kernel_size)))
+        h_out = int((math.floor(input_shape[2] - kernel_size + 2*padding )/stride) + 1)
+        w_out = int((math.floor(input_shape[3] - kernel_size + 2*padding )/stride) + 1)
+        print("The output shape is ->\t\t[batch: {}, channels: {}, height: {}, width: {}]".format(str(input_shape[0]), str(c_out), str(h_out), str(w_out)))
+        return (input_shape[0], c_out, h_out, w_out)
+        
+    else:
+        # single image case              
+        print("The input shape is -> \t\t[channels: {}, height: {}, width: {}]".format(str(input_shape[0]), str(input_shape[1]), str(input_shape[2])))
+        print("The filter (x{}) shape is ->\t[depth: {}, height: {}, width: {}]:".format(str(n_filters), str(input_shape[0]), str(kernel_size), str(kernel_size)))
+        h_out = int((math.floor(input_shape[1] - kernel_size + 2*padding )/stride) + 1)
+        w_out = int((math.floor(input_shape[2] - kernel_size + 2*padding )/stride) + 1)
+        print("The output shape is ->\t\t[channels: {}, height: {}, width: {}]".format(str(c_out), str(h_out), str(w_out)))
+        return (c_out, h_out, w_out)
+        
+def conv2d_n_parameters(input_shape, n_filters, kernel_size):
+    if len(input_shape) > 3: 
+        depth_filter = input_shape[1]
+    else:
+        depth_filter = input_shape[0]
     
+    learnable_params = (kernel_size**2 * depth_filter +1) * n_filters
+    print("The number of learnable parameters is -> {}".format(learnable_params))
+    return learnable_params 
+
+# 2D Convolutioal transposed layer
+
+def convTranspose2d_shapes(input_shape, n_filters, kernel_size, padding = 0, stride = 1, output_padding = 0):
+    convTranspose2d_out_shapes(input_shape, n_filters, kernel_size, padding = padding, stride = stride, output_padding = output_padding)
+    convTranspose2d_n_parameters(input_shape, n_filters, kernel_size)
+
+def convTranspose2d_out_shapes(input_shape, n_filters, kernel_size, padding = 0, stride = 1, output_padding = 0):
+    print("Dimensions after 2D Convolutional Transpose layer application, with filter size: {}x{}, stride: {} and padding: {}\n".format(kernel_size, kernel_size, stride, padding))
+    c_out = n_filters
+    if len(input_shape) > 3:  
+        # batch case
+        print("The input shape is ->\t\t[batch: {}, channels: {}, height: {}, width: {}]".format(input_shape[0], str(input_shape[1]), str(input_shape[2]), str(input_shape[3])))
+        print("The filter (x{}) shape is ->\t[depth: {}, height: {}, width: {}]:".format(str(n_filters), str(input_shape[1]), str(kernel_size), str(kernel_size)))
+        h_out = int(math.floor( (input_shape[2] - 1)*stride + kernel_size - 2*padding + output_padding ))
+        w_out = int(math.floor( (input_shape[3] - 1)*stride + kernel_size - 2*padding + output_padding ))
+        print("The output shape is ->\t\t[batch: {}, channels: {}, height: {}, width: {}]".format(str(input_shape[0]), str(c_out), str(h_out), str(w_out)))
+        return (input_shape[0], c_out, h_out, w_out)
+        
+    else:
+        # single image case              
+        print("The input shape is -> \t\t[channels: {}, height: {}, width: {}]".format(str(input_shape[0]), str(input_shape[1]), str(input_shape[2])))
+        print("The filter (x{}) shape is ->\t[depth: {}, height: {}, width: {}]:".format(str(n_filters), str(input_shape[0]), str(kernel_size), str(kernel_size)))
+        h_out = int(math.floor( (input_shape[1] - 1)*stride + kernel_size - 2*padding + output_padding ))
+        w_out = int(math.floor( (input_shape[2] - 1)*stride + kernel_size - 2*padding + output_padding ))
+        print("The output shape is ->\t\t[channels: {}, height: {}, width: {}]".format(str(c_out), str(h_out), str(w_out)))
+        return (c_out, h_out, w_out)
+
+def convTranspose2d_n_parameters(input_shape, n_filters, kernel_size):
+    if len(input_shape) > 3: 
+        depth_filter = input_shape[1]
+    else:
+        depth_filter = input_shape[0]
+    
+    learnable_params = (kernel_size**2 * n_filters +1) * depth_filter  # slightly different respect Conv2D classic since the bias respect the input channels
+    print("The number of learnable parameters is -> {}".format(learnable_params))
+    return learnable_params 
+
+
+""" 
+how to use: 
+conv2d_shapes(input_shape = (1,5,5), n_filters = 1, kernel_size= 3, padding = 0, stride=2)
+convTranspose2d_shapes(input_shape=(1,2,2), n_filters=1, kernel_size=2, padding=0, stride=2)
+"""
+
+# 2D Pooling layer
+def pool2d_out_shape(input_shape, kernel_size, stride):
+    print("Dimensions after 2D pooling layer application, with filter size: {}x{}, and stride: {}\n".format(kernel_size, kernel_size, stride))
+    if len(input_shape) > 3:  
+        # batch case
+        c_out = input_shape[1]
+        print("The input shape is ->\t\t[batch: {}, channels: {}, height: {}, width: {}]".format(input_shape[0], str(c_out), str(input_shape[2]), str(input_shape[3])))
+        h_out = int((math.floor(input_shape[2] - kernel_size)/stride) + 1)
+        w_out = int((math.floor(input_shape[3] - kernel_size)/stride) + 1)
+        print("The output shape is ->\t\t[batch: {}, channels: {}, height: {}, width: {}]".format(str(input_shape[0]), str(c_out), str(h_out), str(w_out)))
+        return (input_shape[0], c_out, h_out, w_out)
+        
+    else:
+        # single image case     
+        c_out = input_shape[0]         
+        print("The input shape is -> \t\t[channels: {}, height: {}, width: {}]".format(str(c_out), str(input_shape[1]), str(input_shape[2])))
+        h_out = int((math.floor(input_shape[1] - kernel_size)/stride) + 1)
+        w_out = int((math.floor(input_shape[2] - kernel_size)/stride) + 1)
+        print("The output shape is ->\t\t[channels: {}, height: {}, width: {}]".format(str(c_out), str(h_out), str(w_out)))
+        return (c_out, h_out, w_out)
+
+
+
 ##################################################  General Python utilities ##########################################################
 
 concat_dict = lambda x,y: {**x, **y}
@@ -838,3 +956,5 @@ def check_folder(path):
             os.makedirs(path) 
     else:
         raise ValueError("Impossible to create a folder, the path {} is relative to a file!".format(path))
+    
+

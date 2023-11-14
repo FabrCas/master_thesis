@@ -157,8 +157,8 @@ class OOD_Classifier(object):
         loss.backward()         # Compute gradients
 
         # gradient based perturbation
-        perturbation = epsilon * T.sign(x.grad.data)
-        perturbed_input = x + perturbation
+        perturbation = epsilon * T.sign(x.grad.data)    # This ensures that the perturbation is added in the direction that increases the loss, 
+        perturbed_input = x + perturbation              # making the model more sensitive to variations in the input data during inference.
 
         return perturbed_input
     
