@@ -6,7 +6,7 @@ import torch.nn         as nn
 from torchsummary       import summary
 from torchvision        import models
 from torchvision.models import ResNet50_Weights
-from utilities          import print_dict, print_list
+from utilities          import print_dict, print_list, expand_encoding, convTranspose2d_shapes
 
 
 
@@ -173,7 +173,7 @@ class ResNet(nn.Module):
         """
         list_layers = []
         
-        # adapt x to be summed with output of the blocks
+        # adapt x to be summed with output of the blocks (downsampling)
         if stride != 1 or self.input_ch != n_fm*self.exp_coeff: # so downsampling to handle the different shape of x 
             ds_layer = nn.Sequential(
                 nn.Conv2d(self.input_ch, n_fm*self.exp_coeff, kernel_size=1, stride=stride),
@@ -296,16 +296,19 @@ class ResNet_ImageNet():   # not nn.Module subclass, but still implement forward
         return x
     
 #_____________________________________ OOD modules (ResNet relative)_______________________________
-class ResNet_EncoderDecoder(nn.Module):  
+class ResNet_EDS(nn.Module): 
+    """ ResNet multi head module with Encoder, Decoder and scorer (Classifier) """
     def __init__(self, n_channels = 3, n_classes = 10):  # expect image of shape 224x224
-        super(ResNet_EncoderDecoder, self).__init__()
-        self.gelu = nn.GELU()
+        super(ResNet_EDS, self).__init__()
+        self.input_width    = 244
+        self.input_height   = 244
         self.n_channels = n_channels
         self.n_classes = n_classes
         self.weight_name =  ResNet50_Weights.IMAGENET1K_V2  # weights with accuracy 80.858% on ImageNet 
         self._createModel()
         
     def _createModel(self):
+                
         # load pre-trained ResNet50
         model = models.resnet50(weights= self.weight_name)
         # replace RelU with GELU function
@@ -320,24 +323,96 @@ class ResNet_EncoderDecoder(nn.Module):
         
         # remove last fully connected layer for classification
         model.fc = nn.Identity()
-        self.encoder = model
+        self.encoder_module = model
         
         # Define the classification head
-        self.classifier_head = nn.Linear(bottleneck_size, self.n_classes)
+        self.scorer_module = nn.Linear(bottleneck_size, self.n_classes)
+        
+        print("bottleneck size is: {}".format(bottleneck_size))
         
         # define the Decoder
-        self.decoder_head = nn.Sequential(
-            nn.ConvTranspose2d(bottleneck_size, 256, kernel_size=4, stride=2, padding=1),
+        self.decoder_module = nn.Sequential(
+            expand_encoding(),   # to pass from [-1,2048] to [-1,2048,1,1]
+            
+            nn.Upsample(scale_factor=7),
+            
+            
+            nn.ConvTranspose2d(bottleneck_size, 128, kernel_size=4, stride=2, padding=1),
             nn.GELU(),
-            nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),
+            self.conv_block_decoder(n_filter=128),
+            
+            nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
             nn.GELU(),
-            nn.ConvTranspose2d(128, 3, kernel_size=4, stride=2, padding=1),
-            # nn.Sigmoid()  # Assuming image pixels are in [0, 1] range
-            nn.Identity()    
+            self.conv_block_decoder(n_filter=64),
+            
+            nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
+            nn.GELU(),
+            self.conv_block_decoder(n_filter=32),
+            
+            nn.ConvTranspose2d(32, 16, kernel_size=4, stride=2, padding=1),
+            nn.GELU(),
+            self.conv_block_decoder(n_filter=16),
+            
+            nn.ConvTranspose2d(16, 3, kernel_size=4, stride=2, padding=1),
+            nn.GELU(),
+            self.conv_block_decoder(n_filter=3),
+            
+            
+            # nn.ConvTranspose2d(1024, 512, kernel_size=4, stride=2, padding=1),
+            # nn.GELU(),
+            # self.conv_block_decoder(n_filter=512),
+
+            # nn.ConvTranspose2d(512, 256, kernel_size=4, stride=2, padding=1),
+            # nn.GELU(),
+            # self.conv_block_decoder(n_filter=256),
+
+            # nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),
+            # nn.GELU(),
+            # self.conv_block_decoder(n_filter=128),
+
+            # nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
+            # nn.GELU(),
+            # self.conv_block_decoder(n_filter=64),
+            
+            # nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
+            # nn.GELU(),
+            # self.conv_block_decoder(n_filter=32),
+            
+            # nn.ConvTranspose2d(32, 16, kernel_size=4, stride=2, padding=1),
+            # nn.GELU(),
+            # self.conv_block_decoder(n_filter=16),
+            
+            # nn.ConvTranspose2d(16, 3, kernel_size=4, stride=2, padding=1),
+            # nn.GELU(),
+            # self.conv_block_decoder(n_filter=3),
+
+            
+            nn.Sigmoid()             # to have pixels in the range of 0,1  (or  nn.Tanh or nn.Identiy)
+           
         )
         
+        # define the 2 output pipes
+        # self.scorer_pipe    = nn.Sequential(self.encoder_module, self.scorer_module)
+        # self.decoder_pipe   = nn.Sequential(self.encoder_module, self.decoder_module)
         
+    def conv_block_decoder(self, n_filter):
+        # U-net inspired structures
+        
+        conv_block = nn.Sequential(
+                # Taking first input and implementing the first conv block
+                nn.Conv2d(n_filter, n_filter,kernel_size = 3, padding = "same"),
+                nn.BatchNorm2d(n_filter),
+                nn.GELU(),
+
+                # Taking first input and implementing the second conv block
+                nn.Conv2d(n_filter, n_filter,kernel_size = 3, padding = "same"),
+                nn.BatchNorm2d(n_filter),
+                nn.GELU(),
+        )
+        return conv_block
     
+    
+    # aux functions to create the model
     def _replaceReLU(self, model, verbose = False):
         """ function used to replace the ReLU acitvation function with another one, default is the GELU"""
         
@@ -352,50 +427,126 @@ class ResNet_EncoderDecoder(nn.Module):
             elif len(list(m.children())) > 0:
                 self._replaceReLU(m)
     
-    def getEncoder(self):
-        return self.encoder
+    def _expand_encoding(x):
+        return x.view(-1, 2048, 1, 1)
     
-    def getDecoderHea(self):
-        return self.decoder_head
+    # getters methods 
+    
+    def getEncoder_module(self):
+        return self.encoder_module
+    
+    def getDecoder_module(self):
+        return self.decoder_module
 
-    def getClassifierHead(self):
-        return self.classifier_head
+    def getScorer_module(self):
+        return self.scorer_module
     
-    def getSummary(self, input_shape = (None,None,None,None)):  #shape: batch,color,width,height
+    def getSummaryEncoder(self, input_shape = (None,None,None,None)):  #shape: batch,color,width,height
         """
+            summary for encoder
             input_shape -> tuple with simulated dimension used for the model summary
             expected input of this type -> batch,color,width,height
         """
-        summary(self.model, input_shape)
+        summary(self.encoder_module, input_shape)
+    
+    def getSummaryScorerPipeline(self, input_shape = (None,None,None,None)):
+        """
+            summary for encoder + scoder modules
+            input_shape -> tuple with simulated dimension used for the model summary
+            expected input of this shape -> batch,color,width,height
+        """
+        summary(nn.Sequential(self.encoder_module, self.scorer_module), input_shape)
+    
+    def getSummaryDecoderPipeline(self, input_shape = (None,None,None,None)):
+        """
+            summary for encoder + decoder modules
+            input_shape -> tuple with simulated dimension used for the model summary
+            expected input of this shape -> batch,color,width,height
+        """
+        summary(nn.Sequential(self.encoder_module, self.decoder_module), input_shape)
     
     def to(self, device):
-        self.model.to(device)
-    
-    def getLayers(self):
-        return dict(self.model.named_parameters())
-    
-    def freeze(self):
-        for name, param in self.model.named_parameters():
-            param.requires_grad = False
-    
-    def isCuda(self):
-        return next(self.model.parameters()).is_cuda
-         
-    def forward(self, x):
+        """ move the whole model to "device" (str) """
         
+        self.encoder_module.to(device)
+        self.scorer_module.to(device)
+        self.decoder_module.to(device)
+        
+        # self.scorer_pipe.to(device)
+        # self.decoder_pipe.to(device)
+    
+    def getLayers(self, name_module = "encoder"):
+        """
+            return the layers of the selected module
+            
+            Args: 
+                name_module(str) choose between: "encoder", "scorer" and "decoder"
+        """
+        if name_module == "encoder":
+            return dict(self.encoder_module.named_parameters())
+        elif name_module == "scorer":
+            return dict(self.scorer_module.named_parameters())
+        elif name_module == "decoder":
+            return dict(self.decoder_module.named_parameters())
+    
+    def freeze(self, name_module):
+        """
+            freeze the layers of the selected module
+            
+            Args: 
+                name_module(str) choose between: "encoder", "scorer" and "decoder" or "all"
+        """
+        if name_module == "encoder":
+            for name, param in self.encoder_module.named_parameters():
+                param.requires_grad = False
+        elif name_module == "scorer":
+            for name, param in self.scorer_module.named_parameters():
+                param.requires_grad = False
+        elif name_module == "decoder":
+            for name, param in self.decoder_module.named_parameters():
+                param.requires_grad = False
+        elif name_module == "all":
+            self.freeze("encoder")
+            self.freeze("decoder")
+            self.freeze("scorer")
+    
+    def getDevice(self, name_module):
+        """
+            return the device assigned for the selected module
+            
+            Args: 
+                name_module(str) choose between: "encoder", "scorer" and "decoder"
+        """
+        if name_module == "encoder":
+            return next(self.encoder_module.parameters()).device
+        elif name_module == "scorer":
+            return next(self.scorer_module.parameters()).device
+        elif name_module == "decoder":
+            return next(self.decoder_module.parameters()).device
+  
+    def forward(self, x):
+        """
+            Forward of the module
+            
+            Args: 
+                x (T.tensor) batch or image tensor
+            
+            Returns:
+                3xT.tensor: features from encoder, logits from scorer and reconstruction from decoder
+        """
         # encoder forward
-        features = self.model(x)
+        features = self.encoder_module(x)
         
         # classification forward
-        logits = self.classifier_head(features)
+        logits = self.scorer_module(features)
         
         # decoder forward
-        reconstruction = self.decoder_head(features)
+        reconstruction = self.decoder_module(features)
         
         return features, logits, reconstruction
 
 class abnormality_module(nn.Module): 
-    def __init__():
+    def __init__(self):
         super(abnormality_module, self).__init__()
     
 #_____________________________________Vision Transformer (ViT)_____________________________________        
@@ -496,37 +647,40 @@ def get_fc_classifier_Keras(input_shape = (28,28)):
     return model
 
 if __name__ == "__main__":
+    
+    # setUp test
     device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
-    input_example = T.rand(size=(3,224,224))
+    input_resnet_example = T.rand(size=(3,224,224))
+    
     def test_ResNet():
         resnet = ResNet()
         resnet.to(device)
         print(resnet.isCuda())
         
        
-        batch_example = input_example.unsqueeze(0)
+        batch_example = input_resnet_example.unsqueeze(0)
         # print(batch_example.shape)
-        resnet.getSummary(input_shape= input_example.shape)
+        resnet.getSummary(input_shape= input_resnet_example.shape)
         
     def test_ResNet50ImageNet():
         resnet = ResNet_ImageNet(n_channels=3)
         resnet.to(device)
-        input_example = T.rand(size=(3,224,224)).to(device)
-        resnet.getSummary(input_shape= input_example.shape)
+        resnet.getSummary(input_shape= input_resnet_example.shape)
         
     def test_simpleClassifier():
         classifier = FC_classifier(n_channel= 3, width = 256, height= 256)
         classifier.to(device)
-        input_example = T.rand(size=(3,256,256))
-        classifier.getSummary(input_shape= input_example.shape)
+        classifier.getSummary(input_shape= input_resnet_example.shape)
         
     def test_ResNet_Encoder_Decoder():
         
-        model = ResNet_EncoderDecoder(n_channels=3, n_classes=2)
+        model = ResNet_EDS(n_channels=3, n_classes=2)
         model.to(device)
-        print_list(list(model.getLayers().keys()))
-        model.getSummary(input_shape= input_example.shape)
-        
+        print("device, encoder -> {}, decoder -> {}, scorer -> {}".format(model.getDevice(name_module="encoder"), model.getDevice(name_module="decoder"), model.getDevice(name_module="scorer")))
+        # model.getSummaryEncoder(input_shape=input_resnet_example.shape)        
+        # model.getSummaryScorerPipeline(input_shape=input_resnet_example.shape)
+        model.getSummaryDecoderPipeline(input_shape = input_resnet_example.shape)
+      
     test_ResNet_Encoder_Decoder()
     
     

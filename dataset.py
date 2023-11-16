@@ -220,7 +220,7 @@ class CDDB_binary(Dataset):
         else:
             return img, label
 
-# Used for ID-OOD study
+# Used for ID-OOD study   #TODO solve bug mix content for OOD data 
 class CDDB_binary_Partial(Dataset):
     """_
         Dataset class that uses the partial data from CDDB dataset for binary deepfake detection.
@@ -850,7 +850,7 @@ class CDDB(Dataset):
         else:
             return img, label
 
-# Used for ID-OOD study
+# Used for ID-OOD study  #TODO solve bug mix content for OOD data 
 class CDDB_Partial(Dataset):
     """_
         Dataset class that uses partial data from CDDB dataset as In-Distribuion (ID) for multi-label deepfake detection,

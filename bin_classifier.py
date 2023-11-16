@@ -602,7 +602,7 @@ class DFD_BinClassifier_v2(BinaryClassifier):
 class DFD_BinClassifier_v3(BinaryClassifier):
     """
         binary classifier for deepfake detection using partial CDDB dataset for the chosen scenario configuration.
-        Model used: Custom ResNet50 with encoder/decoder structure
+        Model used: Custom ResNet50 with encoder/decoder structure (ResNet_EDS)
         This third version extends the 2nd version. Including:
         
         - dynamic learning rate using validation set
@@ -663,13 +663,15 @@ class DFD_BinClassifier_v3(BinaryClassifier):
         
         # interpolation values for the new loss
         self.alpha_loss             = 0.9
-        self.beta_beta              = 0.1
+        self.beta_loss              = 0.1
         
         self._check_parameters()
      
     def _check_parameters(self):
         if not(self.early_stopping_trigger in ["loss", "acc"]):
             raise ValueError('The early stopping trigger value must be chosen between "loss" and "acc"')
+        if self.alpha_loss + self.beta_loss != 1.: 
+            raise  ValueError('Interpolation hyperparams (alpha, beta) should sum up to 1!')
         
     def valid(self, epoch, valid_dataloader):
         """

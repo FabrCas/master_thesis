@@ -826,6 +826,15 @@ def duration(function):
 #                                       get dimensions and n°parameters for layers
 # 2D Convolutional layer
 def conv2d_shapes(input_shape, n_filters, kernel_size, padding = 0, stride = 1):
+    """ get info on output and n°learnable params from a convolutional 2D layer
+
+    Args:
+        input_shape (tuple): shape dimension of the input
+        n_filters (int): number of filter used
+        kernel_size (int): size kernel for width and height filter
+        padding (int, optional): padding for the input to include in the input shape. Default is 0
+        stride (int, optional): stride to use in the convolution.  Default is 1
+    """
     conv2d_out_shape(input_shape, n_filters, kernel_size, padding = padding, stride = stride)
     conv2d_n_parameters(input_shape, n_filters, kernel_size)
 
@@ -861,11 +870,23 @@ def conv2d_n_parameters(input_shape, n_filters, kernel_size):
     print("The number of learnable parameters is -> {}".format(learnable_params))
     return learnable_params 
 
-# 2D Convolutioal transposed layer
-
+# 2D Convolutioal transposed layer (for more on conv2d layer look at: https://medium.com/analytics-vidhya/demystify-transposed-convolutional-layers-6f7b61485454)
 def convTranspose2d_shapes(input_shape, n_filters, kernel_size, padding = 0, stride = 1, output_padding = 0):
+    """ get info on output and n°learnable params from a convolutional transpose 2D layer
+
+    Args:
+        input_shape (tuple): shape dimension of the input
+        n_filters (int): number of filter used
+        kernel_size (int): size kernel for width and height filter
+        padding (int, optional): padding for the input to include in the input shape
+        output_padding (int, optional): padding for the input to include in the input shape. Default is 0
+        stride (int, optional): stride to use in the convolution. Default is 1
+    """
+    
     convTranspose2d_out_shapes(input_shape, n_filters, kernel_size, padding = padding, stride = stride, output_padding = output_padding)
     convTranspose2d_n_parameters(input_shape, n_filters, kernel_size)
+    
+
 
 def convTranspose2d_out_shapes(input_shape, n_filters, kernel_size, padding = 0, stride = 1, output_padding = 0):
     print("Dimensions after 2D Convolutional Transpose layer application, with filter size: {}x{}, stride: {} and padding: {}\n".format(kernel_size, kernel_size, stride, padding))
@@ -898,6 +919,15 @@ def convTranspose2d_n_parameters(input_shape, n_filters, kernel_size):
     print("The number of learnable parameters is -> {}".format(learnable_params))
     return learnable_params 
 
+# custom modules
+
+class expand_encoding(T.nn.Module):
+    def __init__(self, shape = (-1, 2048, 1, 1)):
+        super(expand_encoding,self).__init__()
+        self.shape = shape
+        
+    def forward(self, x):
+        return x.view(*self.shape)
 
 """ 
 how to use: 
