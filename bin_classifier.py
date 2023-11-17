@@ -614,6 +614,7 @@ class DFD_BinClassifier_v3(BinaryClassifier):
         - new interpolated loss as alpha * classification loss + beta* reconstruction loss
         
         training model folders:
+        faces_resnet_50EDS_v3_.17-11-2023
         
     """
     def __init__(self, scenario, useGPU = True, batch_size = 32):
@@ -881,11 +882,11 @@ class DFD_BinClassifier_v3(BinaryClassifier):
         # create paths and file names for saving training outcomes
         current_date = date.today().strftime("%d-%m-%Y")
         
-        path_model_folder       = os.path.join(self.path_models,  name_train + "_v{}_.".format(str(self.version)) + current_date)
+        path_model_folder       = os.path.join(self.path_models,  name_train + "_v{}_".format(str(self.version)) + current_date)
         name_model_file         = str(last_epoch) +'.ckpt'
         path_model_save         = os.path.join(path_model_folder, name_model_file)  # path folder + name file
         
-        path_results_folder     = os.path.join(self.path_results, name_train + "_v{}_.".format(str(self.version)) + current_date)
+        path_results_folder     = os.path.join(self.path_results, name_train + "_v{}_".format(str(self.version)) + current_date)
         name_loss_file          = 'loss_'+ str(last_epoch) +'.png'
         path_lossPlot_save      = os.path.join(path_results_folder, name_loss_file)
         
@@ -1058,10 +1059,33 @@ if __name__ == "__main__":
 
     def test_binary_classifier_v3():
         bin_classifier = DFD_BinClassifier_v3(scenario = "content", useGPU= True)
-        bin_classifier.train(name_train= "faces_resnet50EDS")
+        # bin_classifier.train(name_train= "faces_resnet50EDS")
 
-   
-    test_binary_classifier_v3()
+    def train_v3_content_scenario():
+        bin_classifier = DFD_BinClassifier_v3(scenario = "content", useGPU= True)
+        bin_classifier.train(name_train= "faces_resnet_50EDS")
+    
+    def test_v3_metrics(name_model, epoch, scenario):
+        bin_classifier = DFD_BinClassifier_v3(scenario = scenario, useGPU= True)
+        bin_classifier.load(name_model, epoch)
+        bin_classifier.test()  
+    
+    def showReconstruction(name_model, epoch, scenario):
+        bin_classifier = DFD_BinClassifier_v3(scenario = scenario, useGPU= True)
+        bin_classifier.load(name_model, epoch)
+        img, _ = bin_classifier.test_dataset.__getitem__(300)
+        print(img.shape)
+        showImage(img)
+        img     = T.unsqueeze(img, dim= 0).to(bin_classifier.device)
+        enc     = bin_classifier.model.encoder_module.forward(img)
+        rec_img = bin_classifier.model.decoder_module.forward(enc)
+        logits  = bin_classifier.model.scorer_module.forward(enc)
+        rec_img = T.squeeze(rec_img, dim = 0)
+        print(rec_img)
+        print(logits)
+        showImage(rec_img)
+        
+    showReconstruction(name_model = "faces_resnet_50EDS_v3_17-11-2023", epoch = 20, scenario = "content")
     
     #                           [End test section] 
 
@@ -1078,7 +1102,8 @@ if __name__ == "__main__":
     test_v2_metrics(name_model = "group_resnet50_ImageNet_v2_05-11-2023", epoch = 26 , scenario = "group")
     test_v2_metrics(name_model = "mix_resnet50_ImageNet_v2_05-11-2023", epoch = 21 ,    scenario = "mix")
     
-    
+    train_v3_content_scenario()
+    test_v3_metrics(name_model = "faces_resnet_50EDS_v3_.17-11-2023", epoch = 20, scenario = "content")
     
     """
 

@@ -353,6 +353,7 @@ def saveJson(path_file, data):
         path_file (str): path to the JSON file
         data (JSON like object: dict or list): data to make persistent
     """
+    print(f"Saving json file: {path_file}")
     with open(path_file, "w") as file:
         json.dump(data, file, indent= 4)
     
@@ -365,6 +366,8 @@ def loadJson(path_file):
     Returns:
         JSON like object (dict or list): JSON data from the path
     """
+    
+    print(f"Loading json file: {path_file}")
     with open(path_file, "r") as file:
         json_data = file.read()
     data =  json.loads(json_data)
@@ -574,10 +577,10 @@ def plot_PR_curve(recalls, precisions, path_save = None, duration_timer = 2500):
 
 ##################################################  Metrics functions #################################################################
 
-def metrics_binClass(preds, targets, pred_probs, epoch_model="unknown", path_save = None, average = "macro", name_ood_file  = None):
+def metrics_binClass(preds, targets, pred_probs, epoch_model="unknown", path_save = None, average = "macro", name_ood_file  = None, save = True):
     """ 
-        Computation of metrics for binary classification task.
-        use name_ood_file parameter only if you want to save results for OOD classification
+        Computation of metrics for binary classification tasks.
+        use name_ood_file parameter to save for OOD binary classification, otherwise is saved for classic binary classification
     """
     
     if pred_probs is not None:
@@ -623,18 +626,20 @@ def metrics_binClass(preds, targets, pred_probs, epoch_model="unknown", path_sav
         if k != "confusion_matrix":
             print("\nmetric: {}, result: {}".format(k,v))
         else:
-            print("Confusion matrix")
+            print("\nConfusion matrix:")
             print(v)
     
     
     # plot and save (if path specified) confusion matrix
     plot_cm(cm = metrics_results['confusion_matrix'], labels = ["real", "fake"], title_plot = None, path_save = path_save)
     
+    print(path_save)
     
     metrics_results['confusion_matrix'] = metrics_results['confusion_matrix'].tolist()
     
+    
     # save the results (JSON file) if a path has been provided
-    if path_save is not None and not(name_ood_file is None):
+    if path_save is not None and save:
         # metrics_results_ = metrics_results.copy()
         # metrics_results_['confusion_matrix'] = metrics_results_['confusion_matrix'].tolist()
         
@@ -645,7 +650,7 @@ def metrics_binClass(preds, targets, pred_probs, epoch_model="unknown", path_sav
     
     return metrics_results
 
-def metrics_OOD(targets, pred_probs, pos_label = 1, path_save = None):
+def metrics_OOD(targets, pred_probs, pos_label = 1, path_save = None, save = True):
     """ 
         Computation of metrics for the OOD classification task
     """
@@ -664,7 +669,7 @@ def metrics_OOD(targets, pred_probs, pos_label = 1, path_save = None):
     }
     
     # save the results (JSON file) if a path has been provided
-    if path_save is not None:
+    if path_save is not None and save:
         saveJson(os.path.join(path_save, 'metricsOOD.json'), metric_results)
     
     return metric_results
@@ -719,7 +724,7 @@ def detection_error(preds, labels, pos_label = 1, verbose = False):   # look als
     
     return detection_error, threshold_de
 
-def metrics_multiClass(preds, targets, labels_indices, labels_name, average = "macro", epoch_model="unknown", path_save = None):
+def metrics_multiClass(preds, targets, labels_indices, labels_name, average = "macro", epoch_model="unknown", path_save = None, save = True):
     """ 
         Computation of metrics for multi-label classification task.
         "average" parameter, choose between "macro" (over classes) and "micro" (over samples)
@@ -762,7 +767,7 @@ def metrics_multiClass(preds, targets, labels_indices, labels_name, average = "m
     metrics_results['confusion_matrix'] = metrics_results['confusion_matrix'].tolist()
     
     # save the results (JSON file) if a path has been provided
-    if path_save is not None :
+    if path_save is not None and save:
         # metrics_results_ = metrics_results.copy()
         # metrics_results_['confusion_matrix'] = metrics_results_['confusion_matrix'].tolist()
         saveJson(os.path.join(path_save, 'binaryMetrics_' + epoch_model + '.json'), metrics_results)
@@ -949,8 +954,6 @@ class expand_encoding(T.nn.Module):
         
     def forward(self, x):
         return x.view(*self.shape)
-
-
 
 ##################################################  General Python utilities ##########################################################
 
