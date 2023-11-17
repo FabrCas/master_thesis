@@ -220,7 +220,6 @@ class CDDB_binary(Dataset):
         else:
             return img, label
 
-# Used for ID-OOD study   #TODO solve bug mix content for OOD data 
 class CDDB_binary_Partial(Dataset):
     """_
         Dataset class that uses the partial data from CDDB dataset for binary deepfake detection.
@@ -328,11 +327,17 @@ class CDDB_binary_Partial(Dataset):
             else:
                 data_models_OOD.append(data_model_name)
         
+        # if scenario is "content" remove models belonging to "mix" content, otherwise ID can be included in OOD
+        if scenario == "content":
+            model2remove = DF_GROUP_CONTENT['mix']
+            data_models_OOD = [name_model for name_model in data_models_OOD if name_model not in model2remove]
+        
         # set name models to scan 
         if self.ood == False:
             data_models = data_models_ID
         else:
-            data_models = data_models_OOD 
+            
+            data_models = data_models_OOD
         # print(data_models)    
         
     
@@ -930,7 +935,7 @@ class CDDB_Partial(Dataset):
                               'stargan_gf', 'stylegan', 'whichfaceisreal', 'wild']
             
             # scan the data   
-            self._scanData_categoriesReal()
+            self._scanData_categoriesReal(verbose = False)
         elif self.real_grouping == "models": # a real and fake class for each model (less useful?)
             self.idx2label = ['biggan_fake', 'biggan_real', 'crn_fake', 'crn_real', 'cyclegan_fake', 'cyclegan_real', 'deepfake_fake', 'deepfake_real',
                               'gaugan_fake', 'gaugan_real', 'glow_fake', 'glow_real', 'imle_fake', 'imle_real', 'san_fake', 'san_real', 'stargan_gf_fake',
@@ -978,6 +983,11 @@ class CDDB_Partial(Dataset):
             else:
                 data_models_OOD.append(data_model_name)
         
+        # if scenario is "content" remove models belonging to "mix" content, otherwise ID can be included in OOD
+        if self.scenario == "content":
+            model2remove = DF_GROUP_CONTENT['mix']
+            data_models_OOD = [name_model for name_model in data_models_OOD if name_model not in model2remove]
+        
         # set name models to scan 
         if self.ood == False:
             data_models = data_models_ID
@@ -1012,6 +1022,7 @@ class CDDB_Partial(Dataset):
             n_test      = 0
             
             
+
             # take the integer value used to represent the fake class for the current model
             idx_fake_label = self.idx2label.index(data_model)
 
@@ -1098,12 +1109,12 @@ class CDDB_Partial(Dataset):
         else:  
             ID_groups = cateogories
 
-        # get the model needed from the category is contains sub-directory, update In-Distribution group
+        # get the model needed from the category if contains sub-directory, update In-Distribution group
         for idx,name in enumerate(ID_groups.copy()):
             if "/" in name:
                 ID_groups[idx] = name.split("/")[0]   # take just the model
             
-        if verbose: print("In distribution groupds ->", ID_groups)
+        if verbose: print("\nIn distribution groups ->", ID_groups);print()
         
         # split OOD and ID models name
         data_models_ID = []; data_models_OOD = []
@@ -1113,13 +1124,19 @@ class CDDB_Partial(Dataset):
             else:
                 data_models_OOD.append(data_model_name)
         
+        # if scenario is "content" remove models belonging to "mix" content, otherwise ID can be included in OOD
+        if self.scenario == "content":
+            model2remove = DF_GROUP_CONTENT['mix']
+            data_models_OOD = [name_model for name_model in data_models_OOD if name_model not in model2remove]
+        
         # set name models to scan 
         if self.ood == False:
             data_models = data_models_ID
         else:
             data_models = data_models_OOD 
         
-        if verbose: print("labels before shrinking -> ", self.idx2label)
+        if verbose: print("labels before shrinking -> ", self.idx2label);print()
+        if verbose: print("data models selected -> ", data_models);print()
         
         # shrink the idx2label list
         
@@ -1131,18 +1148,29 @@ class CDDB_Partial(Dataset):
                     if label in data_models:
                         continue    #keep
                     else:
+                        if verbose: print(f"removing label: {label}")
                         self.idx2label.pop(idx - removed)
                         removed += 1
                 else: # belong to a real category
                     category = label.replace("real_", "")
                     models_in = [model_in.split("/")[0] for model_in in DF_GROUP_CONTENT[category]]
                     if verbose: print(category, " -> ", models_in)
-                    if any(data_model in models_in for data_model in data_models) and category in CATEGORIES_SCENARIOS_ID[self.scenario]:
+                    
+                    models_belong2category = any(data_model in models_in for data_model in data_models)
+                    if self.ood:
+                        correct_category = not(category in CATEGORIES_SCENARIOS_ID[self.scenario])
+                    else: 
+                        correct_category = category in CATEGORIES_SCENARIOS_ID[self.scenario]
+                        
+                    # if any(data_model in models_in for data_model in data_models) and category in CATEGORIES_SCENARIOS_ID[self.scenario]:
+                    if models_belong2category and correct_category:
                         continue #keep
                     else:
+                        if verbose: print(f"removing label: {label}")
                         self.idx2label.pop(idx - removed)
                         removed += 1
-                        
+        
+                      
         elif self.scenario == "group" or self.scenario == "mix":
             removed = 0
             for idx, label in enumerate(self.idx2label.copy()):
@@ -1332,6 +1360,11 @@ class CDDB_Partial(Dataset):
                 data_models_ID.append(data_model_name)
             else:
                 data_models_OOD.append(data_model_name)
+        
+        # if scenario is "content" remove models belonging to "mix" content, otherwise ID can be included in OOD
+        if self.scenario == "content":
+            model2remove = DF_GROUP_CONTENT['mix']
+            data_models_OOD = [name_model for name_model in data_models_OOD if name_model not in model2remove]
         
         # set name models to scan 
         if self.ood == False:
@@ -1819,16 +1852,16 @@ if __name__ == "__main__":
         print(sample[1])
     
     def test_partial_bin_cddb():
-        data = CDDB_binary_Partial(scenario="mix", ood = True, train = True)
+        data = CDDB_binary_Partial(scenario="content", ood = True, train = True)
         x,y = data.__getitem__(0)
         print(x)
         showImage(x)
         
-    def test_multi_CDDB():
+    def test_partial_multi_cddb():
         # tmp = CDDB_binary(train = False)
         # data = CDDB(real_grouping= "single")
         # data = CDDB_binary_Partial(scenario="content")
-        data = CDDB_Partial(scenario="mix", real_grouping="categories", ood = True)
+        data = CDDB_Partial(scenario="content", real_grouping="categories", ood = False)
         print(data.idx2label)
         # x,y = data.__getitem__(7000)
         # print(y, data.idx2label[y])
@@ -1852,6 +1885,7 @@ if __name__ == "__main__":
     
         print(f"train samples number: {len(dl_train)}, test samples number {len(dl_test)}")
 
-    
+    test_partial_multi_cddb()
+
     pass
     #                           [End test section] 
