@@ -17,7 +17,7 @@ from    torch.utils.data                    import default_collate
 from    utilities                           import plot_loss, saveModel, metrics_binClass, loadModel, test_num_workers, sampleValidSet, \
                                             duration, check_folder, cutmix_image, showImage
 from    dataset                             import CDDB_binary, CDDB_binary_Partial
-from    models                              import ResNet_ImageNet, ResNet
+from    models                              import ResNet_ImageNet, ResNet, ResNet_EDS
 
 
 # from    sklearn.metrics     import precision_recall_curve, auc, roc_auc_score
@@ -171,7 +171,10 @@ class BinaryClassifier(object):
             return x_cutmix, y_cutmix
         else:
             return x,y
-             
+     
+    def reconstruction_loss(self, target, reconstruction):
+        return T.mean(T.square(target - reconstruction))
+                
 class DFD_BinClassifier_v1(BinaryClassifier):
     """
         binary classifier for deepfake detection using CDDB dataset, first version.
@@ -608,12 +611,12 @@ class DFD_BinClassifier_v3(BinaryClassifier):
         - dynamic learning rate using validation set
         - CutMix usage (https://arxiv.org/abs/1905.04899)
         - Simulataneous learning of a decoder module
-        - new loss as alpha * classification loss + beta* reconstruction loss
+        - new interpolated loss as alpha * classification loss + beta* reconstruction loss
         
         training model folders:
         
     """
-    def __init__(self, scenario, useGPU = True, batch_size = 32, model_type = "resnet_pretrained"):
+    def __init__(self, scenario, useGPU = True, batch_size = 32):
         """ init classifier
 
         Args:
@@ -627,26 +630,20 @@ class DFD_BinClassifier_v3(BinaryClassifier):
             
             useGPU (bool, optional): flag to use CUDA device or cpu hardware by the model. Defaults to True.
             batch_size (int, optional): batch size used by dataloaders. Defaults is 32.
-            model_type (str, optional): choose which model to use, a pretrained ResNet or one from scratch. Defaults is "resnet_pretrained".
         """
-        super(DFD_BinClassifier_v3, self).__init__(useGPU = useGPU, batch_size = batch_size, model_type = model_type)
+        super(DFD_BinClassifier_v3, self).__init__(useGPU = useGPU, batch_size = batch_size, model_type = "resnet_eds")
         self.version = 3
         self.scenario = scenario
             
         # load dataset: train, validation and test.
-        self.train_dataset  = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False, augment= True, label_vector= False)  # label_vector = False for CutMix collate
+        self.train_dataset  = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False, augment= True, label_vector= False)  # set label_vector = False for CutMix collate
         test_dataset        = CDDB_binary_Partial(scenario = self.scenario, train = False, ood = False, augment= False)
         self.valid_dataset, self.test_dataset = sampleValidSet(trainset= self.train_dataset, testset= test_dataset, useTestSet = True, verbose = True)
         
         # load model
-        if self.model_type == "resnet_pretrained":   # fine-tuning
-            self.model = ResNet_ImageNet(n_classes = 2).getModel()
-            self.path2model_results   = os.path.join(self.path_results, "ImageNet")  # this give a simple name when initialized the module, but training and loading the model, this changes
-        else:                                   # training from scratch
-            self.model = ResNet(depth_level= 2)
-            self.init_weights_kaimingNormal()    # initializaton of the wights
-            self.path2model_results   = os.path.join(self.path_results, "RandomIntialization")
-             
+        self.model_type == "resnet_eds" 
+        self.model = ResNet_EDS(n_channels=3, n_classes=2, use_upsample= False)
+          
         self.model.to(self.device)
         self.model.eval()
         
@@ -698,7 +695,8 @@ class DFD_BinClassifier_v3(BinaryClassifier):
             with T.no_grad():
                 with autocast():
                     
-                    logits = self.model.forward(x)
+                    encoding = self.model.encoder_module.forward(x)
+                    logits   = self.model.scorer_module.forward(encoding)
                     
                     if self.early_stopping_trigger == "loss":
                         loss = self.bce(input=logits, target=y)   # logits bce version
@@ -797,7 +795,7 @@ class DFD_BinClassifier_v3(BinaryClassifier):
             # loop over steps
             for step_idx,(x,y) in tqdm(enumerate(train_dataloader), total= n_steps):
                 
-                if step_idx > 5: break
+                # if step_idx > 5: break
                 # print(y.shape)
                 
                 # adjust labels if cutmix has been not applied (from indices to one-hot encoding)
@@ -815,9 +813,18 @@ class DFD_BinClassifier_v3(BinaryClassifier):
                 
                 # model forward and loss computation
                 with autocast():
-                    logits = self.model.forward(x)
+                    encoding        = self.model.encoder_module.forward(x)
+                    logits          = self.model.scorer_module.forward(encoding)
+                    reconstruction  = self.model.decoder_module.forward(encoding)
+                    
+                    # print(x.shape)
+                    # print(reconstruction.shape)
+                    # logits = self.model.forward(x)
 
-                    loss = self.bce(input=logits, target=y)   # logits bce version
+                    class_loss  = self.bce(input=logits, target=y)   # logits bce version
+                    rec_loss    = self.reconstruction_loss(target = x, reconstruction = reconstruction)
+                    loss = self.alpha_loss * class_loss + self.beta_loss * rec_loss 
+                    
                 
                 # update total loss    
                 loss_epoch += loss.item()   # from tensor with single value to int and accumulation
@@ -896,13 +903,45 @@ class DFD_BinClassifier_v3(BinaryClassifier):
         # save model
         saveModel(self.model, path_model_save)
 
+    # Override of superclass forward method
+    def forward(self, x):
+        """ network forward
+
+        Args:
+            x (T.Tensor): input image/images
+
+        Returns:
+            pred: label: 0 -> real, 1 -> fake
+        """
+        if self.model is None: raise ValueError("No model has been defined, impossible forwarding the data")
+        
+        if not(isinstance(x, T.Tensor)):
+            x = T.tensor(x)
+        
+        # handle single image, increasing dimensions simulating a batch
+        if len(x.shape) == 3:
+            x = x.expand(1,-1,-1,-1)
+        elif len(x.shape) <= 2 or len(x.shape) >= 5:
+            raise ValueError("The input shape is not compatiple, expected a batch or a single image")
+        
+        # correct the dtype
+        if not (x.dtype is T.float32):
+            x = x.to(T.float32)
+         
+        x = x.to(self.device)
+        
+        
+        encoding    = self.model.encoder_module.forward(x) 
+        logits      = self.model.scorer_module.forward(encoding)
+        probs       = self.sigmoid(logits)
+        pred        = T.argmax(probs, -1)
+        fake_prob   = probs[:,1]   # positive class probability (fake probability)
+        
+        return pred, fake_prob, logits
 
 
-
-# [test section] 
 if __name__ == "__main__":
-    
-    #                           testing functions
+    #                           [Start test section] 
     def test_workers_dl():                
         dataset = CDDB_binary()
         test_num_workers(dataset, batch_size  =32)   # use n_workers = 8
@@ -969,13 +1008,20 @@ if __name__ == "__main__":
 
     def test_binary_classifier_v1():
         bin_classifier = DFD_BinClassifier_v1(useGPU = True, model_type="resnet_pretrained")
-        # bin_classifier.train(name_train="resnet50_ImageNet")
-        # print(bin_classifier.device)
+        print(bin_classifier.device)
+        bin_classifier.getLayers(show = True)
+        
+    def train_v1():
+        bin_classifier = DFD_BinClassifier_v1(useGPU = True, model_type="resnet_pretrained")
         bin_classifier.load("resnet50_ImageNet_13-10-2023", 20)
-        # bin_classifier.test()
-        # bin_classifier.getLayers(show = True)
+        bin_classifier.train(name_train="resnet50_ImageNet")
+        
+    def test_v1():
+        bin_classifier = DFD_BinClassifier_v1(useGPU = True, model_type="resnet_pretrained")
+        bin_classifier.load("resnet50_ImageNet_13-10-2023", 20)
+        bin_classifier.test()
     
-     # ________________________________ v2  ________________________________
+    # ________________________________ v2  ________________________________
 
     def test_binary_classifier_v2():
         bin_classifier = DFD_BinClassifier_v2(scenario = "content", useGPU= True, model_type="resnet_pretrained")
@@ -988,17 +1034,17 @@ if __name__ == "__main__":
         valid_dataloader = DataLoader(valid_dataset, batch_size= 32, num_workers= 8, shuffle= False, pin_memory= True)
         print(bin_classifier.valid(epoch=0, valid_dataloader= valid_dataloader))
         
-    def train_v2_content_scenario1():
+    def train_v2_content_scenario():
         bin_classifier = DFD_BinClassifier_v2(scenario = "content", useGPU= True, model_type="resnet_pretrained")
         bin_classifier.early_stopping_trigger = "acc"
         bin_classifier.train(name_train="faces_resnet_50ImageNet")   #name with the pattern {data scenario}_{model name}, the algorithm include other name decorations
             
-    def train_v2_content_scenario2():
+    def train_v2_group_scenario():
         bin_classifier = DFD_BinClassifier_v2(scenario = "group", useGPU= True, model_type="resnet_pretrained")
         bin_classifier.early_stopping_trigger = "acc"
-        bin_classifier.train(name_train="groups_resnet50_ImageNet")   #name with the pattern {data scenario}_{model name}, the algorithm include other name decorations
+        bin_classifier.train(name_train="group_resnet50_ImageNet")   #name with the pattern {data scenario}_{model name}, the algorithm include other name decorations
     
-    def train_v2_content_scenario3():
+    def train_v2_mix_scenario():
         bin_classifier = DFD_BinClassifier_v2(scenario = "mix", useGPU= True, model_type="resnet_pretrained")
         bin_classifier.early_stopping_trigger = "acc"
         bin_classifier.train(name_train="mix_resnet50_ImageNet")   #name with the pattern {data scenario}_{model name}, the algorithm include other name decorations
@@ -1011,14 +1057,30 @@ if __name__ == "__main__":
     # ________________________________ v3  ________________________________
 
     def test_binary_classifier_v3():
-        bin_classifier = DFD_BinClassifier_v3(scenario = "content", useGPU= True, model_type="resnet_pretrained")
-        bin_classifier.train(name_train= "test")
+        bin_classifier = DFD_BinClassifier_v3(scenario = "content", useGPU= True)
+        bin_classifier.train(name_train= "faces_resnet50EDS")
 
    
     test_binary_classifier_v3()
-   
-    # test_cutmix()
-    test_cutmix2()
+    
+    #                           [End test section] 
+
+    """ 
+            Past test/train launched: 
+    
+    train_v1()
+    test_v1()
+    
+    train_v2_content_scenario()
+    train_v2_group_scenario()
+    train_v2_mix_scenario()
+    test_v2_metrics(name_model = "faces_resnet50_ImageNet_v2_04-11-2023", epoch = 24 , scenario = "content")
+    test_v2_metrics(name_model = "group_resnet50_ImageNet_v2_05-11-2023", epoch = 26 , scenario = "group")
+    test_v2_metrics(name_model = "mix_resnet50_ImageNet_v2_05-11-2023", epoch = 21 ,    scenario = "mix")
+    
+    
+    
+    """
 
     
     

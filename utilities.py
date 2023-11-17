@@ -280,9 +280,8 @@ def cutmix_image(image_batch, image_batch_labels, beta = 1):
     
     return image_batch_updated, label
 
-#TODO implement normalizer for learning 
 class NormalizeByChannelMeanStd(T.nn.Module):
-    def __init__(self, data):
+    def __init__(self, data):   # data i.e trainig set 
         super(NormalizeByChannelMeanStd, self).__init__()
         # if not isinstance(mean, T.Tensor):
         #     mean = T.tensor(mean)
@@ -292,26 +291,23 @@ class NormalizeByChannelMeanStd(T.nn.Module):
         if not isinstance(data, T.Tensor):
             data = T.tensor(data)
 
-        self.mean   = T.mean(data)
-        self.std    = T.std(data)
+        self._compute_mean_std(data)
         self.register_buffer("mean", self.mean)
         self.register_buffer("std", self.std)
 
     def _compute_mean_std(self, data): 
-        raise NotImplementedError
+        self.mean   = T.mean(data)
+        self.std    = T.std(data)
     
     def forward(self, tensor):
-        return normalize_fn(tensor, self.mean, self.std)
+        """Differentiable version of torchvision.functional.normalize"""
+        # here we assume the color channel is in at dim=1, so: [batch_size, color_channel, height, width]
+        mean = mean[None, :, None, None]
+        std = std[None, :, None, None]
+        return tensor.sub(self.mean).div(self.std)
 
     def extra_repr(self):
         return 'mean={}, std={}'.format(self.mean, self.std)
-
-def normalize_fn(tensor, mean, std):
-    """Differentiable version of torchvision.functional.normalize"""
-    # here we assume the color channel is in at dim=1, so: [batch_size, color_channel, height, width]
-    mean = mean[None, :, None, None]
-    std = std[None, :, None, None]
-    return tensor.sub(mean).div(std)
 
 def add_noise(batch_input, complexity=0.5):
     return batch_input + np.random.normal(size=batch_input.shape, scale=1e-9 + complexity)
@@ -838,7 +834,7 @@ def conv2d_shapes(input_shape, n_filters, kernel_size, padding = 0, stride = 1):
     conv2d_out_shape(input_shape, n_filters, kernel_size, padding = padding, stride = stride)
     conv2d_n_parameters(input_shape, n_filters, kernel_size)
 
-def conv2d_out_shape(input_shape, n_filters, kernel_size, padding = 0, stride = 1):
+def conv2d_out_shape(input_shape, n_filters, kernel_size, padding, stride):
     # input_shape: [batch, channels, height, width] or [channels, height, width], is a tuple
     print("Dimensions after 2D Convolutional layer application, with filter size: {}x{}, stride: {} and padding: {}\n".format(kernel_size, kernel_size, stride, padding))
     c_out = n_filters
@@ -886,9 +882,7 @@ def convTranspose2d_shapes(input_shape, n_filters, kernel_size, padding = 0, str
     convTranspose2d_out_shapes(input_shape, n_filters, kernel_size, padding = padding, stride = stride, output_padding = output_padding)
     convTranspose2d_n_parameters(input_shape, n_filters, kernel_size)
     
-
-
-def convTranspose2d_out_shapes(input_shape, n_filters, kernel_size, padding = 0, stride = 1, output_padding = 0):
+def convTranspose2d_out_shapes(input_shape, n_filters, kernel_size, padding, stride, output_padding):
     print("Dimensions after 2D Convolutional Transpose layer application, with filter size: {}x{}, stride: {} and padding: {}\n".format(kernel_size, kernel_size, stride, padding))
     c_out = n_filters
     if len(input_shape) > 3:  
@@ -919,22 +913,6 @@ def convTranspose2d_n_parameters(input_shape, n_filters, kernel_size):
     print("The number of learnable parameters is -> {}".format(learnable_params))
     return learnable_params 
 
-# custom modules
-
-class expand_encoding(T.nn.Module):
-    def __init__(self, shape = (-1, 2048, 1, 1)):
-        super(expand_encoding,self).__init__()
-        self.shape = shape
-        
-    def forward(self, x):
-        return x.view(*self.shape)
-
-""" 
-how to use: 
-conv2d_shapes(input_shape = (1,5,5), n_filters = 1, kernel_size= 3, padding = 0, stride=2)
-convTranspose2d_shapes(input_shape=(1,2,2), n_filters=1, kernel_size=2, padding=0, stride=2)
-"""
-
 # 2D Pooling layer
 def pool2d_out_shape(input_shape, kernel_size, stride):
     print("Dimensions after 2D pooling layer application, with filter size: {}x{}, and stride: {}\n".format(kernel_size, kernel_size, stride))
@@ -955,6 +933,22 @@ def pool2d_out_shape(input_shape, kernel_size, stride):
         w_out = int((math.floor(input_shape[2] - kernel_size)/stride) + 1)
         print("The output shape is ->\t\t[channels: {}, height: {}, width: {}]".format(str(c_out), str(h_out), str(w_out)))
         return (c_out, h_out, w_out)
+
+""" 
+    how to use dimension checkers: 
+    conv2d_shapes(input_shape = (1,5,5), n_filters = 1, kernel_size= 3, padding = 0, stride=2)
+    convTranspose2d_shapes(input_shape=(1,2,2), n_filters=1, kernel_size=2, padding=0, stride=2)
+"""
+
+
+# custom modules/functions
+class expand_encoding(T.nn.Module):
+    def __init__(self, shape = (-1, 2048, 1, 1)):
+        super(expand_encoding,self).__init__()
+        self.shape = shape
+        
+    def forward(self, x):
+        return x.view(*self.shape)
 
 
 

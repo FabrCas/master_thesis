@@ -6,7 +6,6 @@ from    torch.utils.data    import DataLoader
 from    torch.cuda.amp      import autocast
 from    tqdm                import tqdm
 from    sklearn.metrics     import precision_recall_curve, auc, roc_auc_score
-from    tensorflow          import keras
 
 # local import
 from    dataset             import CDDB_binary, CDDB_binary_Partial, OOD_dataset, getCIFAR100_dataset, getMNIST_dataset, getFMNIST_dataset
@@ -40,7 +39,7 @@ class OOD_Classifier(object):
         else: self.device = "cpu"
         self.batch_size     = 32
         
-        #                                       math/statistics aux functions
+    #                                       math/statistics aux functions
     
     def sigmoid(self,x):
         """ numpy implementation of sigmoid actiavtion function"""
@@ -162,7 +161,7 @@ class OOD_Classifier(object):
 
         return perturbed_input
     
-    #                                           metrics aux functions
+    # metrics aux functions
     def compute_aupr(self, labels, pred):        
         p, r, _ = precision_recall_curve(labels, pred)
         return  auc(r, p)
@@ -212,7 +211,28 @@ class OOD_Classifier(object):
         predictions = np.squeeze(np.vstack((id_data, ood_data)))
         metrics_ood = metrics_OOD(targets=target, pred_probs= predictions)
         return metrics_ood 
-           
+    
+    # path utilities
+    
+    def get_path2SaveResults(self, name_classifier, task_type_prog, name_ood_data):
+        """ Return the path to the folder to save results both for OOD metrics and ID/OOD bin classification"""
+        
+        name_task                   = self.types_classifier[task_type_prog]
+        path_results_task           = os.path.join(self.path_results, name_task)
+        path_results_baseline       = os.path.join(path_results_task, self.name)
+        path_results_ood_data       = os.path.joint(path_results_baseline, "ood_"+name_ood_data)
+        path_results_folder         = os.path.join(path_results_ood_data, name_classifier)    
+        
+        # prepare file-system
+        check_folder(path_results_task)
+        check_folder(path_results_baseline)
+        check_folder(path_results_ood_data)
+        check_folder(path_results_folder)
+        
+        return path_results_folder
+        
+    
+       
 class OOD_Baseline(OOD_Classifier):
     """
         OOD detection baseline using softmax probability
@@ -377,20 +397,26 @@ class OOD_Baseline(OOD_Classifier):
         }
         
         # save data (JSON)
-        if name_ood_data is not None:            
-            name_task = self.types_classifier[task_type_prog]
-            path_results_ood_classifier = os.path.join(self.path_results, name_task)
-            path_results_baseline       = os.path.join(path_results_ood_classifier, self.name)
-            path_results_folder         = os.path.join(path_results_baseline, name_classifier)    
+        if name_ood_data is not None:
+            path_results_folder         = self.get_path2SaveResults(self, name_classifier, task_type_prog, name_ood_data)
             name_result_file            = 'metrics_ood_{}.json'.format(name_ood_data)
             path_result_save            = os.path.join(path_results_folder, name_result_file)   # full path to json file
             
             print(path_result_save)
+                  
+            # name_task                   = self.types_classifier[task_type_prog]
+            # path_results_task           = os.path.join(self.path_results, name_task)
+            # path_results_baseline       = os.path.join(path_results_task, self.name)
+            # path_results_ood_data       = os.path.joint(path_results_baseline, "ood_"+name_ood_data)
+            # path_results_folder         = os.path.join(path_results_ood_data, name_classifier)    
+            # name_result_file            = 'metrics_ood_{}.json'.format(name_ood_data)
+            # path_result_save            = os.path.join(path_results_folder, name_result_file)   # full path to json file
             
-            # prepare file-system
-            check_folder(path_results_ood_classifier)
-            check_folder(path_results_baseline)
-            check_folder(path_results_folder)
+            # # prepare file-system
+            # check_folder(path_results_task)
+            # check_folder(path_results_baseline)
+            # check_folder(path_results_ood_data)
+            # check_folder(path_results_folder)
             
             saveJson(path = path_result_save, data = data)
     
@@ -535,14 +561,20 @@ class OOD_Baseline(OOD_Classifier):
             
         """
         
+        
+        # name_task                   = self.types_classifier[task_type_prog]
+        # path_results_task           = os.path.join(self.path_results, name_task)
+        # path_results_baseline       = os.path.join(path_results_task, self.name)
+        # path_results_ood_data       = os.path.joint(path_results_baseline, "ood_"+name_ood_data)
+        # path_results_folder         = os.path.join(path_results_ood_data, name_classifier)    
+        # name_result_file            = 'metrics_ood_{}.json'.format(name_ood_data)
+        # path_result_save            = os.path.join(path_results_folder, name_result_file)   # full path to json file
+        
         # load data from analyze
-        name_task                   = self.types_classifier[task_type_prog]
-        path_results_ood_bin        = os.path.join(self.path_results, name_task)
-        path_results_baseline       = os.path.join(path_results_ood_bin, self.name)
-        path_results_folder         = os.path.join(path_results_baseline, name_classifier)    
+        path_results_folder         = self.get_path2SaveResults(self, name_classifier, task_type_prog, name_ood_data)
         name_result_file            = 'metrics_ood_{}.json'.format(name_ood_data)
         path_result_save            = os.path.join(path_results_folder, name_result_file)   # full path to json file
-            
+        
         
         try:
             data = loadJson(path_result_save)
@@ -602,9 +634,10 @@ class OOD_Baseline(OOD_Classifier):
         # print(target)
     
         # prepare file-system
-        check_folder(path_results_ood_bin)
-        check_folder(path_results_baseline)
-        check_folder(path_results_folder)
+        # check_folder(path_results_task)
+        # check_folder(path_results_baseline)
+        # check_folder(path_results_ood_data)
+        # check_folder(path_results_folder)
             
         # compute and save metrics 
         name_resultClass_file  = 'metrics_ood_classification_{}.json'.format(name_ood_data)
@@ -631,15 +664,22 @@ class OOD_Baseline(OOD_Classifier):
         if len(x.shape) == 3:
             x = x.expand(1,-1,-1,-1)
         
-        # load the threshold
+
         # load data from analyze
-        name_task                   = self.types_classifier[task_type_prog]
-        path_results_ood_bin        = os.path.join(self.path_results, name_task)
-        path_results_baseline       = os.path.join(path_results_ood_bin, self.name)
-        path_results_folder         = os.path.join(path_results_baseline, name_classifier)    
+        # name_task                   = self.types_classifier[task_type_prog]
+        # path_results_task           = os.path.join(self.path_results, name_task)
+        # path_results_baseline       = os.path.join(path_results_task, self.name)
+        # path_results_ood_data       = os.path.joint(path_results_baseline, "ood_"+name_ood_data)
+        # path_results_folder         = os.path.join(path_results_ood_data, name_classifier)    
+        # name_result_file            = 'metrics_ood_{}.json'.format(name_ood_data)
+        # path_result_save            = os.path.join(path_results_folder, name_result_file)   # full path to json file
+        
+        path_results_folder         = self.get_path2SaveResults(self, name_classifier, task_type_prog, name_ood_data)
         name_result_file            = 'metrics_ood_{}.json'.format(name_ood_data)
         path_result_save            = os.path.join(path_results_folder, name_result_file)   # full path to json file
         
+        
+        # load the threshold
         try:
             data = loadJson(path_result_save)
         except Exception as e:
@@ -708,6 +748,7 @@ class Abnormality_module(OOD_Classifier):
         
         
 if __name__ == "__main__":
+    #                           [Start test section] 
     
     def test_baseline_implementation():
         ood_detector = OOD_Baseline(classifier= None, id_data_test = None, ood_data_test = None, useGPU= True)
@@ -737,13 +778,20 @@ if __name__ == "__main__":
         # [5] launch testing
         if exe[1]: ood_detector.testing_binary_class(name_classifier=name_model, task_type_prog = 0, name_ood_data="cifar100", thr_type= "")
     
-    #TODO define test for the other scenarios
+    # TODO recompute the baseline data with cifar OOD
     
-    # test_baseline_implementation()
+    # TODO define test for the other scenarios
+    
     pass
     
-    # test_baseline_resnet50_CDDB_CIFAR("resnet50_ImageNet_13-10-2023", 20)
-    # test_baseline_resnet50_CDDB_CIFAR("faces_resnet50_ImageNet_04-11-2023", 24)
-    # test_baseline_resnet50_CDDB_CIFAR("groups_resnet50_ImageNet_05-11-2023", 26)
-    # test_baseline_resnet50_CDDB_CIFAR("mix_resnet50_ImageNet_05-11-2023", 21)
-
+    #                           [End test section] 
+   
+    """ 
+            Past test/train launched: 
+            
+    test_baseline_implementation()
+    test_baseline_resnet50_CDDB_CIFAR("resnet50_ImageNet_13-10-2023", 20)
+    test_baseline_resnet50_CDDB_CIFAR("faces_resnet50_ImageNet_04-11-2023", 24)
+    test_baseline_resnet50_CDDB_CIFAR("group_resnet50_ImageNet_05-11-2023", 26)
+    test_baseline_resnet50_CDDB_CIFAR("mix_resnet50_ImageNet_05-11-2023", 21)
+    """

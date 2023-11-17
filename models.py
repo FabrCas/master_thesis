@@ -296,105 +296,108 @@ class ResNet_ImageNet():   # not nn.Module subclass, but still implement forward
         return x
     
 #_____________________________________ OOD modules (ResNet relative)_______________________________
+
 class ResNet_EDS(nn.Module): 
     """ ResNet multi head module with Encoder, Decoder and scorer (Classifier) """
-    def __init__(self, n_channels = 3, n_classes = 10):  # expect image of shape 224x224
+    def __init__(self, n_channels = 3, n_classes = 10, use_upsample = False):  # expect image of shape 224x224
         super(ResNet_EDS, self).__init__()
         self.input_width    = 244
         self.input_height   = 244
         self.n_channels = n_channels
         self.n_classes = n_classes
+        self.use_upsample = use_upsample
         self.weight_name =  ResNet50_Weights.IMAGENET1K_V2  # weights with accuracy 80.858% on ImageNet 
         self._createModel()
         
     def _createModel(self):
                 
         # load pre-trained ResNet50
-        model = models.resnet50(weights= self.weight_name)
+        self.encoder_module = models.resnet50(weights= self.weight_name)
         # replace RelU with GELU function
-        self._replaceReLU(model)
+        self._replaceReLU(self.encoder_module)
         
         # edit first layer to accept grayscale images if its the case
         if self.n_channels == 1:
-            model.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
+            self.encoder_module.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
         
         # define the bottleneck dimension
-        bottleneck_size = model.fc.in_features
+        bottleneck_size = self.encoder_module.fc.in_features
         
         # remove last fully connected layer for classification
-        model.fc = nn.Identity()
-        self.encoder_module = model
+        self.encoder_module.fc = nn.Identity()
+        # self.encoder_module = model
         
         # Define the classification head
         self.scorer_module = nn.Linear(bottleneck_size, self.n_classes)
         
         print("bottleneck size is: {}".format(bottleneck_size))
         
-        # define the Decoder
-        self.decoder_module = nn.Sequential(
-            expand_encoding(),   # to pass from [-1,2048] to [-1,2048,1,1]
-            
-            nn.Upsample(scale_factor=7),
-            
-            
-            nn.ConvTranspose2d(bottleneck_size, 128, kernel_size=4, stride=2, padding=1),
-            nn.GELU(),
-            self.conv_block_decoder(n_filter=128),
-            
-            nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
-            nn.GELU(),
-            self.conv_block_decoder(n_filter=64),
-            
-            nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
-            nn.GELU(),
-            self.conv_block_decoder(n_filter=32),
-            
-            nn.ConvTranspose2d(32, 16, kernel_size=4, stride=2, padding=1),
-            nn.GELU(),
-            self.conv_block_decoder(n_filter=16),
-            
-            nn.ConvTranspose2d(16, 3, kernel_size=4, stride=2, padding=1),
-            nn.GELU(),
-            self.conv_block_decoder(n_filter=3),
-            
-            
-            # nn.ConvTranspose2d(1024, 512, kernel_size=4, stride=2, padding=1),
-            # nn.GELU(),
-            # self.conv_block_decoder(n_filter=512),
-
-            # nn.ConvTranspose2d(512, 256, kernel_size=4, stride=2, padding=1),
-            # nn.GELU(),
-            # self.conv_block_decoder(n_filter=256),
-
-            # nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),
-            # nn.GELU(),
-            # self.conv_block_decoder(n_filter=128),
-
-            # nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
-            # nn.GELU(),
-            # self.conv_block_decoder(n_filter=64),
-            
-            # nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
-            # nn.GELU(),
-            # self.conv_block_decoder(n_filter=32),
-            
-            # nn.ConvTranspose2d(32, 16, kernel_size=4, stride=2, padding=1),
-            # nn.GELU(),
-            # self.conv_block_decoder(n_filter=16),
-            
-            # nn.ConvTranspose2d(16, 3, kernel_size=4, stride=2, padding=1),
-            # nn.GELU(),
-            # self.conv_block_decoder(n_filter=3),
-
-            
-            nn.Sigmoid()             # to have pixels in the range of 0,1  (or  nn.Tanh or nn.Identiy)
-           
-        )
+    
+        # Define the Decoder (self.use_upsample defines in which way increase spatial dimension from 1x1 to 7x7)
+        if self.use_upsample:   
+            self.decoder_module = nn.Sequential(
+                expand_encoding(),   # to pass from [-1,2048] to [-1,2048,1,1]
+                
+                nn.Upsample(scale_factor=7),
+                nn.ConvTranspose2d(bottleneck_size, 128, kernel_size=4, stride=2, padding=1),
+                nn.GELU(),
+                self.conv_block_decoder(n_filter=128),
+                
+                nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
+                nn.GELU(),
+                self.conv_block_decoder(n_filter=64),
+                
+                nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
+                nn.GELU(),
+                self.conv_block_decoder(n_filter=32),
+                
+                nn.ConvTranspose2d(32, 16, kernel_size=4, stride=2, padding=1),
+                nn.GELU(),
+                self.conv_block_decoder(n_filter=16),
+                
+                nn.ConvTranspose2d(16, 3, kernel_size=4, stride=2, padding=1),
+                nn.GELU(),
+                self.conv_block_decoder(n_filter=3),
+                
+                nn.Sigmoid()             # to have pixels in the range of 0,1  (or  nn.Tanh or nn.Identiy)
+            )
+        else:
+            self.decoder_module = nn.Sequential(
+                expand_encoding(),   # to pass from [-1,2048] to [-1,2048,1,1]
+                
+                nn.ConvTranspose2d(bottleneck_size, 128, kernel_size=5, stride=3, padding=0, output_padding= 2),
+                nn.GELU(),
+                self.conv_block_decoder(n_filter=128),
+                
+                nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
+                nn.GELU(),
+                self.conv_block_decoder(n_filter=64),
+                
+                nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
+                nn.GELU(),
+                self.conv_block_decoder(n_filter=32),
+                
+                nn.ConvTranspose2d(32, 16, kernel_size=4, stride=2, padding=1),
+                nn.GELU(),
+                self.conv_block_decoder(n_filter=16),
+                
+                nn.ConvTranspose2d(16, 8, kernel_size=4, stride=2, padding=1),
+                nn.GELU(),
+                self.conv_block_decoder(n_filter=8),
+                
+                nn.ConvTranspose2d(8, 3, kernel_size=4, stride=2, padding=1),
+                nn.GELU(),
+                self.conv_block_decoder(n_filter=3),
+                
+                nn.Sigmoid()             # to have pixels in the range of 0,1  (or  nn.Tanh or nn.Identiy)
+            )
         
-        # define the 2 output pipes
-        # self.scorer_pipe    = nn.Sequential(self.encoder_module, self.scorer_module)
-        # self.decoder_pipe   = nn.Sequential(self.encoder_module, self.decoder_module)
+        # initialize scorer and decoder
+        self.init_weights_normal(self.scorer_module)
+        self.init_weights_kaimingNormal(self.decoder_module)
         
+    # aux functions to create/initialize the model
+    
     def conv_block_decoder(self, n_filter):
         # U-net inspired structures
         
@@ -411,8 +414,6 @@ class ResNet_EDS(nn.Module):
         )
         return conv_block
     
-    
-    # aux functions to create the model
     def _replaceReLU(self, model, verbose = False):
         """ function used to replace the ReLU acitvation function with another one, default is the GELU"""
         
@@ -429,6 +430,20 @@ class ResNet_EDS(nn.Module):
     
     def _expand_encoding(x):
         return x.view(-1, 2048, 1, 1)
+    
+    def init_weights_normal(self, model):
+        print(f"Weights initialization using Gaussian distribution")
+        # Initialize the weights with Gaussian distribution
+        for param in model.parameters():
+            if len(param.shape) > 1:
+                T.nn.init.normal_(param, mean=0, std=0.01) 
+                
+    def init_weights_kaimingNormal(self, model):
+        # Initialize the weights  using He initialization
+        print("Weights initialization using kaiming Normal")
+        for param in model.parameters():
+            if len(param.shape) > 1:
+                T.nn.init.kaiming_normal_(param, mode='fan_out', nonlinearity='relu')
     
     # getters methods 
     
@@ -464,17 +479,7 @@ class ResNet_EDS(nn.Module):
             expected input of this shape -> batch,color,width,height
         """
         summary(nn.Sequential(self.encoder_module, self.decoder_module), input_shape)
-    
-    def to(self, device):
-        """ move the whole model to "device" (str) """
-        
-        self.encoder_module.to(device)
-        self.scorer_module.to(device)
-        self.decoder_module.to(device)
-        
-        # self.scorer_pipe.to(device)
-        # self.decoder_pipe.to(device)
-    
+  
     def getLayers(self, name_module = "encoder"):
         """
             return the layers of the selected module
@@ -487,8 +492,34 @@ class ResNet_EDS(nn.Module):
         elif name_module == "scorer":
             return dict(self.scorer_module.named_parameters())
         elif name_module == "decoder":
-            return dict(self.decoder_module.named_parameters())
+            return dict(self.decoder_module.named_parameters())  
     
+    def getDevice(self, name_module):
+        """
+            return the device assigned for the selected module
+            
+            Args: 
+                name_module(str) choose between: "encoder", "scorer" and "decoder"
+        """
+        if name_module == "encoder":
+            return next(self.encoder_module.parameters()).device
+        elif name_module == "scorer":
+            return next(self.scorer_module.parameters()).device
+        elif name_module == "decoder":
+            return next(self.decoder_module.parameters()).device
+      
+    # set and forward methods
+    
+    def to(self, device):
+        """ move the whole model to "device" (str) """
+        
+        self.encoder_module.to(device)
+        self.scorer_module.to(device)
+        self.decoder_module.to(device)
+        
+        # self.scorer_pipe.to(device)
+        # self.decoder_pipe.to(device)
+     
     def freeze(self, name_module):
         """
             freeze the layers of the selected module
@@ -510,20 +541,6 @@ class ResNet_EDS(nn.Module):
             self.freeze("decoder")
             self.freeze("scorer")
     
-    def getDevice(self, name_module):
-        """
-            return the device assigned for the selected module
-            
-            Args: 
-                name_module(str) choose between: "encoder", "scorer" and "decoder"
-        """
-        if name_module == "encoder":
-            return next(self.encoder_module.parameters()).device
-        elif name_module == "scorer":
-            return next(self.scorer_module.parameters()).device
-        elif name_module == "decoder":
-            return next(self.decoder_module.parameters()).device
-  
     def forward(self, x):
         """
             Forward of the module
@@ -553,7 +570,6 @@ class abnormality_module(nn.Module):
 
 
 #_____________________________________Other models_________________________________________________ 
-
 
 class FC_classifier(nn.Module):
     """ 
@@ -647,6 +663,7 @@ def get_fc_classifier_Keras(input_shape = (28,28)):
     return model
 
 if __name__ == "__main__":
+    #                           [Start test section] 
     
     # setUp test
     device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
@@ -674,13 +691,17 @@ if __name__ == "__main__":
         
     def test_ResNet_Encoder_Decoder():
         
-        model = ResNet_EDS(n_channels=3, n_classes=2)
+        model = ResNet_EDS(n_channels=3, n_classes=2, use_upsample= False)
         model.to(device)
         print("device, encoder -> {}, decoder -> {}, scorer -> {}".format(model.getDevice(name_module="encoder"), model.getDevice(name_module="decoder"), model.getDevice(name_module="scorer")))
         # model.getSummaryEncoder(input_shape=input_resnet_example.shape)        
         # model.getSummaryScorerPipeline(input_shape=input_resnet_example.shape)
         model.getSummaryDecoderPipeline(input_shape = input_resnet_example.shape)
+        # input_shape = (2048,1,1)
+        # convTranspose2d_shapes(input_shape=input_shape, n_filters=128, kernel_size=5, padding=0, stride = 1, output_padding=2)
+
+
       
     test_ResNet_Encoder_Decoder()
-    
+    #                           [End test section] 
     

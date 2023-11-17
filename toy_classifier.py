@@ -250,6 +250,8 @@ class MNISTClassifier_keras(object):
         print(f"Keras model has beeen loaded from {path}")
                   
 if __name__ == "__main__":
+    #                           [Start test section] 
+    
     # 1) pytorch implementation
     # classifier = MNISTClassifier()
     # classifier.train()
@@ -260,4 +262,4 @@ if __name__ == "__main__":
     # classifier.train()
     # classifier.load_model()
     
-    pass
+    #                           [End test section] 

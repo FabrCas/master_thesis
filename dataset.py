@@ -1689,9 +1689,9 @@ class OOD_dataset(Dataset):
         
         return x, y_vector
             
-# [test section]
+
 if __name__ == "__main__":
-    
+    #                           [Start test section] 
     def test_cddbinary():
         dataset = CDDB_binary(train= True)
         # test Dataset item get
@@ -1851,5 +1851,7 @@ if __name__ == "__main__":
             
     
         print(f"train samples number: {len(dl_train)}, test samples number {len(dl_test)}")
-        
-    test_getters(name="fmnist")
+
+    
+    pass
+    #                           [End test section] 
