@@ -15,7 +15,7 @@ from    torchvision.transforms              import v2
 from    torch.utils.data                    import default_collate
 
 from    utilities                           import plot_loss, saveModel, metrics_binClass, loadModel, test_num_workers, sampleValidSet, \
-                                            duration, check_folder, cutmix_image, showImage
+                                            duration, check_folder, cutmix_image, showImage, image2int
 from    dataset                             import CDDB_binary, CDDB_binary_Partial
 from    models                              import ResNet_ImageNet, ResNet, ResNet_EDS
 
@@ -172,8 +172,23 @@ class BinaryClassifier(object):
         else:
             return x,y
      
-    def reconstruction_loss(self, target, reconstruction):
-        return T.mean(T.square(target - reconstruction))
+    def reconstruction_loss(self, target, reconstruction, range255 = True):
+        """ 
+            reconstruction loss (MSE) over batch of images
+        
+        Args:
+            - target (T.tensor): image feeded into the netwerk to be reconstructed 
+            - reconstruction (T.tensor): image reconstructed by the decoder
+            - range255 (boolean): specify with which image range compute the loss
+        
+        Returns:
+            MSE loss (T.Tensor) with one scalar
+        
+        """
+        if range255:
+            return T.mean(T.square(image2int(target, True) - image2int(reconstruction, True)))
+        else:
+            return T.mean(T.square(target - reconstruction))
                 
 class DFD_BinClassifier_v1(BinaryClassifier):
     """

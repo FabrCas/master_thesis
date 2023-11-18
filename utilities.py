@@ -1,6 +1,7 @@
 import  os 
 import  re
 import  json
+import  random
 import  math
 from    time                                import time
 import  multiprocessing                     as mp
@@ -225,7 +226,26 @@ def augment_v1(x,w  =224,h=224):
     x = v2.RandAugment(num_ops = 1, magnitude= 7, num_magnitude_bins= 51, interpolation = InterpolationMode.BILINEAR)(x)
     return x
 
-
+def image2int(img_tensor, is_range_zero_one = True):
+    """ 
+        convert img (T.tensor) to int range 0-255. img can be a single image or a batch
+        the img is float, if range is [0,1] set is_range_zero_one = True
+        if range is [-1,1] set is_range_zero_one = False 
+    """
+    
+    # auto_check for range
+    if T.min(img_tensor) < 0:               # sufficient but not necessary condition (if min > 0 could be in both ranges)
+        is_range_zero_one = False    
+    
+    if len(img_tensor.shape) == 4 or len(img_tensor.shape) == 3:
+        if not(is_range_zero_one):
+            img_tensor = (img_tensor+1)/2 # convert range [-1, 1] to [0,1]
+        img_tensor = img_tensor * 255
+        img_tensor = img_tensor.to(T.int32)
+        return img_tensor
+    else:
+        raise ValueError(f"Unsupported img_tensor shape, is: {img_tensor.shape}")
+    
 # cutmix technique: https://arxiv.org/abs/1905.04899
 def rand_bbox(size, lamb):
     """ Generate random bounding box 
