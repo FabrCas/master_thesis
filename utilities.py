@@ -32,7 +32,7 @@ def mergeDatasets(dataset1, dataset2):
     """ alias for ConcatDataset from pytorch"""
     return ConcatDataset([dataset1, dataset2])
 
-def sampleValidSet(trainset,testset,useTestSet = True, verbose = False):
+def sampleValidSet(trainset, testset, useOnlyTest = True, verbose = False):
     """
         Function used to partiton data to have also a validatio set for training.
         The validation set is composed by the 10% of the overall amount of samples.
@@ -43,14 +43,14 @@ def sampleValidSet(trainset,testset,useTestSet = True, verbose = False):
         Args:
             trainset (T.Dataset): The trainig set
             testset  (T.Dataset): The test set
-            useTestSet (boolean): flag to select which source is used to sample the data
+            useOnlyTest (boolean): flag to select which source is used to sample the data
             verbose (boolean):    flag to active descriptive prints
             
         Returns:
-            if useTestSet is True:
+            if useOnlyTest is True:
                 validset  (pytorch.Dataset),
                 testset   (pytorch.Dataset)
-            if useTestSet is False:
+            if useOnlyTest is False:
                 trainset  (pytorch.Dataset),
                 validset  (pytorch.Dataset),
                 testset   (pytorch.Dataset)
@@ -70,7 +70,7 @@ def sampleValidSet(trainset,testset,useTestSet = True, verbose = False):
     
     
     # if not(useTestSet) and (not trainset is None): 
-    if not(useTestSet):
+    if not(useOnlyTest):
         """
             split data with the following strategy, validation set is the 10% of all data.
             These samples are extract half from training set and half from test set.
@@ -155,7 +155,7 @@ def balanceLabels(self, dataloader, verbose = False):
     max_freq = max(class_freq.items(), key= lambda x: x[1])
     if verbose: print("maximum frequency ->", max_freq)
     
-    # indices for each label
+    # indices for each label (#TODO edit and generalize)
     indices_0 = [idx for idx, val in enumerate(labels) if val == 0]
     indices_1 = [idx for idx, val in enumerate(labels) if val == 1]
     indices_2 = [idx for idx, val in enumerate(labels) if val == 2]
@@ -241,12 +241,13 @@ def image2int(img_tensor, is_range_zero_one = True):
         if not(is_range_zero_one):
             img_tensor = (img_tensor+1)/2 # convert range [-1, 1] to [0,1]
         img_tensor = img_tensor * 255
-        img_tensor = img_tensor.to(T.int32)
+        # img_tensor = img_tensor.to(T.int32)
         return img_tensor
     else:
         raise ValueError(f"Unsupported img_tensor shape, is: {img_tensor.shape}")
     
 # cutmix technique: https://arxiv.org/abs/1905.04899
+
 def rand_bbox(size, lamb):
     """ Generate random bounding box 
     Args:
@@ -300,6 +301,8 @@ def cutmix_image(image_batch, image_batch_labels, beta = 1):
     
     return image_batch_updated, label
 
+# data normalization
+
 class NormalizeByChannelMeanStd(T.nn.Module):
     def __init__(self, data):   # data i.e trainig set 
         super(NormalizeByChannelMeanStd, self).__init__()
@@ -328,6 +331,8 @@ class NormalizeByChannelMeanStd(T.nn.Module):
 
     def extra_repr(self):
         return 'mean={}, std={}'.format(self.mean, self.std)
+
+# data perturbation
 
 def add_noise(batch_input, complexity=0.5):
     return batch_input + np.random.normal(size=batch_input.shape, scale=1e-9 + complexity)
@@ -432,7 +437,7 @@ def showImage(img, name= "unknown", has_color = True):
     else:
         print("img data is not valid for the printing")
 
-def show_img_grid(imgs, titles):
+def show_img_grid(imgs, titles):  # in alternative look at torchvision.utils.make_grid(images)
     
     def show_img(img, ax=None, title=None):
         """Shows a single image."""

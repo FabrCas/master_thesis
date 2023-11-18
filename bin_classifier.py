@@ -264,6 +264,9 @@ class DFD_BinClassifier_v1(BinaryClassifier):
         # intialize data structure to keep track of training performance
         loss_epochs = []
         
+        # learned epochs by the model initialization
+        self.modelEpochs = 0
+        
         # training loop over epochs
         for epoch_idx in range(self.n_epochs):
             print(f"\n             [Epoch {epoch_idx+1}]             \n")
@@ -383,7 +386,7 @@ class DFD_BinClassifier_v2(BinaryClassifier):
         # load dataset & dataloader
         self.train_dataset  = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False, augment= True)
         test_dataset        = CDDB_binary_Partial(scenario = self.scenario, train = False, ood = False, augment= False)
-        self.valid_dataset, self.test_dataset = sampleValidSet(trainset= self.train_dataset, testset= test_dataset, useTestSet = True, verbose = True)
+        self.valid_dataset, self.test_dataset = sampleValidSet(trainset= self.train_dataset, testset= test_dataset, useOnlyTest = True, verbose = True)
         
         # load model
         if self.model_type == "resnet_pretrained":   # fine-tuning
@@ -503,6 +506,9 @@ class DFD_BinClassifier_v2(BinaryClassifier):
         valid_history       = []
         counter_stopping    = 0
         last_epoch          = 0
+        
+        # learned epochs by the model initialization
+        self.modelEpochs = 0
         
         # loop over epochs
         for epoch_idx in range(self.n_epochs):
@@ -654,10 +660,10 @@ class DFD_BinClassifier_v3(BinaryClassifier):
         # load dataset: train, validation and test.
         self.train_dataset  = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False, augment= True, label_vector= False)  # set label_vector = False for CutMix collate
         test_dataset        = CDDB_binary_Partial(scenario = self.scenario, train = False, ood = False, augment= False)
-        self.valid_dataset, self.test_dataset = sampleValidSet(trainset= self.train_dataset, testset= test_dataset, useTestSet = True, verbose = True)
+        self.valid_dataset, self.test_dataset = sampleValidSet(trainset= self.train_dataset, testset= test_dataset, useOnlyTest = True, verbose = True)
         
         # load model
-        self.model_type == "resnet_eds" 
+        self.model_type = "resnet_eds" 
         self.model = ResNet_EDS(n_channels=3, n_classes=2, use_upsample= False)
           
         self.model.to(self.device)
@@ -759,7 +765,7 @@ class DFD_BinClassifier_v3(BinaryClassifier):
             defined with idx labels, but cutmix returns a sequence of values (n classes) for each label based on the composition.
             """
             prob = 0.5
-            if random .random() < prob:
+            if random.random() < prob:
                 return cutmix(*default_collate(batch))
             else:
                 return default_collate(batch) 
@@ -798,6 +804,9 @@ class DFD_BinClassifier_v3(BinaryClassifier):
         counter_stopping    = 0
         last_epoch          = 0
         
+        # learned epochs by the model initialization
+        self.modelEpochs = 0
+        
         # loop over epochs
         for epoch_idx in range(self.n_epochs):
             print(f"\n             [Epoch {epoch_idx+1}]             \n")
@@ -812,7 +821,6 @@ class DFD_BinClassifier_v3(BinaryClassifier):
             for step_idx,(x,y) in tqdm(enumerate(train_dataloader), total= n_steps):
                 
                 # if step_idx > 5: break
-                # print(y.shape)
                 
                 # adjust labels if cutmix has been not applied (from indices to one-hot encoding)
                 if len(y.shape) == 1:
@@ -1046,7 +1054,7 @@ if __name__ == "__main__":
         
         train_dataset  = CDDB_binary_Partial(scenario = "content", train = True,  ood = False, augment= True)
         test_dataset   = CDDB_binary_Partial(scenario = "content", train = False, ood = False, augment= False)
-        valid_dataset, test_dataset = sampleValidSet(trainset= train_dataset, testset= test_dataset, useTestSet = True, verbose = True)
+        valid_dataset, test_dataset = sampleValidSet(trainset= train_dataset, testset= test_dataset, useOnlyTest = True, verbose = True)
         valid_dataloader = DataLoader(valid_dataset, batch_size= 32, num_workers= 8, shuffle= False, pin_memory= True)
         print(bin_classifier.valid(epoch=0, valid_dataloader= valid_dataloader))
         
@@ -1078,7 +1086,7 @@ if __name__ == "__main__":
 
     def train_v3_content_scenario():
         bin_classifier = DFD_BinClassifier_v3(scenario = "content", useGPU= True)
-        bin_classifier.train(name_train= "faces_resnet_50EDS")
+        bin_classifier.train(name_train= "faces_resnet50EDS")
     
     def test_v3_metrics(name_model, epoch, scenario):
         bin_classifier = DFD_BinClassifier_v3(scenario = scenario, useGPU= True)
@@ -1100,7 +1108,7 @@ if __name__ == "__main__":
         print(logits)
         showImage(rec_img)
         
-    showReconstruction(name_model = "faces_resnet_50EDS_v3_17-11-2023", epoch = 20, scenario = "content")
+    showReconstruction(name_model = "faces_resnet50EDS_v3_17-11-2023", epoch = 20, scenario = "content")
     
     #                           [End test section] 
 
@@ -1118,7 +1126,7 @@ if __name__ == "__main__":
     test_v2_metrics(name_model = "mix_resnet50_ImageNet_v2_05-11-2023", epoch = 21 ,    scenario = "mix")
     
     train_v3_content_scenario()
-    test_v3_metrics(name_model = "faces_resnet_50EDS_v3_.17-11-2023", epoch = 20, scenario = "content")
+    test_v3_metrics(name_model = "faces_resnet50EDS_v3_.17-11-2023", epoch = 20, scenario = "content")
     
     """
 

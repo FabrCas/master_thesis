@@ -9,7 +9,7 @@ from    sklearn.metrics     import precision_recall_curve, auc, roc_auc_score
 
 # local import
 from    dataset             import CDDB_binary, CDDB_binary_Partial, OOD_dataset, getCIFAR100_dataset, getMNIST_dataset, getFMNIST_dataset
-from    toy_classifier      import MNISTClassifier, MNISTClassifier_keras
+from    experiments         import MNISTClassifier, MNISTClassifier_keras
 from    bin_classifier      import DFD_BinClassifier_v1
 from    utilities           import saveJson, loadJson, metrics_binClass, metrics_OOD, print_dict, showImage, check_folder
 

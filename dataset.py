@@ -1826,7 +1826,7 @@ if __name__ == "__main__":
         train = CDDB_binary(train= True)
         test  = CDDB_binary(train= False)
         
-        train, valid, test = sampleValidSet(train, test, useTestSet= True, verbose= True)
+        train, valid, test = sampleValidSet(train, test, useOnlyTest= True, verbose= True)
         print(len(train))
         print(len(valid))
         print(len(test))
