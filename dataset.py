@@ -1883,8 +1883,5 @@ if __name__ == "__main__":
             
     
         print(f"train samples number: {len(dl_train)}, test samples number {len(dl_test)}")
-
-    test_partial_multi_cddb()
-
     pass
     #                           [End test section] 

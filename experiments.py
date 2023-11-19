@@ -16,11 +16,13 @@ from    torch.utils.data                    import DataLoader
 # local modules
 from    dataset                             import getMNIST_dataset, CDDB_binary_Partial
 from    models                              import FC_classifier, get_fc_classifier_Keras, ResNet_EDS
-from    utilities                           import duration, saveModel, loadModel, showImage, check_folder, plot_loss, image2int
+from    utilities                           import duration, saveModel, loadModel, showImage, check_folder, plot_loss, image2int, ExpLogger
 
 
 """ 
-        A simple classifier to test the OOD classification methods
+#####################################################################################################################
+                                A simple toy classifier training to test the OOD classification methods
+#####################################################################################################################
 """
 
 class MNISTClassifier(object):
@@ -253,6 +255,12 @@ class MNISTClassifier_keras(object):
         self.model = load_model(path)
         print(f"Keras model has beeen loaded from {path}")
 
+""" 
+#####################################################################################################################
+                                                Decoding experiments
+#####################################################################################################################
+"""
+
 
 class Decoder_ResNetEDS(object):
     """
@@ -260,7 +268,7 @@ class Decoder_ResNetEDS(object):
         From v3, removed: valid + early stopping, cutmix augmentation, 
         
         training model folders:
-        
+        - faces_resnet50ED_18-11-2023
     """
     def __init__(self, scenario, useGPU = True, batch_size = 32):
         """ init classifier
@@ -306,7 +314,7 @@ class Decoder_ResNetEDS(object):
         self.lr                     = 1e-5
         self.n_epochs               = 40
         self.weight_decay           = 0.001          # L2 regularization term 
-
+        self.loss_name              = "Reconstruction loss"
     
     def _hyperParams(self):
         return {
@@ -318,30 +326,37 @@ class Decoder_ResNetEDS(object):
     
     def _dataConf(self):
         return {
+            "date_training": date.today().strftime("%d-%m-%Y"),
             "model": self.model_type,
             "data_scenario": self.scenario,
             "version_train": self.version,
             "optimizer": self.optimizer.__class__.__name__,
             "scheduler": self.scheduler.__class__.__name__,
+            "loss": self.loss_name,
+            "base_augmentation": True,
             "cutmix": False,
             "grad_scaler": True,
             }
     
     def init_logger(self, path_model): #TODO
-        path = os.path.join(path_model, "log")
-        # check_folder(path=path)
-        hyperparameters_text = "\n".join([f"{key}: {value}" for key, value in self._hyperParams().items()])
-        config_text = "\n".join([f"{key}: {value}" for key, value in self._dataConf().items()])
+        # path = os.path.join(path_model, "log")
+        # # check_folder(path=path)
+        # hyperparameters_text = "\n".join([f"{key}: {value}" for key, value in self._hyperParams().items()])
+        # config_text = "\n".join([f"{key}: {value}" for key, value in self._dataConf().items()])
+        logger = ExpLogger(path_model=path_model)
+        logger.write_config(self._dataConf())
+        logger.write_hyper(self._hyperParams())
+        return logger
 
         
     def load(self, folder_model, epoch):
         try:
             self.path2model         = os.path.join(self.path_models,  folder_model, str(epoch) + ".ckpt")
-            self.path2model_results = os.path.join(self.path_results, folder_model)
             self.modelEpochs         = epoch
             loadModel(self.model, self.path2model)
             self.model.eval()   # no train mode, fix dropout, batchnormalization, etc.
-        except:
+        except Exception as e:
+            print(e)
             print("No model: {} found for the epoch: {} in the folder: {}".format(folder_model, epoch, self.path_models))
     
     def reconstruction_loss(self, target, reconstruction, range255 = True):
@@ -363,15 +378,16 @@ class Decoder_ResNetEDS(object):
             return T.mean(T.square(target - reconstruction))
     
     @duration
-    def train(self, name_train, test_loop = False):
+    def train(self, name_train, test_loop = True):
         """
         Args:
             name_train (str) should include the scenario selected and the model name (i.e. ResNet50), keep this convention {scenario}_{model_name}
         """
     
-        # define the model dir path
+        # define the model dir path and create the directory
         current_date = date.today().strftime("%d-%m-%Y")
         path_model_folder       = os.path.join(self.path_models,  name_train + "_" + current_date)
+        check_folder(path_model_folder)
         
         # define train dataloader
         train_dataloader = DataLoader(self.train_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
@@ -392,8 +408,8 @@ class Decoder_ResNetEDS(object):
         # define the gradient scaler to avoid weigths explosion
         scaler = GradScaler()
         
-        # init logger
-        self.init_logger(path_model= path_model_folder)
+        # initialize logger
+        logger  = self.init_logger(path_model= path_model_folder)
         
         # intialize data structure to keep track of training performance
         loss_epochs = []
@@ -415,7 +431,7 @@ class Decoder_ResNetEDS(object):
             # loop over steps
             for step_idx,(x,y) in tqdm(enumerate(train_dataloader), total= n_steps):
                 
-                if test_loop and step_idx > 5: break
+                if test_loop and step_idx+1 == 5: break
                 
                 # adjust labels if cutmix has been not applied (from indices to one-hot encoding)
                 if len(y.shape) == 1:
@@ -458,7 +474,7 @@ class Decoder_ResNetEDS(object):
             loss_epochs.append(avg_loss)
             print("Average loss: {}".format(avg_loss))
             
-            if test_loop: break
+            if test_loop and epoch_idx+1 == 5: break
         
         # create paths and file names for saving training outcomes        
         name_model_file         = str(last_epoch) +'.ckpt'
@@ -471,26 +487,25 @@ class Decoder_ResNetEDS(object):
         # save info for the new model trained
         self.modelEpochs        = last_epoch
         
-        # create model and results folder if not already present
-        check_folder(path_model_folder)
-        
         # save loss plot
         plot_loss(loss_epochs, title_plot= name_train, path_save = path_lossPlot_save)
         
         # save model
         saveModel(self.model, path_model_save)
+        
+        logger.close()
     
 if __name__ == "__main__":
     #                           [Start test section] 
     
     # 1) pytorch implementation
-    def test_baseline_T():            
+    def train_baseline_T():            
         classifier = MNISTClassifier()
         classifier.train()
         classifier.load()
     
     # tensorflow implementation
-    def test_baseline_tf():
+    def train_baseline_tf():
         classifier = MNISTClassifier_keras()
         classifier.train()
         classifier.load_model()
@@ -502,13 +517,24 @@ if __name__ == "__main__":
     def showReconstruction(name_model, epoch, scenario):
         model = Decoder_ResNetEDS(scenario = scenario, useGPU= True)
         model.load(name_model, epoch)
-        img, _ = model.test_dataset.__getitem__(300)
-        showImage(img)
+        img, _ = model.train_dataset.__getitem__(3)
+        showImage(img, name = "original2_decoding_resnet50ED", save_image = True)
         img     = T.unsqueeze(img, dim= 0).to(model.device)
         enc     = model.model.encoder_module.forward(img)
         rec_img = model.model.decoder_module.forward(enc)
         rec_img = T.squeeze(rec_img, dim = 0)
-        showImage(rec_img)
+        showImage(rec_img, name="reconstructed2_decoding_resnet50ED", save_image = True)
             
     train_EndDec_content()
+    # showReconstruction(name_model="faces_resnet50ED_18-11-2023", epoch= 40, scenario = "content")
+    
     #                           [End test section] 
+    
+    """ 
+            Past test/train launched: 
+            
+    train_baseline_tf()
+    
+    train_EndDec_content()
+    showReconstruction(name_model="faces_resnet50ED_18-11-2023", epoch= 40, scenario = "content")
+    """

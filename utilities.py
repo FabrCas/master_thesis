@@ -8,6 +8,7 @@ import  multiprocessing                     as mp
 import  numpy                               as np
 from    PIL                                 import Image
 import  matplotlib.pyplot                   as plt
+from    datetime                            import date
 import  torch                               as T
 from    torch.utils.data                    import DataLoader, random_split, ConcatDataset
 from    tqdm                                import tqdm
@@ -400,13 +401,19 @@ def loadJson(path_file):
 
 ##################################################  Plot/show functions ###############################################################
 
-def showImage(img, name= "unknown", has_color = True):
+def showImage(img, name= "unknown", has_color = True, save_image = False):
     """ plot image using matplotlib
 
     Args:
         img (np.array/T.Tensor/Image): image data in RGB format, [height, width, color_channel]
     """
     
+    if save_image:
+        check_folder("./static/saved_imgs")
+        if name == "unknown":
+            name += "_" + date.today().strftime("%d-%m-%Y") + ".png"
+    
+
     # if torch tensor convert to numpy array
     if isinstance(img, T.Tensor):
         try:
@@ -433,6 +440,7 @@ def showImage(img, name= "unknown", has_color = True):
             plt.imshow(img)
         else: 
             plt.imshow(img, cmap="gray")
+        if save_image: plt.savefig(os.path.join("./static/saved_imgs", name))
         plt.show()
     else:
         print("img data is not valid for the printing")
@@ -980,6 +988,68 @@ class expand_encoding(T.nn.Module):
     def forward(self, x):
         return x.view(*self.shape)
 
+
+class ExpLogger(object):
+    """ Simple class to keep track of learning and experiment information"""
+    
+    def __init__(self, path_model):
+        """ constructtor ExpLogger
+
+        Args:
+            path_model (str): path to model folder
+        """
+        super(ExpLogger, self).__init__()
+        self.file_name      = "log.txt"
+        self.path_model     = path_model
+        self.path_save      = os.path.join(self.path_model, self.file_name)
+        self.delimiter_len  = 25
+        self.delimiter_name = lambda x: "#"*self.delimiter_len +"{:^25}".format(x) + "#"*self.delimiter_len
+        self.delimiter_line = "#"*(self.delimiter_len*2 + 25)
+        self.open()
+        
+    def write_hyper(self, hyper_dict):
+        self.write(self.delimiter_name("Hyperparameters"))
+        text = "\n".join(["{:<40}: {:<40}".format(str(key),str(value)) for key, value in hyper_dict.items()]) + "\n"
+        self.file.write(text)
+        self.write(self.delimiter_line)
+        self.flush()
+        
+    def write_config(self, config_dict):
+        self.write(self.delimiter_name("Configuration"))
+        text = "\n".join(["{:<40}: {:<40}".format(str(key),str(value)) for key, value in config_dict.items()]) + "\n"
+        self.file.write(text)
+        self.write(self.delimiter_line)
+        self.flush()
+    
+    
+    def write_model(self, x): pass #TODO print model structure
+    
+    def start_log_training(self, text): #TODO
+        self.write(self.delimiter_name("Training"))
+        self.file.write(text)
+        self.write(self.delimiter_line)
+        self.flush()
+        
+    def open(self):
+        if os.path.exists(self.path_save):
+            os.remove(self.path_save)
+        self.file = open(self.path_save, "a")
+        self.file.write("*** Started model training log ***\n\n\n\n")
+    
+    def write(self, text):
+        self.file.write(text + "\n")
+    
+    def flush(self):
+        self.file.flush()
+        
+    def close(self):
+        self.file.write("\n\n\n\n*** Ended model training log ***")
+        self.flush()
+        self.file.close()
+    
+    
+    
+    
 ##################################################  General Python utilities ##########################################################
 
 concat_dict = lambda x,y: {**x, **y}
