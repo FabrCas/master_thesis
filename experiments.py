@@ -2,6 +2,7 @@ import  os
 from    tqdm                                import tqdm
 import  numpy                               as np
 import  random
+import  math
 from    sklearn.metrics                     import accuracy_score
 from    datetime                            import date
 
@@ -286,18 +287,20 @@ class Decoder_ResNetEDS(object):
             batch_size (int, optional): batch size used by dataloaders. Defaults is 32.
         """
         super(Decoder_ResNetEDS, self).__init__()
-        self.useGPU         = useGPU
-        self.batch_size     = batch_size
-        self.version = None
-        self.scenario = scenario
+        self.useGPU             = useGPU
+        self.batch_size         = batch_size
+        self.version            = "Experiment test"
+        self.scenario           = scenario
+        self.augment_data_train = True
+        self.use_cutmix         = False
+        self.path_models        = "./models/test_models"
         
-        self.path_models    = "./models/test_models"
         if self.useGPU: self.device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
         else: self.device = "cpu"
         
             
         # load dataset: train, validation and test.
-        self.train_dataset  = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False, augment= True, label_vector= False)  # set label_vector = False for CutMix collate
+        self.train_dataset  = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False, augment= self.augment_data_train, label_vector= False)  # set label_vector = False for CutMix collate
         
         # load model
         self.model_type = "resnet_eds_decoder" 
@@ -307,14 +310,15 @@ class Decoder_ResNetEDS(object):
         self.model.eval()
         
         # define loss and final activation function
-        self.sigmoid = F.sigmoid
-        self.bce     = F.binary_cross_entropy_with_logits
+        self.sigmoid    = F.sigmoid
+        self.bce        = F.binary_cross_entropy_with_logits
+        self.loss_name  = "Reconstruction loss"
         
         # learning hyperparameters (default)
         self.lr                     = 1e-5
         self.n_epochs               = 40
         self.weight_decay           = 0.001          # L2 regularization term 
-        self.loss_name              = "Reconstruction loss"
+        
     
     def _hyperParams(self):
         return {
@@ -333,26 +337,27 @@ class Decoder_ResNetEDS(object):
             "optimizer": self.optimizer.__class__.__name__,
             "scheduler": self.scheduler.__class__.__name__,
             "loss": self.loss_name,
-            "base_augmentation": True,
-            "cutmix": False,
-            "grad_scaler": True,
+            "base_augmentation": self.augment_data_train,
+            "cutmix": self.use_cutmix,            
+            "grad_scaler": True,                # always true
             }
     
-    def init_logger(self, path_model): #TODO
-        # path = os.path.join(path_model, "log")
-        # # check_folder(path=path)
-        # hyperparameters_text = "\n".join([f"{key}: {value}" for key, value in self._hyperParams().items()])
-        # config_text = "\n".join([f"{key}: {value}" for key, value in self._dataConf().items()])
+    def init_logger(self, path_model):
+        """
+            path_model -> specific path of the current model training
+        """
+        
         logger = ExpLogger(path_model=path_model)
         logger.write_config(self._dataConf())
         logger.write_hyper(self._hyperParams())
+        logger.write_model(self.model.getSummary(verbose=False))
         return logger
 
         
     def load(self, folder_model, epoch):
         try:
             self.path2model         = os.path.join(self.path_models,  folder_model, str(epoch) + ".ckpt")
-            self.modelEpochs         = epoch
+            self.modelEpochs        = epoch
             loadModel(self.model, self.path2model)
             self.model.eval()   # no train mode, fix dropout, batchnormalization, etc.
         except Exception as e:
@@ -415,15 +420,15 @@ class Decoder_ResNetEDS(object):
         loss_epochs = []
         
         # initialzie the patience counter and history for early stopping
-        last_epoch          = 0
+        last_epoch       = 0
         
         self.modelEpochs = 0
         # loop over epochs
         for epoch_idx in range(self.n_epochs):
             print(f"\n             [Epoch {epoch_idx+1}]             \n")
             
-            # define cumulative loss for the current epoch
-            loss_epoch = 0
+            # define cumulative loss for the current epoch and max/min loss
+            loss_epoch = 0; max_loss_epoch = 0; min_loss_epoch = math.inf
             
             # update the last epoch for training the model
             last_epoch = epoch_idx +1
@@ -457,6 +462,8 @@ class Decoder_ResNetEDS(object):
                 # update total loss    
                 loss_epoch += loss.item()   # from tensor with single value to int and accumulation
                 
+                if loss_epoch>max_loss_epoch    : max_loss_epoch = round(loss_epoch,4)
+                if loss_epoch<min_loss_epoch    : min_loss_epoch = round(loss_epoch,4)
                 # loss backpropagation
                 scaler.scale(loss).backward()
                 
@@ -470,11 +477,15 @@ class Decoder_ResNetEDS(object):
                 self.scheduler.step()
                 
             # compute average loss for the epoch
-            avg_loss = loss_epoch/n_steps
+            avg_loss = round(loss_epoch/n_steps,4)
             loss_epochs.append(avg_loss)
             print("Average loss: {}".format(avg_loss))
             
-            if test_loop and epoch_idx+1 == 5: break
+            # create dictionary with info frome epoch: loss + valid, and log it
+            epoch_data = {"epoch": last_epoch, "avg_loss": avg_loss, "max_loss": max_loss_epoch, "min_loss": min_loss_epoch}
+            logger.log(epoch_data)
+            
+            if test_loop and last_epoch == 5: break
         
         # create paths and file names for saving training outcomes        
         name_model_file         = str(last_epoch) +'.ckpt'
@@ -493,7 +504,8 @@ class Decoder_ResNetEDS(object):
         # save model
         saveModel(self.model, path_model_save)
         
-        logger.close()
+        # terminate the logger
+        logger.end_log()
     
 if __name__ == "__main__":
     #                           [Start test section] 

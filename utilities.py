@@ -999,37 +999,64 @@ class ExpLogger(object):
             path_model (str): path to model folder
         """
         super(ExpLogger, self).__init__()
-        self.file_name      = "log.txt"
+        self.file_name      = "train.log"
         self.path_model     = path_model
         self.path_save      = os.path.join(self.path_model, self.file_name)
-        self.delimiter_len  = 25
-        self.delimiter_name = lambda x: "#"*self.delimiter_len +"{:^25}".format(x) + "#"*self.delimiter_len
-        self.delimiter_line = "#"*(self.delimiter_len*2 + 25)
+        self.delimiter_len  = 33
+        self.delimiter_name = lambda x: "#"*self.delimiter_len +"{:^24}".format(x) + "#"*self.delimiter_len
+        self.delimiter_line = "#"*(self.delimiter_len*2 + 24)
+        self.train_lines    = []   # one line for each epoch
         self.open()
         
     def write_hyper(self, hyper_dict):
         self.write(self.delimiter_name("Hyperparameters"))
-        text = "\n".join(["{:<40}: {:<40}".format(str(key),str(value)) for key, value in hyper_dict.items()]) + "\n"
-        self.file.write(text)
+        text = "\n".join(["{:<40}: {:<40}".format(str(key),str(value)) for key, value in hyper_dict.items()])
+        self.write(text)
         self.write(self.delimiter_line)
         self.flush()
         
     def write_config(self, config_dict):
         self.write(self.delimiter_name("Configuration"))
-        text = "\n".join(["{:<40}: {:<40}".format(str(key),str(value)) for key, value in config_dict.items()]) + "\n"
-        self.file.write(text)
+        text = "\n".join(["{:<40}: {:<40}".format(str(key),str(value)) for key, value in config_dict.items()])
+        self.write(text)
         self.write(self.delimiter_line)
         self.flush()
     
-    
-    def write_model(self, x): pass #TODO print model structure
-    
-    def start_log_training(self, text): #TODO
-        self.write(self.delimiter_name("Training"))
-        self.file.write(text)
+    def write_model(self, model_summary: str):
+        self.write(self.delimiter_name("Model architecture"))
+        self.write(model_summary)
         self.write(self.delimiter_line)
         self.flush()
+    
+    def log(self, epoch_dict: dict, in_line = True):
+        """ log the current epoch
+
+        Args:
+            epoch_dict (dict): dictionary describing info from the current epoch, can include whatever information
+        """
+        if in_line:
+            text = ""
+            for key, value in epoch_dict.items():
+                if key == "epoch":
+                    print("hello")
+                    text += "{}: {:<3}".format(str(key),str(value)) + " "
+                else:
+                    text += "{}: {:<15}".format(str(key),str(value)) + " "
+            
+            
+            # text = "\t".join(["{}: {:<7}".format(str(key),str(value)) for key, value in epoch_dict.items()])
+        else:
+            text = "\n".join(["{:<20}: {:<10}".format(str(key),str(value)) for key, value in epoch_dict.items()]) + "\n"
+        if self.train_lines == []:
+            self.write(self.delimiter_name("Training"))
+        self.write(text)
+        self.train_lines.append(text)
         
+    def end_log(self):
+        self.write(self.delimiter_line)  # close section training for each epoch
+        self.flush()
+        self.close()
+     
     def open(self):
         if os.path.exists(self.path_save):
             os.remove(self.path_save)

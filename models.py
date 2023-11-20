@@ -1,12 +1,11 @@
 import time
 
-import torch            as T
-from torch              import Tensor
-import torch.nn         as nn
-from torchsummary       import summary
-from torchvision        import models
-from torchvision.models import ResNet50_Weights
-from utilities          import print_dict, print_list, expand_encoding, convTranspose2d_shapes
+import  torch                          as T
+import  torch.nn                       as nn
+from    torchsummary                   import summary
+from    torchvision                    import models
+from    torchvision.models             import ResNet50_Weights
+from    utilities                      import print_dict, print_list, expand_encoding, convTranspose2d_shapes
 
 
 
@@ -204,12 +203,16 @@ class ResNet(nn.Module):
         
         return nn.Sequential(*list_layers)
         
-    def getSummary(self, input_shape = (None,None,None,None)):  #shape: batch,color,width,height
+    def getSummary(self, input_shape = (3,244,244), verbose = True):  #shape: color,width,height
         """
             input_shape -> tuple with simulated dimension used for the model summary
-            expected input of this type -> batch,color,width,height
+            expected input of this type -> color,width,height
         """
-        summary(self, input_shape)
+        
+        if verbose: v = 1
+        else: v = 0
+        model_stats = summary(self, input_shape, verbose= v)
+        return str(model_stats)
      
     def getLayers(self):
         return dict(self.named_parameters())
@@ -271,13 +274,17 @@ class ResNet_ImageNet():   # not nn.Module subclass, but still implement forward
     def getModel(self):
         return self.model
     
-    def getSummary(self, input_shape = (None,None,None,None)):  #shape: batch,color,width,height
+    def getSummary(self, input_shape = (3,244,244), verbose = True):  #shape: color,width,height
         """
             input_shape -> tuple with simulated dimension used for the model summary
-            expected input of this type -> batch,color,width,height
+            expected input of this type -> color,width,height
         """
-        summary(self.model, input_shape)
-    
+        
+        if verbose: v = 1
+        else: v = 0
+        model_stats = summary(self.model, input_shape, verbose = v)
+        return str(model_stats)
+     
     def to(self, device):
         self.model.to(device)
     
@@ -456,30 +463,51 @@ class ResNet_EDS(nn.Module):
     def getScorer_module(self):
         return self.scorer_module
     
-    def getSummaryEncoder(self, input_shape = (None,None,None,None)):  #shape: batch,color,width,height
+    def getSummaryEncoder(self, input_shape = (3,244,244)):  #shape: color,width,height
         """
             summary for encoder
             input_shape -> tuple with simulated dimension used for the model summary
-            expected input of this type -> batch,color,width,height
+            expected input of this type -> color,width,height
         """
-        summary(self.encoder_module, input_shape)
+        model_stats = summary(self.encoder_module, input_shape, verbose =0)
+        return str(model_stats)
     
-    def getSummaryScorerPipeline(self, input_shape = (None,None,None,None)):
+    def getSummaryScorerPipeline(self, input_shape = (3,244,244)):
         """
             summary for encoder + scoder modules
             input_shape -> tuple with simulated dimension used for the model summary
-            expected input of this shape -> batch,color,width,height
+            expected input of this shape -> color,width,height
         """
-        summary(nn.Sequential(self.encoder_module, self.scorer_module), input_shape)
+        model_stats = summary(nn.Sequential(self.encoder_module, self.scorer_module), input_shape, verbose = 0)
+        return str(model_stats)
     
-    def getSummaryDecoderPipeline(self, input_shape = (None,None,None,None)):
+    def getSummaryDecoderPipeline(self, input_shape = (3,244,244)):
         """
             summary for encoder + decoder modules
             input_shape -> tuple with simulated dimension used for the model summary
-            expected input of this shape -> batch,color,width,height
+            expected input of this shape -> color,width,height
         """
-        summary(nn.Sequential(self.encoder_module, self.decoder_module), input_shape)
+        model_stats = summary(nn.Sequential(self.encoder_module, self.decoder_module), input_shape, verbose = 0)
+        return str(model_stats)
   
+    def getSummary(self, input_shape = (3,244,244), verbose = True):
+        """
+            summary for the whole model
+            input_shape -> tuple with simulated dimension used for the model summary
+            expected input of this type -> color,width,height
+        """
+        model_stats_encoder     = self.getSummaryEncoder()
+        model_stats_scorer      = self.getSummaryScorerPipeline()
+        model_stats_decoder     = self.getSummaryDecoderPipeline() 
+        
+        stats = "\n\n{:^90}\n\n\n".format("Encoder:") + model_stats_encoder + "\n\n\n{:^90}\n\n\n".format("Scorer Pipeline:") + \
+                model_stats_scorer + "\n\n\n{:^90}\n\n\n".format("Decoder Pipeline:") + model_stats_decoder
+        
+        if verbose: print(stats)
+        
+        return stats
+
+        
     def getLayers(self, name_module = "encoder"):
         """
             return the layers of the selected module
@@ -493,6 +521,8 @@ class ResNet_EDS(nn.Module):
             return dict(self.scorer_module.named_parameters())
         elif name_module == "decoder":
             return dict(self.decoder_module.named_parameters())  
+        else:
+            return dict(self.named_parameters()) 
     
     def getDevice(self, name_module):
         """
@@ -621,12 +651,16 @@ class FC_classifier(nn.Module):
 
         return x
     
-    def getSummary(self, input_shape = (None,None,None,None)):  #shape: batch,color,width,height
+    def getSummary(self, input_shape = (1,28,28), verbose = True):  #shape: color,width,height
         """
             input_shape -> tuple with simulated dimension used for the model summary
-            expected input of this type -> batch,color,width,height
+            expected input of this type -> color,width,height
         """
-        summary(self, input_shape)
+        if verbose: v = 1
+        else: v = 0
+        model_stats = summary(self, input_shape, verbose = v)
+        
+        return str(model_stats)
      
     def getLayers(self):
         return dict(self.named_parameters())
@@ -694,14 +728,15 @@ if __name__ == "__main__":
         model = ResNet_EDS(n_channels=3, n_classes=2, use_upsample= False)
         model.to(device)
         print("device, encoder -> {}, decoder -> {}, scorer -> {}".format(model.getDevice(name_module="encoder"), model.getDevice(name_module="decoder"), model.getDevice(name_module="scorer")))
+        # print(model.getLayers(name_module=None))
+        model.getSummary()
         # model.getSummaryEncoder(input_shape=input_resnet_example.shape)        
         # model.getSummaryScorerPipeline(input_shape=input_resnet_example.shape)
-        model.getSummaryDecoderPipeline(input_shape = input_resnet_example.shape)
+        # model.getSummaryDecoderPipeline(input_shape = input_resnet_example.shape)
         # input_shape = (2048,1,1)
         # convTranspose2d_shapes(input_shape=input_shape, n_filters=128, kernel_size=5, padding=0, stride = 1, output_padding=2)
 
-
-      
     test_ResNet_Encoder_Decoder()
+
     #                           [End test section] 
     
