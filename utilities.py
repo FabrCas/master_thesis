@@ -1038,7 +1038,6 @@ class ExpLogger(object):
             text = ""
             for key, value in epoch_dict.items():
                 if key == "epoch":
-                    print("hello")
                     text += "{}: {:<3}".format(str(key),str(value)) + " "
                 else:
                     text += "{}: {:<15}".format(str(key),str(value)) + " "

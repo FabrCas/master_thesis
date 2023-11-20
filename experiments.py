@@ -271,7 +271,7 @@ class Decoder_ResNetEDS(object):
         training model folders:
         - faces_resnet50ED_18-11-2023
     """
-    def __init__(self, scenario, useGPU = True, batch_size = 32):
+    def __init__(self, scenario, useGPU = True, batch_size = 64):
         """ init classifier
 
         Args:
@@ -293,6 +293,7 @@ class Decoder_ResNetEDS(object):
         self.scenario           = scenario
         self.augment_data_train = True
         self.use_cutmix         = False
+        self.use_upsample       = True
         self.path_models        = "./models/test_models"
         
         if self.useGPU: self.device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
@@ -304,7 +305,7 @@ class Decoder_ResNetEDS(object):
         
         # load model
         self.model_type = "resnet_eds_decoder" 
-        self.model = ResNet_EDS(n_channels=3, n_classes=2, use_upsample= False)
+        self.model = ResNet_EDS(n_channels=3, n_classes=2, use_upsample= self.use_upsample)
           
         self.model.to(self.device)
         self.model.eval()
@@ -315,7 +316,7 @@ class Decoder_ResNetEDS(object):
         self.loss_name  = "Reconstruction loss"
         
         # learning hyperparameters (default)
-        self.lr                     = 1e-5
+        self.lr                     = 1e-4
         self.n_epochs               = 40
         self.weight_decay           = 0.001          # L2 regularization term 
         
@@ -340,6 +341,7 @@ class Decoder_ResNetEDS(object):
             "base_augmentation": self.augment_data_train,
             "cutmix": self.use_cutmix,            
             "grad_scaler": True,                # always true
+            "upsample encoding": self.use_upsample
             }
     
     def init_logger(self, path_model):
@@ -350,7 +352,11 @@ class Decoder_ResNetEDS(object):
         logger = ExpLogger(path_model=path_model)
         logger.write_config(self._dataConf())
         logger.write_hyper(self._hyperParams())
-        logger.write_model(self.model.getSummary(verbose=False))
+        try:
+            logger.write_model(self.model.getSummary(verbose=False))
+        except:
+            print("Impossible to retrieve the model structure for logging")
+        
         return logger
 
         
@@ -364,7 +370,7 @@ class Decoder_ResNetEDS(object):
             print(e)
             print("No model: {} found for the epoch: {} in the folder: {}".format(folder_model, epoch, self.path_models))
     
-    def reconstruction_loss(self, target, reconstruction, range255 = True):
+    def reconstruction_loss(self, target, reconstruction, range255 = False):
         """ 
             reconstruction loss (MSE) over batch of images
         
@@ -522,10 +528,14 @@ if __name__ == "__main__":
         classifier.train()
         classifier.load_model()
     
+    # train end-dec
     def train_EndDec_content():
         model = Decoder_ResNetEDS(scenario="content")
         model.train(name_train="faces_resnet50ED")
     
+    def train_Unet_content(): pass
+    
+    # show results from end-dec
     def showReconstruction(name_model, epoch, scenario):
         model = Decoder_ResNetEDS(scenario = scenario, useGPU= True)
         model.load(name_model, epoch)
@@ -536,8 +546,10 @@ if __name__ == "__main__":
         rec_img = model.model.decoder_module.forward(enc)
         rec_img = T.squeeze(rec_img, dim = 0)
         showImage(rec_img, name="reconstructed2_decoding_resnet50ED", save_image = True)
-            
-    train_EndDec_content()
+    
+    
+    train_EndDec_content()        
+
     # showReconstruction(name_model="faces_resnet50ED_18-11-2023", epoch= 40, scenario = "content")
     
     #                           [End test section] 

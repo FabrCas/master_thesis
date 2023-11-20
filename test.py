@@ -43,3 +43,16 @@ temperature = 1.0
 sigmoid_result, softmax_result = sigmoid_with_softmax(logits, temperature)
 print("Sigmoid Result:", sigmoid_result)
 print("Softmax Result:", softmax_result)
+
+
+# # Example tensors
+# tensor1 = torch.tensor([1, 2, 3])
+# tensor2 = torch.tensor([4, 5, 6])
+
+# # torch.cat example
+# catenated = torch.cat((tensor1, tensor2), dim=0)
+# print("torch.cat result:", catenated)
+
+# # torch.stack example
+# stacked = torch.stack((tensor1, tensor2), dim=0)
+# print("torch.stack result:", stacked)

@@ -302,7 +302,7 @@ class ResNet_ImageNet():   # not nn.Module subclass, but still implement forward
         x = self.model(x)
         return x
     
-#_____________________________________ OOD modules (ResNet relative)_______________________________
+#_____________________________________ OOD modules _________________________________________________
 
 class ResNet_EDS(nn.Module): 
     """ ResNet multi head module with Encoder, Decoder and scorer (Classifier) """
@@ -366,7 +366,7 @@ class ResNet_EDS(nn.Module):
                 nn.GELU(),
                 self.conv_block_decoder(n_filter=3),
                 
-                nn.Sigmoid()             # to have pixels in the range of 0,1  (or  nn.Tanh or nn.Identiy)
+                nn.Sigmoid()             # to have pixels in the range of 0,1  (or  nn.Tanh)
             )
         else:
             self.decoder_module = nn.Sequential(
@@ -396,7 +396,7 @@ class ResNet_EDS(nn.Module):
                 nn.GELU(),
                 self.conv_block_decoder(n_filter=3),
                 
-                nn.Sigmoid()             # to have pixels in the range of 0,1  (or  nn.Tanh or nn.Identiy)
+                nn.Sigmoid()             # to have pixels in the range of 0,1  (or  nn.Tanh)
             )
         
         # initialize scorer and decoder
@@ -451,6 +451,13 @@ class ResNet_EDS(nn.Module):
         for param in model.parameters():
             if len(param.shape) > 1:
                 T.nn.init.kaiming_normal_(param, mode='fan_out', nonlinearity='relu')
+    
+    def reparameterize(self, z):
+        z = z.view(z.size(0), -1)
+        mu, log_sigma = z[:, :self.z_dim], z[:, self.z_dim:]
+        std = T.exp(log_sigma)
+        eps = T.randn_like(std)
+        return mu + eps * std
     
     # getters methods 
     
@@ -507,7 +514,6 @@ class ResNet_EDS(nn.Module):
         
         return stats
 
-        
     def getLayers(self, name_module = "encoder"):
         """
             return the layers of the selected module
@@ -592,10 +598,176 @@ class ResNet_EDS(nn.Module):
         
         return features, logits, reconstruction
 
+
+
+# _____________________________________ U net ______________________________________________________
+
+class conv_block(nn.Module):
+    def __init__(self, in_c, out_c):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_c, out_c, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(out_c)
+        self.conv2 = nn.Conv2d(out_c, out_c, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(out_c)
+        self.relu = nn.ReLU()
+        
+    def forward(self, inputs):
+        x = self.conv1(inputs)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.conv2(x)
+        x = self.bn2(x)
+        x = self.relu(x)
+        return x
+
+class encoder_block(nn.Module):
+    def __init__(self, in_c, out_c):
+        super().__init__()
+        self.conv = conv_block(in_c, out_c)
+        self.pool = nn.MaxPool2d((2, 2))
+        
+    def forward(self, inputs):
+        x = self.conv(inputs)
+        p = self.pool(x)
+        # return x, p
+        return p
+
+class decoder_block(nn.Module):
+    def __init__(self, in_c, out_c):
+        super().__init__()
+        self.up = nn.ConvTranspose2d(in_c, out_c, kernel_size=2, stride=2, padding=0)
+        self.conv = conv_block(out_c+out_c, out_c)
+        
+    def forward(self, inputs, skip):
+        x = self.up(inputs)
+        x = T.cat([x, skip], axis=1)
+        x = self.conv(x)
+        return x
+
+class U_net(nn.Module):
+    
+    def __init__(self,  n_channels = 3, w= 244, h=244):
+        super(U_net, self).__init__()
+        self.n_channels = n_channels
+        self.w = w
+        self.h = h
+        
+        # create net and initialize
+        self._createNet()
+        self._init_weights_kaimingNormal()
+        
+    
+    def _createNet(self):
+        
+        # encoder
+        self.e1 = encoder_block(self.n_channels, 64)
+        self.e2 = encoder_block(64, 128)
+        self.e3 = encoder_block(128, 256)
+        self.e4 = encoder_block(256, 512)
+        
+        # bottlenech (encoding)
+        self.b = conv_block(512, 1024)
+        
+        # Flatten the encoding
+        self.flatten = nn.Flatten()
+    
+        # decoder 
+        self.d1 = decoder_block(1024, 51),
+        self.d2 = decoder_block(512, 256),
+        self.d3 = decoder_block(256, 128),
+        self.d4 = decoder_block(128, 64),
+            
+        self.out= decoder_block(64, self.n_channels)
+        # self.sig = nn.Sigmoid()
+            
+        # self.model = nn.Sequential(self.encoder, self.decoder)
+
+
+    def _init_weights_kaimingNormal(self):
+        # Initialize the weights  using He initialization
+        print("Weights initialization using kaiming Normal")
+        # for param in self.encoder.parameters():
+        #     if len(param.shape) > 1:
+        #         T.nn.init.kaiming_normal_(param, mode='fan_out', nonlinearity='relu')
+        
+        # for param in self.decoder.parameters():
+        #     if len(param.shape) > 1:
+        #         T.nn.init.kaiming_normal_(param, mode='fan_out', nonlinearity='relu')
+        
+        for param in self.parameters():
+            if len(param.shape) > 1:
+                T.nn.init.kaiming_normal_(param, mode='fan_out', nonlinearity='relu')
+    
+
+    def getSummary(self, input_shape = (3,244,244), verbose = True):  #shape: color,width,height
+        """
+            input_shape -> tuple with simulated dimension used for the model summary
+            expected input of this type -> color,width,height
+        """
+        
+        # if verbose: v = 1
+        # else: v = 0
+        # model_stats = summary(self, input_shape, verbose = v)
+        # return str(model_stats)
+        
+        # summary =  list(self.getLayers().keys())
+        
+        summary = ""
+        for k,v in self.getLayers().items():
+            summary += "{:<30} -> {:<30}".format(k,str(tuple(v.shape))) + "\n"
+        print(summary)
+        return summary
+     
+    def to_device(self, device):
+        self.to(device)
+    
+    def getLayers(self):
+        return dict(self.named_parameters())
+    
+    def freeze(self):
+        for name, param in self.named_parameters():
+            param.requires_grad = False
+    
+    def forward(self, x):
+        
+        # encoder
+        s1, p1 = self.e1(x)
+        s2, p2 = self.e2(p1)
+        s3, p3 = self.e3(p2)
+        s4, p4 = self.e4(p3)
+        
+        # p1 = self.e1(x)
+        # p2 = self.e2(p1)
+        # p3 = self.e3(p2)
+        # p4 = self.e4(p3)
+        
+        # bottlenech (encoding)
+        bottleneck = self.b(p4)
+        enc = self.flatten(bottleneck)
+        
+        # decoder 
+        d1 = self.d1(bottleneck, s4)
+        d2 = self.d2(d1, s3)
+        d3 = self.d3(d2, s2)
+        d4 = self.d4(d3, s1)
+        
+        # d1 = self.d1(enc, p4)
+        # d2 = self.d2(d1, p3)
+        # d3 = self.d3(d2, p2)
+        # d4 = self.d4(d3, p1)
+        
+        # reconstuction
+        rec = self.out(d4)   # add sigmoid
+    
+        return rec, enc
+
+
 class abnormality_module(nn.Module): 
     def __init__(self):
         super(abnormality_module, self).__init__()
-    
+        
+
+            
 #_____________________________________Vision Transformer (ViT)_____________________________________        
 
 
@@ -696,6 +868,11 @@ def get_fc_classifier_Keras(input_shape = (28,28)):
 
     return model
 
+
+
+
+
+
 if __name__ == "__main__":
     #                           [Start test section] 
     
@@ -736,7 +913,15 @@ if __name__ == "__main__":
         # input_shape = (2048,1,1)
         # convTranspose2d_shapes(input_shape=input_shape, n_filters=128, kernel_size=5, padding=0, stride = 1, output_padding=2)
 
-    test_ResNet_Encoder_Decoder()
+    def test_Unet():
+        unet = U_net(n_channels=3)
+        unet.to_device(device)
+        unet.getSummary()
+        # print(unet.getLayers())
+
+    
+    
+    test_Unet()
 
     #                           [End test section] 
     
