@@ -266,7 +266,6 @@ class MNISTClassifier_keras(object):
 #####################################################################################################################
 """
 
-
 class Decoder_ResNetEDS(object):
     """
         class used to learn and test the ability of the resnet decoder to reconstruct the original image
@@ -297,7 +296,7 @@ class Decoder_ResNetEDS(object):
         self.scenario           = scenario
         self.augment_data_train = True
         self.use_cutmix         = False
-        self.use_upsample       = True
+        self.use_upsample       = False
         self.path_models        = "./models/test_models"
         
         if self.useGPU: self.device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
@@ -400,7 +399,7 @@ class Decoder_ResNetEDS(object):
             return T.mean(T.square(target - reconstruction))
     
     @duration
-    def train(self, name_train, test_loop = True):
+    def train(self, name_train, test_loop = False):
         """
         Args:
             name_train (str) should include the scenario selected and the model name (i.e. ResNet50), keep this convention {scenario}_{model_name}
@@ -523,7 +522,6 @@ class Decoder_ResNetEDS(object):
         
         # terminate the logger
         logger.end_log()
-
 
 class Decoder_Unet(object):
     """
@@ -767,7 +765,6 @@ class Decoder_Unet(object):
         name_loss_file          = 'loss_'+ str(last_epoch) +'.png'
         path_lossPlot_save      = os.path.join(path_model_folder, name_loss_file)
         
-        
         # save info for the new model trained
         self.modelEpochs        = last_epoch
         
@@ -818,7 +815,7 @@ if __name__ == "__main__":
         showImage(rec_img, name="reconstructed2_decoding_resnet50ED", save_image = True)
     
     
-    train_Unet_content()        
+    train_ResNetED_content()        
 
     # showReconstruction(name_model="faces_resnet50ED_18-11-2023", epoch= 40, scenario = "content")
     
@@ -828,6 +825,8 @@ if __name__ == "__main__":
             Past test/train launched: 
             
     train_baseline_tf()
+    train_Unet_content()
+    train_ResNetED_content()
     
     train_EndDec_content()
     showReconstruction(name_model="faces_resnet50ED_18-11-2023", epoch= 40, scenario = "content")

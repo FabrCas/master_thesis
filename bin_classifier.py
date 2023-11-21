@@ -2,6 +2,7 @@ from    time                                import time
 import  random              
 from    tqdm                                import tqdm
 from    datetime                            import date
+import  math
 
 import  torch                               as T
 import  numpy                               as np
@@ -15,7 +16,7 @@ from    torchvision.transforms              import v2
 from    torch.utils.data                    import default_collate
 
 from    utilities                           import plot_loss, saveModel, metrics_binClass, loadModel, test_num_workers, sampleValidSet, \
-                                            duration, check_folder, cutmix_image, showImage, image2int
+                                            duration, check_folder, cutmix_image, showImage, image2int, ExpLogger
 from    dataset                             import CDDB_binary, CDDB_binary_Partial
 from    models                              import ResNet_ImageNet, ResNet, ResNet_EDS
 
@@ -172,7 +173,7 @@ class BinaryClassifier(object):
         else:
             return x,y
      
-    def reconstruction_loss(self, target, reconstruction, range255 = True):
+    def reconstruction_loss(self, target, reconstruction, range255 = False):
         """ 
             reconstruction loss (MSE) over batch of images
         
@@ -189,6 +190,21 @@ class BinaryClassifier(object):
             return T.mean(T.square(image2int(target, True) - image2int(reconstruction, True)))
         else:
             return T.mean(T.square(target - reconstruction))
+        
+    def init_logger(self, path_model):
+        """
+            path_model -> specific path of the current model training
+        """
+        
+        logger = ExpLogger(path_model=path_model)
+        logger.write_config(self._dataConf())
+        logger.write_hyper(self._hyperParams())
+        try:
+            logger.write_model(self.model.getSummary(verbose=False))
+        except:
+            print("Impossible to retrieve the model structure for logging")
+        
+        return logger
                 
 class DFD_BinClassifier_v1(BinaryClassifier):
     """
@@ -628,7 +644,7 @@ class DFD_BinClassifier_v3(BinaryClassifier):
         binary classifier for deepfake detection using partial CDDB dataset for the chosen scenario configuration.
         Model used: Custom ResNet50 with encoder/decoder structure (ResNet_EDS)
         This third version extends the 2nd version. Including:
-        
+        - custom logging functionalities
         - dynamic learning rate using validation set
         - CutMix usage (https://arxiv.org/abs/1905.04899)
         - Simulataneous learning of a decoder module
@@ -656,9 +672,15 @@ class DFD_BinClassifier_v3(BinaryClassifier):
         super(DFD_BinClassifier_v3, self).__init__(useGPU = useGPU, batch_size = batch_size, model_type = "resnet_eds")
         self.version = 3
         self.scenario = scenario
+        self.augment_data_train = True
+        self.use_cutmix         = False
             
         # load dataset: train, validation and test.
-        self.train_dataset  = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False, augment= True, label_vector= False)  # set label_vector = False for CutMix collate
+        
+        if self.use_cutmix:
+            self.train_dataset  = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False, augment= self.augment_data_train, label_vector= False)  # set label_vector = False for CutMix collate
+        else:
+             self.train_dataset  = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False, augment= self.augment_data_train, label_vector= True)
         test_dataset        = CDDB_binary_Partial(scenario = self.scenario, train = False, ood = False, augment= False)
         self.valid_dataset, self.test_dataset = sampleValidSet(trainset= self.train_dataset, testset= test_dataset, useOnlyTest = True, verbose = True)
         
@@ -674,16 +696,17 @@ class DFD_BinClassifier_v3(BinaryClassifier):
         self.bce     = F.binary_cross_entropy_with_logits
         
         # learning hyperparameters (default)
-        self.lr                     = 1e-5
+        self.lr                     = 1e-4
         self.n_epochs               = 40
         self.weight_decay           = 0.001          # L2 regularization term 
         self.patience               = 5              # early stopping patience
         self.early_stopping_trigger = "acc"        # values "acc" or "loss"
         
-        # interpolation values for the new loss
-        self.alpha_loss             = 0.9
-        self.beta_loss              = 0.1
-        
+        # loss definition + interpolation values for the new loss
+        self.loss_name = "bce + reconstruction loss"
+        self.alpha_loss             = 0.9  # bce
+        self.beta_loss              = 0.1  # reconstruction
+
         self._check_parameters()
      
     def _check_parameters(self):
@@ -691,7 +714,41 @@ class DFD_BinClassifier_v3(BinaryClassifier):
             raise ValueError('The early stopping trigger value must be chosen between "loss" and "acc"')
         if self.alpha_loss + self.beta_loss != 1.: 
             raise  ValueError('Interpolation hyperparams (alpha, beta) should sum up to 1!')
+    
+    def _hyperParams(self):
+        return {
+            "lr": self.lr,
+            "batch_size": self.batch_size,
+            "epochs_max": self.n_epochs,
+            "weight_decay": self.weight_decay,
+            "early_stopping_patience": self.patience,
+            "early_stopping_trigger": self.early_stopping_trigger
+                }
+    
+    def _dataConf(self):
         
+        # load not fixed config specs with try-catch
+        try:
+            d_out = self.model.decoder_out_fn.__class__.__name__
+        except:
+            d_out = "empty"
+        
+        
+        return {
+            "date_training": date.today().strftime("%d-%m-%Y"),
+            "model": self.model_type,
+            "decoder_out_activation": d_out,
+            "data_scenario": self.scenario,
+            "version_train": self.version,
+            "optimizer": self.optimizer.__class__.__name__,
+            "scheduler": self.scheduler.__class__.__name__,
+            "loss": self.loss_name,
+            "base_augmentation": self.augment_data_train,
+            "cutmix": self.use_cutmix,            
+            "grad_scaler": True,                # always true
+            }
+    
+    
     def valid(self, epoch, valid_dataloader):
         """
             validation method used mainly for the Early stopping training
@@ -750,29 +807,41 @@ class DFD_BinClassifier_v3(BinaryClassifier):
             return accuracy_valid
     
     @duration
-    def train(self, name_train):
+    def train(self, name_train, test_loop = False):
         """
         Args:
             name_train (str) should include the scenario selected and the model name (i.e. ResNet50), keep this convention {scenario}_{model_name}
         """
         
-        # intiialize CutMix (data augmentation/regularization) module and collate function
-        
-        cutmix = v2.CutMix(num_classes=2)                   # change for non-binary case!
-        def collate_cutmix(batch):
-            """
-            this function apply the CutMix technique with a certain probability (half probability). the batch should be
-            defined with idx labels, but cutmix returns a sequence of values (n classes) for each label based on the composition.
-            """
-            prob = 0.5
-            if random.random() < prob:
-                return cutmix(*default_collate(batch))
-            else:
-                return default_collate(batch) 
+        # define the model dir path and create the directory
+        current_date = date.today().strftime("%d-%m-%Y")    
+        path_model_folder       = os.path.join(self.path_models,  name_train + "_v{}_".format(str(self.version)) + current_date)
+        check_folder(path_model_folder)
         
         
         # define train dataloader
-        train_dataloader = DataLoader(self.train_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True, collate_fn = collate_cutmix)
+        train_dataloader = None
+        
+        if self.use_cutmix:
+            # intiialize CutMix (data augmentation/regularization) module and collate function
+            
+            cutmix = v2.CutMix(num_classes=2)                   # change for non-binary case!
+            def collate_cutmix(batch):
+                """
+                this function apply the CutMix technique with a certain probability (half probability). the batch should be
+                defined with idx labels, but cutmix returns a sequence of values (n classes) for each label based on the composition.
+                """
+                prob = 0.5
+                if random.random() < prob:
+                    return cutmix(*default_collate(batch))
+                else:
+                    return default_collate(batch) 
+            
+            
+           
+            train_dataloader = DataLoader(self.train_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True, collate_fn = collate_cutmix)
+        else:
+            train_dataloader = DataLoader(self.train_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
         
         # define valid dataloader
         valid_dataloader = DataLoader(self.valid_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= False, pin_memory= True)
@@ -782,19 +851,22 @@ class DFD_BinClassifier_v3(BinaryClassifier):
         print("Number of steps per epoch: {}".format(n_steps))
         
         # define the optimization algorithm
-        optimizer =  Adam(self.model.parameters(), lr = self.lr, weight_decay =  self.weight_decay)
+        self.optimizer =  Adam(self.model.parameters(), lr = self.lr, weight_decay =  self.weight_decay)
         
         # learning rate scheduler
         if self.early_stopping_trigger == "loss":
-            scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor = 0.5, patience = 5, cooldown = 2, min_lr = self.lr, verbose = True) # reduce of a half the learning rate 
+            self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor = 0.5, patience = 5, cooldown = 2, min_lr = self.lr, verbose = True) # reduce of a half the learning rate 
         elif self.early_stopping_trigger == "acc":
-            scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor = 0.5, patience = 5, cooldown = 2, min_lr = self.lr, verbose = True) # reduce of a half the learning rate 
+            self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='max', factor = 0.5, patience = 5, cooldown = 2, min_lr = self.lr, verbose = True) # reduce of a half the learning rate 
         
         # model in training mode
         self.model.train()
         
         # define the gradient scaler to avoid weigths explosion
         scaler = GradScaler()
+        
+        # initialize logger
+        logger  = self.init_logger(path_model= path_model_folder)
         
         # intialize data structure to keep track of training performance
         loss_epochs = []
@@ -811,8 +883,8 @@ class DFD_BinClassifier_v3(BinaryClassifier):
         for epoch_idx in range(self.n_epochs):
             print(f"\n             [Epoch {epoch_idx+1}]             \n")
             
-            # define cumulative loss for the current epoch
-            loss_epoch = 0
+            # define cumulative loss for the current epoch and max/min loss
+            loss_epoch = 0; max_loss_epoch = 0; min_loss_epoch = math.inf
             
             # update the last epoch for training the model
             last_epoch = epoch_idx +1
@@ -820,7 +892,8 @@ class DFD_BinClassifier_v3(BinaryClassifier):
             # loop over steps
             for step_idx,(x,y) in tqdm(enumerate(train_dataloader), total= n_steps):
                 
-                # if step_idx > 5: break
+                # test steps loop for debug
+                if test_loop and step_idx+1 == 5: break
                 
                 # adjust labels if cutmix has been not applied (from indices to one-hot encoding)
                 if len(y.shape) == 1:
@@ -833,7 +906,7 @@ class DFD_BinClassifier_v3(BinaryClassifier):
                 y = y.to(T.float)
                 
                 # zeroing the gradient
-                optimizer.zero_grad()
+                self.optimizer.zero_grad()
                 
                 # model forward and loss computation
                 with autocast():
@@ -850,6 +923,9 @@ class DFD_BinClassifier_v3(BinaryClassifier):
                     loss = self.alpha_loss * class_loss + self.beta_loss * rec_loss 
                     
                 
+                if loss_epoch>max_loss_epoch    : max_loss_epoch = round(loss_epoch,4)
+                if loss_epoch<min_loss_epoch    : min_loss_epoch = round(loss_epoch,4)
+                
                 # update total loss    
                 loss_epoch += loss.item()   # from tensor with single value to int and accumulation
                 
@@ -857,13 +933,13 @@ class DFD_BinClassifier_v3(BinaryClassifier):
                 scaler.scale(loss).backward()
                 
                 # compute updates using optimizer
-                scaler.step(optimizer)
+                scaler.step(self.optimizer)
 
                 # update weights through scaler
                 scaler.update()
                 
             # compute average loss for the epoch
-            avg_loss = loss_epoch/n_steps
+            avg_loss = round(loss_epoch/n_steps,4)
             loss_epochs.append(avg_loss)
             print("Average loss: {}".format(avg_loss))
             
@@ -896,20 +972,26 @@ class DFD_BinClassifier_v3(BinaryClassifier):
                             counter_stopping += 1
                     else:
                         print("Accuracy increased respect previous epoch")
-                
-            # break
+            
+            self.early_stopping_trigger
+            # create dictionary with info frome epoch: loss + valid, and log it
+            epoch_data = {"epoch": last_epoch, "avg_loss": avg_loss, "max_loss": max_loss_epoch, /
+                          "min_loss": min_loss_epoch, self.early_stopping_trigger + "_valid": criterion}
+            logger.log(epoch_data)
+            
+            # test epochs loop for debug   
+            if test_loop and last_epoch == 5: break
             
             # lr scheduler step based on validation result
-            scheduler.step(criterion)
+            self.scheduler.step(criterion)
         
-        # create paths and file names for saving training outcomes
-        current_date = date.today().strftime("%d-%m-%Y")
-        
-        path_model_folder       = os.path.join(self.path_models,  name_train + "_v{}_".format(str(self.version)) + current_date)
+        # create path for the model save
         name_model_file         = str(last_epoch) +'.ckpt'
         path_model_save         = os.path.join(path_model_folder, name_model_file)  # path folder + name file
         
+        # create path for the model results
         path_results_folder     = os.path.join(self.path_results, name_train + "_v{}_".format(str(self.version)) + current_date)
+        check_folder(path_results_folder)       # create if doesn't exist
         name_loss_file          = 'loss_'+ str(last_epoch) +'.png'
         path_lossPlot_save      = os.path.join(path_results_folder, name_loss_file)
         
@@ -917,15 +999,14 @@ class DFD_BinClassifier_v3(BinaryClassifier):
         self.path2model_results = path_results_folder
         self.modelEpochs        = last_epoch
         
-        # create model and results folder if not already present
-        check_folder(path_model_folder)
-        check_folder(path_results_folder)
-        
         # save loss plot
         plot_loss(loss_epochs, title_plot= name_train, path_save = path_lossPlot_save)
         
         # save model
         saveModel(self.model, path_model_save)
+    
+        # terminate the logger
+        logger.end_log()
 
     # Override of superclass forward method
     def forward(self, x):
@@ -1108,7 +1189,7 @@ if __name__ == "__main__":
         print(logits)
         showImage(rec_img)
         
-    showReconstruction(name_model = "faces_resnet50EDS_v3_17-11-2023", epoch = 20, scenario = "content")
+    # showReconstruction(name_model = "faces_resnet50EDS_v3_17-11-2023", epoch = 20, scenario = "content")
     
     #                           [End test section] 
 
