@@ -16,7 +16,7 @@ from    torch.utils.data                    import DataLoader
 
 # local modules
 from    dataset                             import getMNIST_dataset, CDDB_binary_Partial
-from    models                              import FC_classifier, get_fc_classifier_Keras, ResNet_EDS
+from    models                              import FC_classifier, get_fc_classifier_Keras, ResNet_EDS, U_net
 from    utilities                           import duration, saveModel, loadModel, showImage, check_folder, plot_loss, image2int, ExpLogger
 
 
@@ -188,6 +188,8 @@ class MNISTClassifier(object):
 
 
 class MNISTClassifier_keras(object):
+
+    
     def __init__(self, batch_size = 128):
         super(MNISTClassifier_keras, self).__init__()
         self.model = get_fc_classifier_Keras()
@@ -203,11 +205,12 @@ class MNISTClassifier_keras(object):
         self._load_mnist()
         
         # tensorflow
-        from tensorflow                             import keras
-        from keras.models                           import load_model
+
         
 
     def _load_mnist(self):
+        from tensorflow                             import keras
+        
         mnist = keras.datasets.mnist
         (mnist_train_x, mnist_train_y), (mnist_test_x, mnist_test_y) = mnist.load_data()
         mnist_train_x, mnist_test_x = mnist_train_x/255., mnist_test_x/255.
@@ -218,7 +221,8 @@ class MNISTClassifier_keras(object):
 
 
     def train(self):
-
+        from tensorflow                             import keras
+        
         self.model.compile(optimizer=keras.optimizers.Adam(lr=self.lr),
                     loss='sparse_categorical_crossentropy',
                     metrics=['accuracy'])
@@ -250,7 +254,7 @@ class MNISTClassifier_keras(object):
         """
         Load a Keras model from a file.
         """
-        
+        from keras.models                           import load_model
         path  = os.path.join(self.path_test_models, self.name_dataset, self.name_model)
         
         self.model = load_model(path)
@@ -311,8 +315,6 @@ class Decoder_ResNetEDS(object):
         self.model.eval()
         
         # define loss and final activation function
-        self.sigmoid    = F.sigmoid
-        self.bce        = F.binary_cross_entropy_with_logits
         self.loss_name  = "Reconstruction loss"
         
         # learning hyperparameters (default)
@@ -330,9 +332,18 @@ class Decoder_ResNetEDS(object):
                 }
     
     def _dataConf(self):
+        
+        # load not fixed config specs with try-catch
+        try:
+            d_out = self.model.decoder_out_fn
+        except:
+            d_out = "empty"
+        
+        
         return {
             "date_training": date.today().strftime("%d-%m-%Y"),
             "model": self.model_type,
+            "decoder_out_activation": d_out,
             "data_scenario": self.scenario,
             "version_train": self.version,
             "optimizer": self.optimizer.__class__.__name__,
@@ -462,7 +473,7 @@ class Decoder_ResNetEDS(object):
                     encoding        = self.model.encoder_module.forward(x)
                     reconstruction  = self.model.decoder_module.forward(encoding)
                 
-                    loss = self.reconstruction_loss(target = x, reconstruction = reconstruction, range255= True)
+                    loss = self.reconstruction_loss(target = x, reconstruction = reconstruction)
                     
                 
                 # update total loss    
@@ -512,7 +523,264 @@ class Decoder_ResNetEDS(object):
         
         # terminate the logger
         logger.end_log()
+
+
+class Decoder_Unet(object):
+    """
+        class used to learn and test the ability of Unet to reconstruct the input image
+        
+        training model folders:
+    """
+    def __init__(self, scenario, useGPU = True, batch_size = 64):
+        """ init classifier
+
+        Args:
+            scenario (str): select between "content","group","mix" scenarios:
+            - "content", data (real/fake for each model that contains a certain type of images) from a pseudo-category,
+            chosen only samples with faces, OOD -> all other data that contains different subject from the one in ID.
+            - "group", ID -> assign 2 data groups from CDDB (deep-fake resources, non-deep-fake resources),
+            OOD-> the remaining data group (unknown models)
+            - "mix", mix ID and ODD without maintaining the integrity of the CDDB groups, i.e take models samples from
+            1st ,2nd,3rd groups and do the same for OOD without intersection.
+            
+            useGPU (bool, optional): flag to use CUDA device or cpu hardware by the model. Defaults to True.
+            batch_size (int, optional): batch size used by dataloaders. Defaults is 32.
+        """
+        super(Decoder_Unet, self).__init__()
+        self.useGPU             = useGPU
+        self.batch_size         = batch_size
+        self.version            = "Experiment test"
+        self.scenario           = scenario
+        self.augment_data_train = True
+        self.use_cutmix         = False
+
+        self.path_models        = "./models/test_models"
+        
+        if self.useGPU: self.device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
+        else: self.device = "cpu"
+        
+            
+        # load dataset: train, validation and test.
+        self.train_dataset  = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False, augment= self.augment_data_train, label_vector= False)  # set label_vector = False for CutMix collate
+        
+        # load model
+        self.model_type = "Unet" 
+        self.model = U_net()
+        
+        self.feature_exp        = self.model.features_order
+        
+        self.model.to(self.device)
+        self.model.eval()
+        
+        # define loss and final activation function
+        self.loss_name  = "Reconstruction loss"
+        
+        # learning hyperparameters (default)
+        self.lr                     = 1e-4
+        self.n_epochs               = 40
+        self.weight_decay           = 0.001          # L2 regularization term 
+        
     
+    def _hyperParams(self):
+        return {
+            "lr": self.lr,
+            "batch_size": self.batch_size,
+            "epochs_max": self.n_epochs,
+            "weight_decay": self.weight_decay,
+                }
+    
+    def _dataConf(self):
+        
+        # load not fixed config specs with try-catch
+        try:
+            d_out = self.model.decoder_out_fn.__class__.__name__
+        except:
+            d_out = "empty"
+        
+        
+        return {
+            "date_training": date.today().strftime("%d-%m-%Y"),
+            "model": self.model_type,
+            "decoder_out_activation": d_out,
+            "data_scenario": self.scenario,
+            "version_train": self.version,
+            "optimizer": self.optimizer.__class__.__name__,
+            "scheduler": self.scheduler.__class__.__name__,
+            "loss": self.loss_name,
+            "base_augmentation": self.augment_data_train,
+            "cutmix": self.use_cutmix,            
+            "grad_scaler": True,                # always true
+            "features_exp_order": self.feature_exp
+            }
+    
+    def init_logger(self, path_model):
+        """
+            path_model -> specific path of the current model training
+        """
+        
+        logger = ExpLogger(path_model=path_model)
+        logger.write_config(self._dataConf())
+        logger.write_hyper(self._hyperParams())
+        try:
+            logger.write_model(self.model.getSummary(verbose=False))
+        except:
+            print("Impossible to retrieve the model structure for logging")
+        
+        return logger
+
+        
+    def load(self, folder_model, epoch):
+        try:
+            self.path2model         = os.path.join(self.path_models,  folder_model, str(epoch) + ".ckpt")
+            self.modelEpochs        = epoch
+            loadModel(self.model, self.path2model)
+            self.model.eval()   # no train mode, fix dropout, batchnormalization, etc.
+        except Exception as e:
+            print(e)
+            print("No model: {} found for the epoch: {} in the folder: {}".format(folder_model, epoch, self.path_models))
+    
+    def reconstruction_loss(self, target, reconstruction, range255 = False):
+        """ 
+            reconstruction loss (MSE) over batch of images
+        
+        Args:
+            - target (T.tensor): image feeded into the netwerk to be reconstructed 
+            - reconstruction (T.tensor): image reconstructed by the decoder
+            - range255 (boolean): specify with which image range compute the loss
+        
+        Returns:
+            MSE loss (T.Tensor) with one scalar
+        
+        """
+        if range255:
+            return T.mean(T.square(image2int(target, True) - image2int(reconstruction, True)))
+        else:
+            return T.mean(T.square(target - reconstruction))
+    
+    @duration
+    def train(self, name_train, test_loop = False):
+        """
+        Args:
+            name_train (str) should include the scenario selected and the model name (i.e. ResNet50), keep this convention {scenario}_{model_name}
+        """
+    
+        # define the model dir path and create the directory
+        current_date = date.today().strftime("%d-%m-%Y")
+        path_model_folder       = os.path.join(self.path_models,  name_train + "_" + current_date)
+        check_folder(path_model_folder)
+        
+        # define train dataloader
+        train_dataloader = DataLoader(self.train_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
+                
+        # compute number of steps for epoch
+        n_steps = len(train_dataloader)
+        print("Number of steps per epoch: {}".format(n_steps))
+        
+        # define the optimization algorithm
+        self.optimizer =  Adam(self.model.parameters(), lr = self.lr, weight_decay =  self.weight_decay)
+        
+        # learning rate scheduler
+        self.scheduler = lr_scheduler.OneCycleLR(self.optimizer, max_lr=self.lr, steps_per_epoch=n_steps, epochs=self.n_epochs, pct_start=0.3)
+        
+        # model in training mode
+        self.model.train()
+        
+        # define the gradient scaler to avoid weigths explosion
+        scaler = GradScaler()
+        
+        # initialize logger
+        logger  = self.init_logger(path_model= path_model_folder)
+        
+        # intialize data structure to keep track of training performance
+        loss_epochs = []
+        
+        # initialzie the patience counter and history for early stopping
+        last_epoch       = 0
+        
+        self.modelEpochs = 0
+        # loop over epochs
+        for epoch_idx in range(self.n_epochs):
+            print(f"\n             [Epoch {epoch_idx+1}]             \n")
+            
+            # define cumulative loss for the current epoch and max/min loss
+            loss_epoch = 0; max_loss_epoch = 0; min_loss_epoch = math.inf
+            
+            # update the last epoch for training the model
+            last_epoch = epoch_idx +1
+            
+            # loop over steps
+            for step_idx,(x,y) in tqdm(enumerate(train_dataloader), total= n_steps):
+                
+                if test_loop and step_idx+1 == 5: break
+                
+                # adjust labels if cutmix has been not applied (from indices to one-hot encoding)
+                if len(y.shape) == 1:
+                    y = T.nn.functional.one_hot(y)
+                
+                # prepare samples/targets batches 
+                x = x.to(self.device)
+                x.requires_grad_(True)
+                y = y.to(self.device)               # binary int encoding for each sample
+                y = y.to(T.float)
+                
+                # zeroing the gradient
+                self.optimizer.zero_grad()
+                
+                # model forward and loss computation
+                with autocast():
+                    # print(x.shape)
+                    rec, _ = self.model.forward(x)
+                    loss = self.reconstruction_loss(target = x, reconstruction = rec)
+                    
+                # update total loss    
+                loss_epoch += loss.item()   # from tensor with single value to int and accumulation
+                
+                if loss_epoch>max_loss_epoch    : max_loss_epoch = round(loss_epoch,4)
+                if loss_epoch<min_loss_epoch    : min_loss_epoch = round(loss_epoch,4)
+                # loss backpropagation
+                scaler.scale(loss).backward()
+                
+                # compute updates using optimizer
+                scaler.step(self.optimizer)
+
+                # update weights through scaler
+                scaler.update()
+                
+                # lr scheduler step 
+                self.scheduler.step()
+                
+            # compute average loss for the epoch
+            avg_loss = round(loss_epoch/n_steps,4)
+            loss_epochs.append(avg_loss)
+            print("Average loss: {}".format(avg_loss))
+            
+            # create dictionary with info frome epoch: loss + valid, and log it
+            epoch_data = {"epoch": last_epoch, "avg_loss": avg_loss, "max_loss": max_loss_epoch, "min_loss": min_loss_epoch}
+            logger.log(epoch_data)
+            
+            if test_loop and last_epoch == 5: break
+        
+        # create paths and file names for saving training outcomes        
+        name_model_file         = str(last_epoch) +'.ckpt'
+        path_model_save         = os.path.join(path_model_folder, name_model_file)  # path folder + name file
+        
+        name_loss_file          = 'loss_'+ str(last_epoch) +'.png'
+        path_lossPlot_save      = os.path.join(path_model_folder, name_loss_file)
+        
+        
+        # save info for the new model trained
+        self.modelEpochs        = last_epoch
+        
+        # save loss plot
+        plot_loss(loss_epochs, title_plot= name_train, path_save = path_lossPlot_save)
+        
+        # save model
+        saveModel(self.model, path_model_save)
+        
+        # terminate the logger
+        logger.end_log()
+    
+       
 if __name__ == "__main__":
     #                           [Start test section] 
     
@@ -528,12 +796,14 @@ if __name__ == "__main__":
         classifier.train()
         classifier.load_model()
     
-    # train end-dec
-    def train_EndDec_content():
+    # train decoders
+    def train_ResNetED_content():
         model = Decoder_ResNetEDS(scenario="content")
         model.train(name_train="faces_resnet50ED")
     
-    def train_Unet_content(): pass
+    def train_Unet_content(): 
+        model = Decoder_Unet(scenario="content")
+        model.train(name_train="faces_Unet4")
     
     # show results from end-dec
     def showReconstruction(name_model, epoch, scenario):
@@ -548,7 +818,7 @@ if __name__ == "__main__":
         showImage(rec_img, name="reconstructed2_decoding_resnet50ED", save_image = True)
     
     
-    train_EndDec_content()        
+    train_Unet_content()        
 
     # showReconstruction(name_model="faces_resnet50ED_18-11-2023", epoch= 40, scenario = "content")
     

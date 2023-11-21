@@ -1,6 +1,7 @@
 import time
 
 import  torch                          as T
+import  math
 import  torch.nn                       as nn
 from    torchsummary                   import summary
 from    torchvision                    import models
@@ -269,8 +270,7 @@ class ResNet_ImageNet():   # not nn.Module subclass, but still implement forward
         # edit fully connected layer for the output
         model.fc = nn.Linear(model.fc.in_features, self.n_classes)
         return model
-    
-    
+        
     def getModel(self):
         return self.model
     
@@ -302,7 +302,7 @@ class ResNet_ImageNet():   # not nn.Module subclass, but still implement forward
         x = self.model(x)
         return x
     
-#_____________________________________ OOD modules _________________________________________________
+#_____________________________________ OOD custom modules __________________________________________
 
 class ResNet_EDS(nn.Module): 
     """ ResNet multi head module with Encoder, Decoder and scorer (Classifier) """
@@ -339,6 +339,7 @@ class ResNet_EDS(nn.Module):
         
         print("bottleneck size is: {}".format(bottleneck_size))
         
+        self.decoder_out_fn= nn.Sigmoid()
     
         # Define the Decoder (self.use_upsample defines in which way increase spatial dimension from 1x1 to 7x7)
         if self.use_upsample:   
@@ -366,7 +367,7 @@ class ResNet_EDS(nn.Module):
                 nn.GELU(),
                 self.conv_block_decoder(n_filter=3),
                 
-                nn.Sigmoid()             # to have pixels in the range of 0,1  (or  nn.Tanh)
+                self.decoder_out_fn             # to have pixels in the range of 0,1  (or  nn.Tanh)
             )
         else:
             self.decoder_module = nn.Sequential(
@@ -396,7 +397,7 @@ class ResNet_EDS(nn.Module):
                 nn.GELU(),
                 self.conv_block_decoder(n_filter=3),
                 
-                nn.Sigmoid()             # to have pixels in the range of 0,1  (or  nn.Tanh)
+                self.decoder_out_fn             # to have pixels in the range of 0,1  (or  nn.Tanh)
             )
         
         # initialize scorer and decoder
@@ -629,13 +630,13 @@ class encoder_block(nn.Module):
     def forward(self, inputs):
         x = self.conv(inputs)
         p = self.pool(x)
-        # return x, p
-        return p
+        return x, p
+        # return p
 
 class decoder_block(nn.Module):
-    def __init__(self, in_c, out_c):
+    def __init__(self, in_c, out_c, out_pad = 0):
         super().__init__()
-        self.up = nn.ConvTranspose2d(in_c, out_c, kernel_size=2, stride=2, padding=0)
+        self.up = nn.ConvTranspose2d(in_c, out_c, kernel_size=2, stride=2, padding=0, output_padding = out_pad)
         self.conv = conv_block(out_c+out_c, out_c)
         
     def forward(self, inputs, skip):
@@ -651,34 +652,38 @@ class U_net(nn.Module):
         self.n_channels = n_channels
         self.w = w
         self.h = h
+        self.features_order = 4   # orders greater and equal than 5 saturates the GPU!
+        self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
+        
         
         # create net and initialize
         self._createNet()
         self._init_weights_kaimingNormal()
+
         
-    
     def _createNet(self):
         
         # encoder
-        self.e1 = encoder_block(self.n_channels, 64)
-        self.e2 = encoder_block(64, 128)
-        self.e3 = encoder_block(128, 256)
-        self.e4 = encoder_block(256, 512)
+        self.e1 = encoder_block(self.n_channels, self.feature_maps(0))
+        self.e2 = encoder_block(self.feature_maps(0) , self.feature_maps(1))
+        self.e3 = encoder_block(self.feature_maps(1) , self.feature_maps(2))
+        self.e4 = encoder_block(self.feature_maps(2) , self.feature_maps(3))
         
         # bottlenech (encoding)
-        self.b = conv_block(512, 1024)
+        self.b = conv_block(self.feature_maps(3) , self.feature_maps(4))
         
         # Flatten the encoding
         self.flatten = nn.Flatten()
     
         # decoder 
-        self.d1 = decoder_block(1024, 51),
-        self.d2 = decoder_block(512, 256),
-        self.d3 = decoder_block(256, 128),
-        self.d4 = decoder_block(128, 64),
+        self.d1 = decoder_block(self.feature_maps(4) , self.feature_maps(3))
+        self.d2 = decoder_block(self.feature_maps(3) , self.feature_maps(2))
+        self.d3 = decoder_block(self.feature_maps(2) , self.feature_maps(1))
+        self.d4 = decoder_block(self.feature_maps(1) , self.feature_maps(0))
             
-        self.out= decoder_block(64, self.n_channels)
-        # self.sig = nn.Sigmoid()
+        # self.out= decoder_block(64, self.n_channels)
+        self.out = nn.Conv2d(self.feature_maps(0), self.n_channels, kernel_size=1, padding=0)
+        self.decoder_out_fn = nn.Sigmoid()
             
         # self.model = nn.Sequential(self.encoder, self.decoder)
 
@@ -707,15 +712,13 @@ class U_net(nn.Module):
         
         # if verbose: v = 1
         # else: v = 0
-        # model_stats = summary(self, input_shape, verbose = v)
-        # return str(model_stats)
-        
-        # summary =  list(self.getLayers().keys())
+        # summ = summary(self, input_shape, verbose = v)
+        # return str(summ)
         
         summary = ""
         for k,v in self.getLayers().items():
             summary += "{:<30} -> {:<30}".format(k,str(tuple(v.shape))) + "\n"
-        print(summary)
+        if verbose: print(summary)
         return summary
      
     def to_device(self, device):
@@ -740,11 +743,11 @@ class U_net(nn.Module):
         # p2 = self.e2(p1)
         # p3 = self.e3(p2)
         # p4 = self.e4(p3)
-        
+    
         # bottlenech (encoding)
         bottleneck = self.b(p4)
         enc = self.flatten(bottleneck)
-        
+
         # decoder 
         d1 = self.d1(bottleneck, s4)
         d2 = self.d2(d1, s3)
@@ -757,7 +760,7 @@ class U_net(nn.Module):
         # d4 = self.d4(d3, p1)
         
         # reconstuction
-        rec = self.out(d4)   # add sigmoid
+        rec = self.decoder_out_fn(self.out(d4))  # check sigmoid vs tanh
     
         return rec, enc
 
@@ -916,11 +919,12 @@ if __name__ == "__main__":
     def test_Unet():
         unet = U_net(n_channels=3)
         unet.to_device(device)
-        unet.getSummary()
-        # print(unet.getLayers())
+        
+        x = T.rand((64, 3, 224, 224)).to(device)
+        print(x.shape)
+        r,e = unet.forward(x)
+        print(r.shape, e.shape)
 
-    
-    
     test_Unet()
 
     #                           [End test section] 

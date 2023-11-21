@@ -988,7 +988,6 @@ class expand_encoding(T.nn.Module):
     def forward(self, x):
         return x.view(*self.shape)
 
-
 class ExpLogger(object):
     """ Simple class to keep track of learning and experiment information"""
     
@@ -1072,9 +1071,6 @@ class ExpLogger(object):
         self.file.write("\n\n\n\n*** Ended model training log ***")
         self.flush()
         self.file.close()
-    
-    
-    
     
 ##################################################  General Python utilities ##########################################################
 
