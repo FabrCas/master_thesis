@@ -10,7 +10,7 @@ from    utilities                      import print_dict, print_list, expand_enc
 
 
 
-#_________________________________________ ResNet__________________________________________
+#_________________________________________ ResNet__________________________________________________
 
 """
                             ResNet (scratch) Legend:
@@ -302,6 +302,170 @@ class ResNet_ImageNet():   # not nn.Module subclass, but still implement forward
         x = self.model(x)
         return x
     
+
+# _____________________________________ U net ______________________________________________________
+
+class conv_block(nn.Module):
+    def __init__(self, in_c, out_c):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_c, out_c, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(out_c)
+        self.conv2 = nn.Conv2d(out_c, out_c, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(out_c)
+        self.relu = nn.ReLU()
+        
+    def forward(self, inputs):
+        x = self.conv1(inputs)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.conv2(x)
+        x = self.bn2(x)
+        x = self.relu(x)
+        return x
+
+class encoder_block(nn.Module):
+    def __init__(self, in_c, out_c):
+        super().__init__()
+        self.conv = conv_block(in_c, out_c)
+        self.pool = nn.MaxPool2d((2, 2))
+        
+    def forward(self, inputs):
+        x = self.conv(inputs)
+        p = self.pool(x)
+        return x, p
+        # return p
+
+class decoder_block(nn.Module):
+    def __init__(self, in_c, out_c, out_pad = 0):
+        super().__init__()
+        self.up = nn.ConvTranspose2d(in_c, out_c, kernel_size=2, stride=2, padding=0, output_padding = out_pad)
+        self.conv = conv_block(out_c+out_c, out_c)
+        
+    def forward(self, inputs, skip):
+        x = self.up(inputs)
+        x = T.cat([x, skip], axis=1)
+        x = self.conv(x)
+        return x
+
+class U_net(nn.Module):
+    
+    def __init__(self,  n_channels = 3, w= 244, h=244):
+        super(U_net, self).__init__()
+        self.n_channels = n_channels
+        self.w = w
+        self.h = h
+        self.features_order = 4   # orders greater and equal than 5 saturates the GPU!
+        self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
+        
+        
+        # create net and initialize
+        self._createNet()
+        self._init_weights_kaimingNormal()
+
+        
+    def _createNet(self):
+        
+        # encoder
+        self.e1 = encoder_block(self.n_channels, self.feature_maps(0))
+        self.e2 = encoder_block(self.feature_maps(0) , self.feature_maps(1))
+        self.e3 = encoder_block(self.feature_maps(1) , self.feature_maps(2))
+        self.e4 = encoder_block(self.feature_maps(2) , self.feature_maps(3))
+        
+        # bottlenech (encoding)
+        self.b = conv_block(self.feature_maps(3) , self.feature_maps(4))
+        
+        # Flatten the encoding
+        self.flatten = nn.Flatten()
+    
+        # decoder 
+        self.d1 = decoder_block(self.feature_maps(4) , self.feature_maps(3))
+        self.d2 = decoder_block(self.feature_maps(3) , self.feature_maps(2))
+        self.d3 = decoder_block(self.feature_maps(2) , self.feature_maps(1))
+        self.d4 = decoder_block(self.feature_maps(1) , self.feature_maps(0))
+            
+        # self.out= decoder_block(64, self.n_channels)
+        self.out = nn.Conv2d(self.feature_maps(0), self.n_channels, kernel_size=1, padding=0)
+        self.decoder_out_fn = nn.Sigmoid()
+            
+        # self.model = nn.Sequential(self.encoder, self.decoder)
+
+
+    def _init_weights_kaimingNormal(self):
+        # Initialize the weights  using He initialization
+        print("Weights initialization using kaiming Normal")
+               
+        for param in self.parameters():
+            if len(param.shape) > 1:
+                T.nn.init.kaiming_normal_(param, mode='fan_out', nonlinearity='relu')
+    
+
+    def _init_weights_normal(self):
+        print(f"Weights initialization using Gaussian distribution")
+        # Initialize the weights with Gaussian distribution
+        for param in self.parameters():
+            if len(param.shape) > 1:
+                T.nn.init.normal_(param, mean=0, std=0.01) 
+
+    def getSummary(self, input_shape = (3,244,244), verbose = True):  #shape: color,width,height
+        """
+            input_shape -> tuple with simulated dimension used for the model summary
+            expected input of this type -> color,width,height
+        """
+        
+        # if verbose: v = 1
+        # else: v = 0
+        # summ = summary(self, input_shape, verbose = v)
+        # return str(summ)
+        
+        summary = ""
+        for k,v in self.getLayers().items():
+            summary += "{:<30} -> {:<30}".format(k,str(tuple(v.shape))) + "\n"
+        if verbose: print(summary)
+        return summary
+     
+    def to_device(self, device):
+        self.to(device)
+    
+    def getLayers(self):
+        return dict(self.named_parameters())
+    
+    def freeze(self):
+        for name, param in self.named_parameters():
+            param.requires_grad = False
+    
+    def forward(self, x):
+        
+        # encoder
+        s1, p1 = self.e1(x)
+        s2, p2 = self.e2(p1)
+        s3, p3 = self.e3(p2)
+        s4, p4 = self.e4(p3)
+        
+        # p1 = self.e1(x)
+        # p2 = self.e2(p1)
+        # p3 = self.e3(p2)
+        # p4 = self.e4(p3)
+    
+        # bottlenech (encoding)
+        bottleneck = self.b(p4)
+        enc = self.flatten(bottleneck)
+
+        # decoder 
+        d1 = self.d1(bottleneck, s4)
+        d2 = self.d2(d1, s3)
+        d3 = self.d3(d2, s2)
+        d4 = self.d4(d3, s1)
+        
+        # d1 = self.d1(enc, p4)
+        # d2 = self.d2(d1, p3)
+        # d3 = self.d3(d2, p2)
+        # d4 = self.d4(d3, p1)
+        
+        # reconstuction
+        rec = self.decoder_out_fn(self.out(d4))  # check sigmoid vs tanh
+    
+        return rec, enc
+
 #_____________________________________ OOD custom modules __________________________________________
 
 class ResNet_EDS(nn.Module): 
@@ -599,70 +763,28 @@ class ResNet_EDS(nn.Module):
         
         return features, logits, reconstruction
 
+class U_netScorer(nn.Module):
 
-
-# _____________________________________ U net ______________________________________________________
-
-class conv_block(nn.Module):
-    def __init__(self, in_c, out_c):
-        super().__init__()
-        self.conv1 = nn.Conv2d(in_c, out_c, kernel_size=3, padding=1)
-        self.bn1 = nn.BatchNorm2d(out_c)
-        self.conv2 = nn.Conv2d(out_c, out_c, kernel_size=3, padding=1)
-        self.bn2 = nn.BatchNorm2d(out_c)
-        self.relu = nn.ReLU()
-        
-    def forward(self, inputs):
-        x = self.conv1(inputs)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.conv2(x)
-        x = self.bn2(x)
-        x = self.relu(x)
-        return x
-
-class encoder_block(nn.Module):
-    def __init__(self, in_c, out_c):
-        super().__init__()
-        self.conv = conv_block(in_c, out_c)
-        self.pool = nn.MaxPool2d((2, 2))
-        
-    def forward(self, inputs):
-        x = self.conv(inputs)
-        p = self.pool(x)
-        return x, p
-        # return p
-
-class decoder_block(nn.Module):
-    def __init__(self, in_c, out_c, out_pad = 0):
-        super().__init__()
-        self.up = nn.ConvTranspose2d(in_c, out_c, kernel_size=2, stride=2, padding=0, output_padding = out_pad)
-        self.conv = conv_block(out_c+out_c, out_c)
-        
-    def forward(self, inputs, skip):
-        x = self.up(inputs)
-        x = T.cat([x, skip], axis=1)
-        x = self.conv(x)
-        return x
-
-class U_net(nn.Module):
-    
-    def __init__(self,  n_channels = 3, w= 244, h=244):
-        super(U_net, self).__init__()
+    def __init__(self,  n_channels = 3, n_classes= 10, w= 224, h=224):
+        super(U_netScorer, self).__init__()
         self.n_channels = n_channels
         self.w = w
         self.h = h
+        self.n_classes = n_classes
         self.features_order = 4   # orders greater and equal than 5 saturates the GPU!
         self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
-        
+        self.bottleneck_size = int(self.feature_maps(4)*(w/16)*(w/16))
         
         # create net and initialize
         self._createNet()
+        
+        # initialize conv layers
         self._init_weights_kaimingNormal()
-
         
+        # initialize FC layer
+        self._init_weights_normal(self.fc)
+    
     def _createNet(self):
-        
         # encoder
         self.e1 = encoder_block(self.n_channels, self.feature_maps(0))
         self.e2 = encoder_block(self.feature_maps(0) , self.feature_maps(1))
@@ -674,7 +796,8 @@ class U_net(nn.Module):
         
         # Flatten the encoding
         self.flatten = nn.Flatten()
-    
+        self.fc = nn.Linear(self.bottleneck_size, self.n_classes)
+        
         # decoder 
         self.d1 = decoder_block(self.feature_maps(4) , self.feature_maps(3))
         self.d2 = decoder_block(self.feature_maps(3) , self.feature_maps(2))
@@ -688,33 +811,27 @@ class U_net(nn.Module):
         # self.model = nn.Sequential(self.encoder, self.decoder)
 
 
-    def _init_weights_kaimingNormal(self):
+    def _init_weights_kaimingNormal(self, model = None):
         # Initialize the weights  using He initialization
         print("Weights initialization using kaiming Normal")
-        # for param in self.encoder.parameters():
-        #     if len(param.shape) > 1:
-        #         T.nn.init.kaiming_normal_(param, mode='fan_out', nonlinearity='relu')
         
-        # for param in self.decoder.parameters():
-        #     if len(param.shape) > 1:
-        #         T.nn.init.kaiming_normal_(param, mode='fan_out', nonlinearity='relu')
+        if model is None: model = self
         
-        for param in self.parameters():
+        for param in model.parameters():
             if len(param.shape) > 1:
                 T.nn.init.kaiming_normal_(param, mode='fan_out', nonlinearity='relu')
     
 
-    def getSummary(self, input_shape = (3,244,244), verbose = True):  #shape: color,width,height
-        """
-            input_shape -> tuple with simulated dimension used for the model summary
-            expected input of this type -> color,width,height
-        """
+    def _init_weights_normal(self, model = None):
+        # Initialize the weights with Gaussian distribution
+        print(f"Weights initialization using Gaussian distribution")
         
-        # if verbose: v = 1
-        # else: v = 0
-        # summ = summary(self, input_shape, verbose = v)
-        # return str(summ)
-        
+        if model is None: model = self
+        for param in model.parameters():
+            if len(param.shape) > 1:
+                T.nn.init.normal_(param, mean=0, std=0.01) 
+
+    def getSummary(self, verbose = True): 
         summary = ""
         for k,v in self.getLayers().items():
             summary += "{:<30} -> {:<30}".format(k,str(tuple(v.shape))) + "\n"
@@ -738,15 +855,11 @@ class U_net(nn.Module):
         s2, p2 = self.e2(p1)
         s3, p3 = self.e3(p2)
         s4, p4 = self.e4(p3)
-        
-        # p1 = self.e1(x)
-        # p2 = self.e2(p1)
-        # p3 = self.e3(p2)
-        # p4 = self.e4(p3)
     
         # bottlenech (encoding)
         bottleneck = self.b(p4)
-        enc = self.flatten(bottleneck)
+        enc         = self.flatten(bottleneck)
+        logits      = self.fc(enc)
 
         # decoder 
         d1 = self.d1(bottleneck, s4)
@@ -754,22 +867,50 @@ class U_net(nn.Module):
         d3 = self.d3(d2, s2)
         d4 = self.d4(d3, s1)
         
-        # d1 = self.d1(enc, p4)
-        # d2 = self.d2(d1, p3)
-        # d3 = self.d3(d2, p2)
-        # d4 = self.d4(d3, p1)
-        
         # reconstuction
         rec = self.decoder_out_fn(self.out(d4))  # check sigmoid vs tanh
-    
-        return rec, enc
+        return logits, rec, enc
 
 
 class abnormality_module(nn.Module): 
-    def __init__(self):
+    def __init__(self, logits_shape, encoding_shape, residual_shape):
         super(abnormality_module, self).__init__()
+        self.logits_shape   = logits_shape
+        self.encoding_shape = encoding_shape
+        self.residual_shape = residual_shape
         
-
+        self._createNet()
+        self._init_weights_normal()
+    
+    def _createNet(self):
+        pass
+        
+    
+    def _init_weights_normal(self, model = None):
+        # Initialize the weights with Gaussian distribution
+        print(f"Weights initialization using Gaussian distribution")
+        
+        if model is None: model = self
+        for param in model.parameters():
+            if len(param.shape) > 1:
+                T.nn.init.normal_(param, mean=0, std=0.01) 
+                
+    def getSummary(self, verbose = True): 
+        summary = ""
+        for k,v in self.getLayers().items():
+            summary += "{:<30} -> {:<30}".format(k,str(tuple(v.shape))) + "\n"
+        if verbose: print(summary)
+        return summary
+        
+    def to_device(self, device):
+        self.to(device)
+    
+    def getLayers(self):
+        return dict(self.named_parameters())
+    
+    def freeze(self):
+        for name, param in self.named_parameters():
+            param.requires_grad = False
             
 #_____________________________________Vision Transformer (ViT)_____________________________________        
 
@@ -871,11 +1012,6 @@ def get_fc_classifier_Keras(input_shape = (28,28)):
 
     return model
 
-
-
-
-
-
 if __name__ == "__main__":
     #                           [Start test section] 
     
@@ -919,13 +1055,19 @@ if __name__ == "__main__":
     def test_Unet():
         unet = U_net(n_channels=3)
         unet.to_device(device)
-        
         x = T.rand((64, 3, 224, 224)).to(device)
         print(x.shape)
         r,e = unet.forward(x)
         print(r.shape, e.shape)
 
-    test_Unet()
+    def testUnetScorer():
+        unet = U_netScorer(n_channels=3, n_classes=2)
+        unet.to_device(device)
+        print(unet.bottleneck_size)
+        x = T.rand((64, 3, 224, 224)).to(device)
+        print(x.shape)
+        logits, rec, enc = unet.forward(x)
+    
 
     #                           [End test section] 
     

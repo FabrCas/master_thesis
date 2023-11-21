@@ -803,31 +803,48 @@ if __name__ == "__main__":
         model.train(name_train="faces_Unet4")
     
     # show results from end-dec
-    def showReconstruction(name_model, epoch, scenario):
+    def showReconstructionResnetED(name_model, epoch, scenario):
+        
+        n_picture = 0
         model = Decoder_ResNetEDS(scenario = scenario, useGPU= True)
         model.load(name_model, epoch)
-        img, _ = model.train_dataset.__getitem__(3)
-        showImage(img, name = "original2_decoding_resnet50ED", save_image = True)
+        img, _ = model.train_dataset.__getitem__(n_picture)
+        showImage(img, name = "original_"+ str(n_picture), save_image = True)
         img     = T.unsqueeze(img, dim= 0).to(model.device)
         enc     = model.model.encoder_module.forward(img)
         rec_img = model.model.decoder_module.forward(enc)
         rec_img = T.squeeze(rec_img, dim = 0)
-        showImage(rec_img, name="reconstructed2_decoding_resnet50ED", save_image = True)
+        showImage(rec_img, name="reconstructed_"+ str(n_picture) + "_decoding_" + name_model, save_image = True)
+        
+    def showReconstructionUnet(name_model, epoch, scenario):
+        n_picture = 3
+        decoder = Decoder_Unet(scenario = scenario, useGPU= True)
+        decoder.load(name_model, epoch)
+        img, _ = decoder.train_dataset.__getitem__(n_picture)
+        showImage(img, name = "original_"+ str(n_picture), save_image = True)
+        img     = T.unsqueeze(img, dim= 0).to(decoder.device)
+        
+        rec_img, _ = decoder.model.forward(img)
+        rec_img = T.squeeze(rec_img, dim = 0)
+        
+        showImage(rec_img, name="reconstructed_"+ str(n_picture) + "_decoding_" + name_model, save_image = True)
     
-    
-    train_ResNetED_content()        
+    # train_ResNetED_content()        
 
-    # showReconstruction(name_model="faces_resnet50ED_18-11-2023", epoch= 40, scenario = "content")
+    # showReconstructionResnetED(name_model="faces_resnet50ED_21-11-2023", epoch= 40, scenario = "content")
+    # showReconstructionUnet(name_model="faces_Unet4_21-11-2023", epoch= 40, scenario = "content")
     
     #                           [End test section] 
     
     """ 
             Past test/train launched: 
-            
+        
     train_baseline_tf()
+   
+    train_ResNetED_content()
     train_Unet_content()
     train_ResNetED_content()
     
-    train_EndDec_content()
+    showReconstructionResnetED(name_model="faces_resnet50ED_18-11-2023", epoch= 40, scenario = "content")
     showReconstruction(name_model="faces_resnet50ED_18-11-2023", epoch= 40, scenario = "content")
     """

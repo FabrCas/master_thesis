@@ -1052,7 +1052,6 @@ class ExpLogger(object):
         
     def end_log(self):
         self.write(self.delimiter_line)  # close section training for each epoch
-        self.flush()
         self.close()
      
     def open(self):
@@ -1068,7 +1067,7 @@ class ExpLogger(object):
         self.file.flush()
         
     def close(self):
-        self.file.write("\n\n\n\n*** Ended model training log ***")
+        self.write("\n\n\n\n*** Ended model training log ***")
         self.flush()
         self.file.close()
     

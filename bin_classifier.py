@@ -18,7 +18,7 @@ from    torch.utils.data                    import default_collate
 from    utilities                           import plot_loss, saveModel, metrics_binClass, loadModel, test_num_workers, sampleValidSet, \
                                             duration, check_folder, cutmix_image, showImage, image2int, ExpLogger
 from    dataset                             import CDDB_binary, CDDB_binary_Partial
-from    models                              import ResNet_ImageNet, ResNet, ResNet_EDS
+from    models                              import ResNet_ImageNet, ResNet, ResNet_EDS, U_netScorer
 
 
 # from    sklearn.metrics     import precision_recall_curve, auc, roc_auc_score
@@ -649,10 +649,10 @@ class DFD_BinClassifier_v3(BinaryClassifier):
         - CutMix usage (https://arxiv.org/abs/1905.04899)
         - Simulataneous learning of a decoder module
         - new interpolated loss as alpha * classification loss + beta* reconstruction loss
+        changed lr from 1e-5 to 1e-4.
         
         training model folders:
         faces_resnet_50EDS_v3_.17-11-2023
-        
     """
     def __init__(self, scenario, useGPU = True, batch_size = 32):
         """ init classifier
@@ -673,7 +673,7 @@ class DFD_BinClassifier_v3(BinaryClassifier):
         self.version = 3
         self.scenario = scenario
         self.augment_data_train = True
-        self.use_cutmix         = False
+        self.use_cutmix         = True
             
         # load dataset: train, validation and test.
         
@@ -975,7 +975,7 @@ class DFD_BinClassifier_v3(BinaryClassifier):
             
             self.early_stopping_trigger
             # create dictionary with info frome epoch: loss + valid, and log it
-            epoch_data = {"epoch": last_epoch, "avg_loss": avg_loss, "max_loss": max_loss_epoch, /
+            epoch_data = {"epoch": last_epoch, "avg_loss": avg_loss, "max_loss": max_loss_epoch, \
                           "min_loss": min_loss_epoch, self.early_stopping_trigger + "_valid": criterion}
             logger.log(epoch_data)
             
@@ -1038,6 +1038,404 @@ class DFD_BinClassifier_v3(BinaryClassifier):
         
         encoding    = self.model.encoder_module.forward(x) 
         logits      = self.model.scorer_module.forward(encoding)
+        probs       = self.sigmoid(logits)
+        pred        = T.argmax(probs, -1)
+        fake_prob   = probs[:,1]   # positive class probability (fake probability)
+        
+        return pred, fake_prob, logits
+
+class DFD_BinClassifier_v4(BinaryClassifier):
+    """
+        binary classifier for deepfake detection using partial CDDB dataset for the chosen scenario configuration.
+        Model used: Custom Unet with encoder/decoder structure (ResNet_EDS)
+        This fourth version is the same of v3, but uses the Unet with scorer model.
+        batch size from 32 to 64
+        
+        training model folders:
+
+    """
+    def __init__(self, scenario, useGPU = True, batch_size = 64):
+        """ init classifier
+
+        Args:
+            scenario (str): select between "content","group","mix" scenarios:
+            - "content", data (real/fake for each model that contains a certain type of images) from a pseudo-category,
+            chosen only samples with faces, OOD -> all other data that contains different subject from the one in ID.
+            - "group", ID -> assign 2 data groups from CDDB (deep-fake resources, non-deep-fake resources),
+            OOD-> the remaining data group (unknown models)
+            - "mix", mix ID and ODD without maintaining the integrity of the CDDB groups, i.e take models samples from
+            1st ,2nd,3rd groups and do the same for OOD without intersection.
+            
+            useGPU (bool, optional): flag to use CUDA device or cpu hardware by the model. Defaults to True.
+            batch_size (int, optional): batch size used by dataloaders. Defaults is 32.
+        """
+        super(DFD_BinClassifier_v4, self).__init__(useGPU = useGPU, batch_size = batch_size, model_type = "U-net_Scorer")
+        self.version = 4
+        self.scenario = scenario
+        self.augment_data_train = True
+        self.use_cutmix         = True
+            
+        # load dataset: train, validation and test.
+        
+        if self.use_cutmix:
+            self.train_dataset  = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False, augment= self.augment_data_train, label_vector= False)  # set label_vector = False for CutMix collate
+        else:
+             self.train_dataset  = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False, augment= self.augment_data_train, label_vector= True)
+        test_dataset        = CDDB_binary_Partial(scenario = self.scenario, train = False, ood = False, augment= False)
+        self.valid_dataset, self.test_dataset = sampleValidSet(trainset= self.train_dataset, testset= test_dataset, useOnlyTest = True, verbose = True)
+        
+        # load model
+        self.model_type = "U-net_Scorer" 
+        self.model = U_netScorer(n_channels=3, n_classes=2)
+          
+        self.model.to(self.device)
+        self.model.eval()
+        
+        # define loss and final activation function
+        self.sigmoid = F.sigmoid
+        self.bce     = F.binary_cross_entropy_with_logits
+        
+        # learning hyperparameters (default)
+        self.lr                     = 1e-4
+        self.n_epochs               = 40
+        self.weight_decay           = 0.001          # L2 regularization term 
+        self.patience               = 5              # early stopping patience
+        self.early_stopping_trigger = "acc"        # values "acc" or "loss"
+        
+        # loss definition + interpolation values for the new loss
+        self.loss_name = "bce + reconstruction loss"
+        self.alpha_loss             = 0.9  # bce
+        self.beta_loss              = 0.1  # reconstruction
+
+        self._check_parameters()
+     
+    def _check_parameters(self):
+        if not(self.early_stopping_trigger in ["loss", "acc"]):
+            raise ValueError('The early stopping trigger value must be chosen between "loss" and "acc"')
+        if self.alpha_loss + self.beta_loss != 1.: 
+            raise  ValueError('Interpolation hyperparams (alpha, beta) should sum up to 1!')
+    
+    def _hyperParams(self):
+        return {
+            "lr": self.lr,
+            "batch_size": self.batch_size,
+            "epochs_max": self.n_epochs,
+            "weight_decay": self.weight_decay,
+            "early_stopping_patience": self.patience,
+            "early_stopping_trigger": self.early_stopping_trigger
+                }
+    
+    def _dataConf(self):
+        
+        # load not fixed config specs with try-catch
+        try:
+            d_out = self.model.decoder_out_fn.__class__.__name__
+        except:
+            d_out = "empty"
+        
+        
+        return {
+            "date_training": date.today().strftime("%d-%m-%Y"),
+            "model": self.model_type,
+            "decoder_out_activation": d_out,
+            "data_scenario": self.scenario,
+            "version_train": self.version,
+            "optimizer": self.optimizer.__class__.__name__,
+            "scheduler": self.scheduler.__class__.__name__,
+            "loss": self.loss_name,
+            "base_augmentation": self.augment_data_train,
+            "cutmix": self.use_cutmix,            
+            "grad_scaler": True,                # always true
+            "features_exp_order": self.model.features_order
+            }
+    
+    
+    def valid(self, epoch, valid_dataloader):
+        """
+            validation method used mainly for the Early stopping training
+        """
+        print (f"Validation for the epoch: {epoch} ...")
+        
+        # set temporary evaluation mode and empty cuda cache
+        self.model.eval()
+        T.cuda.empty_cache()
+        
+        # list of losses
+        losses = []
+        # counters to compute accuracy
+        correct_predictions = 0
+        num_predictions = 0
+        
+        for (x,y) in tqdm(valid_dataloader):
+            
+            x = x.to(self.device)
+            # y = y.to(self.device).to(T.float32)
+            y = y.to(self.device).to(T.float32)
+            
+            with T.no_grad():
+                with autocast():
+                    
+                    logits, _, _ = self.model.forward(x) 
+                    
+                    if self.early_stopping_trigger == "loss":
+                        loss = self.bce(input=logits, target=y)   # logits bce version
+                        losses.append(loss.item())
+                        
+                    elif self.early_stopping_trigger == "acc":
+                        probs = self.sigmoid(logits)
+ 
+                        # prepare predictions and targets
+                        y_pred  = T.argmax(probs, -1).cpu().numpy()  # both are list of int (indices)
+                        y       = T.argmax(y, -1).cpu().numpy()
+                        
+                        # update counters
+                        correct_predictions += (y_pred == y).sum()
+                        num_predictions += y_pred.shape[0]
+                        
+        # go back to train mode 
+        self.model.train()
+        
+        if self.early_stopping_trigger == "loss":
+            # return the average loss
+            loss_valid = sum(losses)/len(losses)
+            print(f"Loss from validation: {loss_valid}")
+            return loss_valid
+        elif self.early_stopping_trigger == "acc":
+            # return accuracy
+            accuracy_valid = correct_predictions / num_predictions
+            print(f"Accuracy from validation: {accuracy_valid}")
+            return accuracy_valid
+    
+    @duration
+    def train(self, name_train, test_loop = False):
+        """
+        Args:
+            name_train (str) should include the scenario selected and the model name (i.e. ResNet50), keep this convention {scenario}_{model_name}
+        """
+        
+        # define the model dir path and create the directory
+        current_date = date.today().strftime("%d-%m-%Y")    
+        path_model_folder       = os.path.join(self.path_models,  name_train + "_v{}_".format(str(self.version)) + current_date)
+        check_folder(path_model_folder)
+        
+        
+        # define train dataloader
+        train_dataloader = None
+        
+        if self.use_cutmix:
+            # intiialize CutMix (data augmentation/regularization) module and collate function
+            
+            cutmix = v2.CutMix(num_classes=2)                   # change for non-binary case!
+            def collate_cutmix(batch):
+                """
+                this function apply the CutMix technique with a certain probability (half probability). the batch should be
+                defined with idx labels, but cutmix returns a sequence of values (n classes) for each label based on the composition.
+                """
+                prob = 0.5
+                if random.random() < prob:
+                    return cutmix(*default_collate(batch))
+                else:
+                    return default_collate(batch) 
+            
+            
+           
+            train_dataloader = DataLoader(self.train_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True, collate_fn = collate_cutmix)
+        else:
+            train_dataloader = DataLoader(self.train_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
+        
+        # define valid dataloader
+        valid_dataloader = DataLoader(self.valid_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= False, pin_memory= True)
+        
+        # compute number of steps for epoch
+        n_steps = len(train_dataloader)
+        print("Number of steps per epoch: {}".format(n_steps))
+        
+        # define the optimization algorithm
+        self.optimizer =  Adam(self.model.parameters(), lr = self.lr, weight_decay =  self.weight_decay)
+        
+        # learning rate scheduler
+        if self.early_stopping_trigger == "loss":
+            self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor = 0.5, patience = 5, cooldown = 2, min_lr = self.lr, verbose = True) # reduce of a half the learning rate 
+        elif self.early_stopping_trigger == "acc":
+            self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='max', factor = 0.5, patience = 5, cooldown = 2, min_lr = self.lr, verbose = True) # reduce of a half the learning rate 
+        
+        # model in training mode
+        self.model.train()
+        
+        # define the gradient scaler to avoid weigths explosion
+        scaler = GradScaler()
+        
+        # initialize logger
+        logger  = self.init_logger(path_model= path_model_folder)
+        
+        # intialize data structure to keep track of training performance
+        loss_epochs = []
+        
+        # initialzie the patience counter and history for early stopping
+        valid_history       = []
+        counter_stopping    = 0
+        last_epoch          = 0
+        
+        # learned epochs by the model initialization
+        self.modelEpochs = 0
+        
+        # loop over epochs
+        for epoch_idx in range(self.n_epochs):
+            print(f"\n             [Epoch {epoch_idx+1}]             \n")
+            
+            # define cumulative loss for the current epoch and max/min loss
+            loss_epoch = 0; max_loss_epoch = 0; min_loss_epoch = math.inf
+            
+            # update the last epoch for training the model
+            last_epoch = epoch_idx +1
+            
+            # loop over steps
+            for step_idx,(x,y) in tqdm(enumerate(train_dataloader), total= n_steps):
+                
+                # test steps loop for debug
+                if test_loop and step_idx+1 == 5: break
+                
+                # adjust labels if cutmix has been not applied (from indices to one-hot encoding)
+                if len(y.shape) == 1:
+                    y = T.nn.functional.one_hot(y)
+                
+                # prepare samples/targets batches 
+                x = x.to(self.device)
+                x.requires_grad_(True)
+                y = y.to(self.device)               # binary int encoding for each sample
+                y = y.to(T.float)
+                
+                # zeroing the gradient
+                self.optimizer.zero_grad()
+                
+                # model forward and loss computation
+                with autocast():
+                    logits, reconstruction, _ = self.model.forward(x) 
+
+    
+                    # print(x.shape)
+                    # print(reconstruction.shape)
+                    # logits = self.model.forward(x)
+
+                    class_loss  = self.bce(input=logits, target=y)   # logits bce version
+                    rec_loss    = self.reconstruction_loss(target = x, reconstruction = reconstruction)
+                    loss = self.alpha_loss * class_loss + self.beta_loss * rec_loss 
+                    
+                
+                if loss_epoch>max_loss_epoch    : max_loss_epoch = round(loss_epoch,4)
+                if loss_epoch<min_loss_epoch    : min_loss_epoch = round(loss_epoch,4)
+                
+                # update total loss    
+                loss_epoch += loss.item()   # from tensor with single value to int and accumulation
+                
+                # loss backpropagation
+                scaler.scale(loss).backward()
+                
+                # compute updates using optimizer
+                scaler.step(self.optimizer)
+
+                # update weights through scaler
+                scaler.update()
+                
+            # compute average loss for the epoch
+            avg_loss = round(loss_epoch/n_steps,4)
+            loss_epochs.append(avg_loss)
+            print("Average loss: {}".format(avg_loss))
+            
+            # include validation here if needed
+            criterion = self.valid(epoch=epoch_idx+1, valid_dataloader= valid_dataloader)
+            
+            # early stopping update
+            if self.early_stopping_trigger == "loss":
+                valid_history.append(criterion)             
+                if epoch_idx > 0:
+                    if valid_history[-1] > valid_history[-2]:
+                        if counter_stopping >= self.patience:
+                            print("Early stop")
+                            break
+                        else:
+                            print("Pantience counter increased")
+                            counter_stopping += 1
+                    else:
+                        print("loss decreased respect previous epoch")
+                        
+            elif self.early_stopping_trigger == "acc":
+                valid_history.append(criterion)
+                if epoch_idx > 0:
+                    if valid_history[-1] < valid_history[-2]:
+                        if counter_stopping >= self.patience:
+                            print("Early stop")
+                            break
+                        else:
+                            print("Pantience counter increased")
+                            counter_stopping += 1
+                    else:
+                        print("Accuracy increased respect previous epoch")
+            
+            self.early_stopping_trigger
+            # create dictionary with info frome epoch: loss + valid, and log it
+            epoch_data = {"epoch": last_epoch, "avg_loss": avg_loss, "max_loss": max_loss_epoch, \
+                          "min_loss": min_loss_epoch, self.early_stopping_trigger + "_valid": criterion}
+            logger.log(epoch_data)
+            
+            # test epochs loop for debug   
+            if test_loop and last_epoch == 5: break
+            
+            # lr scheduler step based on validation result
+            self.scheduler.step(criterion)
+        
+        # create path for the model save
+        name_model_file         = str(last_epoch) +'.ckpt'
+        path_model_save         = os.path.join(path_model_folder, name_model_file)  # path folder + name file
+        
+        # create path for the model results
+        path_results_folder     = os.path.join(self.path_results, name_train + "_v{}_".format(str(self.version)) + current_date)
+        check_folder(path_results_folder)       # create if doesn't exist
+        name_loss_file          = 'loss_'+ str(last_epoch) +'.png'
+        path_lossPlot_save      = os.path.join(path_results_folder, name_loss_file)
+        
+        # save info for the new model trained
+        self.path2model_results = path_results_folder
+        self.modelEpochs        = last_epoch
+        
+        # save loss plot
+        plot_loss(loss_epochs, title_plot= name_train, path_save = path_lossPlot_save)
+        
+        # save model
+        saveModel(self.model, path_model_save)
+    
+        # terminate the logger
+        logger.end_log()
+
+    # Override of superclass forward method
+    def forward(self, x):
+        """ network forward
+
+        Args:
+            x (T.Tensor): input image/images
+
+        Returns:
+            pred: label: 0 -> real, 1 -> fake
+        """
+        if self.model is None: raise ValueError("No model has been defined, impossible forwarding the data")
+        
+        if not(isinstance(x, T.Tensor)):
+            x = T.tensor(x)
+        
+        # handle single image, increasing dimensions simulating a batch
+        if len(x.shape) == 3:
+            x = x.expand(1,-1,-1,-1)
+        elif len(x.shape) <= 2 or len(x.shape) >= 5:
+            raise ValueError("The input shape is not compatiple, expected a batch or a single image")
+        
+        # correct the dtype
+        if not (x.dtype is T.float32):
+            x = x.to(T.float32)
+         
+        x = x.to(self.device)
+        
+        logits, _, _ = self.model.forward(x) 
+        
         probs       = self.sigmoid(logits)
         pred        = T.argmax(probs, -1)
         fake_prob   = probs[:,1]   # positive class probability (fake probability)
@@ -1174,7 +1572,7 @@ if __name__ == "__main__":
         bin_classifier.load(name_model, epoch)
         bin_classifier.test()  
     
-    def showReconstruction(name_model, epoch, scenario):
+    def showReconstruction_v3(name_model, epoch, scenario):
         bin_classifier = DFD_BinClassifier_v3(scenario = scenario, useGPU= True)
         bin_classifier.load(name_model, epoch)
         img, _ = bin_classifier.test_dataset.__getitem__(300)
@@ -1188,9 +1586,20 @@ if __name__ == "__main__":
         print(rec_img)
         print(logits)
         showImage(rec_img)
-        
-    # showReconstruction(name_model = "faces_resnet50EDS_v3_17-11-2023", epoch = 20, scenario = "content")
     
+    # ________________________________ v4  ________________________________
+    
+    def train_v4_content_scenario():
+        bin_classifier = DFD_BinClassifier_v4(scenario = "content", useGPU= True)
+        bin_classifier.train(name_train= "faces_Unet4Scorer")
+    
+    def test_v4_metrics(name_model, epoch, scenario):
+        bin_classifier = DFD_BinClassifier_v4(scenario = scenario, useGPU= True)
+        bin_classifier.load(name_model, epoch)
+        bin_classifier.test()
+        
+    test_v4_metrics(name_model = "faces_Unet4Scorer_v4_21-11-2023", epoch = 12, scenario = "content")
+    pass
     #                           [End test section] 
 
     """ 
@@ -1208,6 +1617,9 @@ if __name__ == "__main__":
     
     train_v3_content_scenario()
     test_v3_metrics(name_model = "faces_resnet50EDS_v3_.17-11-2023", epoch = 20, scenario = "content")
+    
+    train_v4_content_scenario()
+    test_v4_metrics(name_model = "faces_Unet4Scorer_v4_21-11-2023", epoch = 12, scenario = "content")
     
     """
 
