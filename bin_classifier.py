@@ -18,7 +18,7 @@ from    torch.utils.data                    import default_collate
 from    utilities                           import plot_loss, saveModel, metrics_binClass, loadModel, test_num_workers, sampleValidSet, \
                                             duration, check_folder, cutmix_image, showImage, image2int, ExpLogger
 from    dataset                             import CDDB_binary, CDDB_binary_Partial
-from    models                              import ResNet_ImageNet, ResNet, ResNet_EDS, U_netScorer
+from    models                              import ResNet_ImageNet, ResNet, ResNet_EDS, Unet4_Scorer
 
 
 # from    sklearn.metrics     import precision_recall_curve, auc, roc_auc_score
@@ -173,9 +173,9 @@ class BinaryClassifier(object):
         else:
             return x,y
      
-    def reconstruction_loss(self, target, reconstruction, range255 = False):
+    def reconstruction_loss(self, target, reconstruction, use_abs = True, range255 = False):
         """ 
-            reconstruction loss (MSE) over batch of images
+            reconstruction loss (MSE/MAE) over batch of images
         
         Args:
             - target (T.tensor): image feeded into the netwerk to be reconstructed 
@@ -187,9 +187,15 @@ class BinaryClassifier(object):
         
         """
         if range255:
-            return T.mean(T.square(image2int(target, True) - image2int(reconstruction, True)))
+            if use_abs:
+                return T.mean(T.abs(image2int(target, True) - image2int(reconstruction, True)))
+            else:
+                return T.mean(T.square(image2int(target, True) - image2int(reconstruction, True)))
         else:
-            return T.mean(T.square(target - reconstruction))
+            if use_abs:
+                return T.mean(T.abs(target - reconstruction))
+            else:
+                return T.mean(T.square(target - reconstruction))
         
     def init_logger(self, path_model):
         """
@@ -353,14 +359,10 @@ class DFD_BinClassifier_v1(BinaryClassifier):
         # create model and results folder if not already present
         check_folder(path_model_folder)
         check_folder(path_results_folder)
-        
-        # if (not os.path.exists(path_model_folder)):
-        #     os.makedirs(path_model_folder)
-        # if (not os.path.exists(path_results_folder)):
-        #     os.makedirs(path_results_folder)
-        
+
         # save loss plot
         plot_loss(loss_epochs, title_plot= name_train, path_save = path_lossPlot_save)
+        plot_loss(loss_epochs, title_plot= name_train, path_save = os.path.join(path_model_folder,name_loss_file), show=False)
         
         # save model
         saveModel(self.model, path_model_save)
@@ -628,13 +630,9 @@ class DFD_BinClassifier_v2(BinaryClassifier):
         check_folder(path_model_folder)
         check_folder(path_results_folder)
         
-        # if (not os.path.exists(path_model_folder)):
-        #     os.makedirs(path_model_folder)
-        # if (not os.path.exists(path_results_folder)):
-        #     os.makedirs(path_results_folder)
-        
         # save loss plot
         plot_loss(loss_epochs, title_plot= name_train, path_save = path_lossPlot_save)
+        plot_loss(loss_epochs, title_plot= name_train, path_save = os.path.join(path_model_folder,name_loss_file), show=False)
         
         # save model
         saveModel(self.model, path_model_save)
@@ -1001,6 +999,7 @@ class DFD_BinClassifier_v3(BinaryClassifier):
         
         # save loss plot
         plot_loss(loss_epochs, title_plot= name_train, path_save = path_lossPlot_save)
+        plot_loss(loss_epochs, title_plot= name_train, path_save = os.path.join(path_model_folder,name_loss_file), show=False)
         
         # save model
         saveModel(self.model, path_model_save)
@@ -1047,11 +1046,15 @@ class DFD_BinClassifier_v3(BinaryClassifier):
 class DFD_BinClassifier_v4(BinaryClassifier):
     """
         binary classifier for deepfake detection using partial CDDB dataset for the chosen scenario configuration.
-        Model used: Custom Unet with encoder/decoder structure (ResNet_EDS)
-        This fourth version is the same of v3, but uses the Unet with scorer model.
-        batch size from 32 to 64
+        Model used: Custom Unet with encoder/decoder structure
+        This fourth etends and edits v3,
+        - Usage of Unet with scorer model:
+        - batch size from 32 to 64
+        - early stopping start from half epochs
         
         training model folders:
+        - faces_Unet4Scorer_v4_21-11-2023 (bad results)
+        -
 
     """
     def __init__(self, scenario, useGPU = True, batch_size = 64):
@@ -1086,7 +1089,7 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         
         # load model
         self.model_type = "U-net_Scorer" 
-        self.model = U_netScorer(n_channels=3, n_classes=2)
+        self.model = Unet4_Scorer(n_channels=3, n_classes=2)
           
         self.model.to(self.device)
         self.model.eval()
@@ -1098,9 +1101,10 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         # learning hyperparameters (default)
         self.lr                     = 1e-4
         self.n_epochs               = 40
-        self.weight_decay           = 0.001          # L2 regularization term 
-        self.patience               = 5              # early stopping patience
-        self.early_stopping_trigger = "acc"        # values "acc" or "loss"
+        self.start_early_stopping   = self.n_epochs/2   # epoch to start early stopping
+        self.weight_decay           = 0.001             # L2 regularization term 
+        self.patience               = 5                 # early stopping patience
+        self.early_stopping_trigger = "acc"             # values "acc" or "loss"
         
         # loss definition + interpolation values for the new loss
         self.loss_name = "bce + reconstruction loss"
@@ -1122,7 +1126,8 @@ class DFD_BinClassifier_v4(BinaryClassifier):
             "epochs_max": self.n_epochs,
             "weight_decay": self.weight_decay,
             "early_stopping_patience": self.patience,
-            "early_stopping_trigger": self.early_stopping_trigger
+            "early_stopping_trigger": self.early_stopping_trigger,
+            "early_stopping_start_epoch": self.start_early_stopping
                 }
     
     def _dataConf(self):
@@ -1218,7 +1223,6 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         path_model_folder       = os.path.join(self.path_models,  name_train + "_v{}_".format(str(self.version)) + current_date)
         check_folder(path_model_folder)
         
-        
         # define train dataloader
         train_dataloader = None
         
@@ -1312,13 +1316,8 @@ class DFD_BinClassifier_v4(BinaryClassifier):
                 with autocast():
                     logits, reconstruction, _ = self.model.forward(x) 
 
-    
-                    # print(x.shape)
-                    # print(reconstruction.shape)
-                    # logits = self.model.forward(x)
-
                     class_loss  = self.bce(input=logits, target=y)   # logits bce version
-                    rec_loss    = self.reconstruction_loss(target = x, reconstruction = reconstruction)
+                    rec_loss    = self.reconstruction_loss(target = x, reconstruction = reconstruction, use_abs = True)
                     loss = self.alpha_loss * class_loss + self.beta_loss * rec_loss 
                     
                 
@@ -1345,34 +1344,39 @@ class DFD_BinClassifier_v4(BinaryClassifier):
             # include validation here if needed
             criterion = self.valid(epoch=epoch_idx+1, valid_dataloader= valid_dataloader)
             
+            # initialize not early stopping
+            early_exit = False 
+            
             # early stopping update
-            if self.early_stopping_trigger == "loss":
+            if self.early_stopping_trigger == "loss" and last_epoch >= self.start_early_stopping:
                 valid_history.append(criterion)             
                 if epoch_idx > 0:
                     if valid_history[-1] > valid_history[-2]:
                         if counter_stopping >= self.patience:
                             print("Early stop")
-                            break
+                            early_exit = True
+                            # break
                         else:
                             print("Pantience counter increased")
                             counter_stopping += 1
                     else:
                         print("loss decreased respect previous epoch")
                         
-            elif self.early_stopping_trigger == "acc":
+            elif self.early_stopping_trigger == "acc" and last_epoch >= self.start_early_stopping:
                 valid_history.append(criterion)
                 if epoch_idx > 0:
                     if valid_history[-1] < valid_history[-2]:
                         if counter_stopping >= self.patience:
                             print("Early stop")
-                            break
+                            early_exit = True
+                            # break
                         else:
                             print("Pantience counter increased")
                             counter_stopping += 1
                     else:
                         print("Accuracy increased respect previous epoch")
             
-            self.early_stopping_trigger
+            
             # create dictionary with info frome epoch: loss + valid, and log it
             epoch_data = {"epoch": last_epoch, "avg_loss": avg_loss, "max_loss": max_loss_epoch, \
                           "min_loss": min_loss_epoch, self.early_stopping_trigger + "_valid": criterion}
@@ -1380,6 +1384,9 @@ class DFD_BinClassifier_v4(BinaryClassifier):
             
             # test epochs loop for debug   
             if test_loop and last_epoch == 5: break
+            
+            # exit for early stopping if is the case
+            if early_exit: break 
             
             # lr scheduler step based on validation result
             self.scheduler.step(criterion)
@@ -1400,6 +1407,7 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         
         # save loss plot
         plot_loss(loss_epochs, title_plot= name_train, path_save = path_lossPlot_save)
+        plot_loss(loss_epochs, title_plot= name_train, path_save = os.path.join(path_model_folder,name_loss_file), show=False)
         
         # save model
         saveModel(self.model, path_model_save)

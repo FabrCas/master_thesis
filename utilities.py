@@ -464,7 +464,7 @@ def show_img_grid(imgs, titles):  # in alternative look at torchvision.utils.mak
         # img = (img + 1) / 2  # Denormalize if -1< 1 is the interval
         show_img(img, axs[i // n][i % n], title)
 
-def plot_loss(loss_array, title_plot = None, path_save = None, duration_timer = 2500):
+def plot_loss(loss_array, title_plot = None, path_save = None, duration_timer = 2500, show = True):
     """ save and plot the loss by epochs
 
     Args:
@@ -507,8 +507,8 @@ def plot_loss(loss_array, title_plot = None, path_save = None, duration_timer = 
         timer = fig.canvas.new_timer(interval=duration_timer)
         timer.add_callback(close_event)
         timer.start()
-    
-    plt.show()
+    if show:
+        plt.show()
 
 def plot_cm(cm, labels, title_plot = None, path_save = None, duration_timer = 2500):
     """ sava and plot the confusion matrix

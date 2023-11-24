@@ -16,7 +16,7 @@ from    torch.utils.data                    import DataLoader
 
 # local modules
 from    dataset                             import getMNIST_dataset, CDDB_binary_Partial
-from    models                              import FC_classifier, get_fc_classifier_Keras, ResNet_EDS, U_net
+from    models                              import FC_classifier, get_fc_classifier_Keras, ResNet_EDS, Unet4
 from    utilities                           import duration, saveModel, loadModel, showImage, check_folder, plot_loss, image2int, ExpLogger
 
 
@@ -563,7 +563,7 @@ class Decoder_Unet(object):
         
         # load model
         self.model_type = "Unet" 
-        self.model = U_net()
+        self.model = Unet4()
         
         self.feature_exp        = self.model.features_order
         

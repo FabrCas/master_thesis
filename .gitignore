@@ -208,7 +208,4 @@ pip-selfcheck.json
 # ignore project folders
 data/
 models/
-# results/
-
-
 
