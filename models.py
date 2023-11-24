@@ -134,7 +134,7 @@ class ResNet(nn.Module):
         self.exp_coeff = 4 # output/input feature dimension ratio in bottleneck (default value for mid/big size model, reduced for small resnet 18 & 34)
     
         
-        print("Creating the RNN (2D)...")
+        print("Initializing {} ...".format(self.__class__.__name__))
         self.initialTime = time.time()
         self.input_ch= 64   #    300 frames 64
         self.depth_level = depth_level
@@ -271,6 +271,7 @@ class ResNet_ImageNet():   # not nn.Module subclass, but still implement forward
     
     def __init__(self, n_channels = 3, n_classes = 10):
         # super(nn.Module,self).__init__()
+        print("Initializing {} ...".format(self.__class__.__name__))
         self.n_channels = n_channels
         self.n_classes = n_classes
         self.weight_name =  ResNet50_Weights.IMAGENET1K_V2  # weights with accuracy 80.858% on ImageNet 
@@ -369,6 +370,7 @@ class Unet4(nn.Module):
     
     def __init__(self,  n_channels = 3, w= 244, h=244):
         super(Unet4, self).__init__()
+        print("Initializing {} ...".format(self.__class__.__name__))
         self.n_channels = n_channels
         self.w = w
         self.h = h
@@ -426,12 +428,7 @@ class Unet4(nn.Module):
             input_shape -> tuple with simulated dimension used for the model summary
             expected input of this type -> color,width,height
         """
-        
-        # if verbose: v = 1
-        # else: v = 0
-        # summ = summary(self, input_shape, verbose = v)
-        # return str(summ)
-        
+                
         summary = ""
         n_params = 0
         for k,v in self.getLayers().items():
@@ -452,6 +449,9 @@ class Unet4(nn.Module):
             param.requires_grad = False
     
     def forward(self, x):
+        """
+            Returns: reconstruction, encoding
+        """
         
         # encoder
         s1, p1 = self.e1(x)
@@ -481,6 +481,7 @@ class Unet5(nn.Module):
     
     def __init__(self,  n_channels = 3, w= 244, h=244):
         super(Unet5, self).__init__()
+        print("Initializing {} ...".format(self.__class__.__name__))
         self.n_channels = n_channels
         self.w = w
         self.h = h
@@ -541,12 +542,7 @@ class Unet5(nn.Module):
             input_shape -> tuple with simulated dimension used for the model summary
             expected input of this type -> color,width,height
         """
-        
-        # if verbose: v = 1
-        # else: v = 0
-        # summ = summary(self, input_shape, verbose = v)
-        # return str(summ)
-        
+                
         summary = ""
         n_params = 0
         for k,v in self.getLayers().items():
@@ -567,6 +563,9 @@ class Unet5(nn.Module):
             param.requires_grad = False
     
     def forward(self, x):
+        """
+            Returns: reconstruction, encoding
+        """
         
         # encoder
         s1, p1 = self.e1(x)
@@ -607,6 +606,7 @@ class ResNet_EDS(nn.Module):
     """ ResNet multi head module with Encoder, Decoder and scorer (Classifier) """
     def __init__(self, n_channels = 3, n_classes = 10, use_upsample = False):  # expect image of shape 224x224
         super(ResNet_EDS, self).__init__()
+        print("Initializing {} ...".format(self.__class__.__name__))
         self.input_width    = 244
         self.input_height   = 244
         self.n_channels = n_channels
@@ -905,6 +905,7 @@ class Unet4_Scorer(nn.Module):
 
     def __init__(self,  n_channels = 3, n_classes= 10, w= 224, h=224):
         super(Unet4_Scorer, self).__init__()
+        print("Initializing {} ...".format(self.__class__.__name__))
         self.n_channels = n_channels
         self.w = w
         self.h = h
@@ -1001,6 +1002,9 @@ class Unet4_Scorer(nn.Module):
             param.requires_grad = False
     
     def forward(self, x):
+        """
+            Returns: logits, reconstruction, encoding
+        """
         
         # encoder
         s1, p1 = self.e1(x)
@@ -1037,6 +1041,7 @@ class Unet5_Scorer(nn.Module):
 
     def __init__(self,  n_channels = 3, n_classes= 10, w= 224, h=224):
         super(Unet5_Scorer, self).__init__()
+        print("Initializing {} ...".format(self.__class__.__name__))
         self.n_channels = n_channels
         self.w = w
         self.h = h
@@ -1136,6 +1141,9 @@ class Unet5_Scorer(nn.Module):
             param.requires_grad = False
     
     def forward(self, x):
+        """
+            Returns: logits, reconstruction, encoding
+        """
         
         # encoder
         s1, p1 = self.e1(x)
@@ -1216,6 +1224,7 @@ class Unet4_ResidualScorer(nn.Module):
 
     def __init__(self,  n_channels = 3, n_classes= 10, w= 224, h=224):
         super(Unet4_ResidualScorer, self).__init__()
+        print("Initializing {} ...".format(self.__class__.__name__))
         self.n_channels = n_channels
         self.w = w
         self.h = h
@@ -1313,6 +1322,9 @@ class Unet4_ResidualScorer(nn.Module):
             param.requires_grad = False
     
     def forward(self, x):
+        """
+            Returns: logits, reconstruction, encoding
+        """
         
         # encoder
         s1, p1 = self.e1(x)
@@ -1348,6 +1360,7 @@ class Unet5_ResidualScorer(nn.Module):
     
     def __init__(self,  n_channels = 3, n_classes= 10, w= 224, h=224):
         super(Unet5_ResidualScorer, self).__init__()
+        print("Initializing {} ...".format(self.__class__.__name__))
         self.n_channels = n_channels
         self.w = w
         self.h = h
@@ -1447,6 +1460,9 @@ class Unet5_ResidualScorer(nn.Module):
             param.requires_grad = False
     
     def forward(self, x):
+        """
+            Returns: logits, reconstruction, encoding
+        """
         
         # encoder
         s1, p1 = self.e1(x)
@@ -1481,6 +1497,7 @@ class Unet5_ResidualScorer(nn.Module):
 class Abnormality_module(nn.Module): 
     def __init__(self, logits_shape, encoding_shape, residual_shape):
         super(Abnormality_module, self).__init__()
+        print("Initializing {} ...".format(self.__class__.__name__))
         self.logits_shape   = logits_shape
         self.encoding_shape = encoding_shape
         self.residual_shape = residual_shape

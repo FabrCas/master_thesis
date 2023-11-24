@@ -18,7 +18,8 @@ from    torch.utils.data                    import default_collate
 from    utilities                           import plot_loss, saveModel, metrics_binClass, loadModel, test_num_workers, sampleValidSet, \
                                             duration, check_folder, cutmix_image, showImage, image2int, ExpLogger
 from    dataset                             import CDDB_binary, CDDB_binary_Partial
-from    models                              import ResNet_ImageNet, ResNet, ResNet_EDS, Unet4_Scorer
+from    models                              import ResNet_ImageNet, ResNet, ResNet_EDS, Unet4_Scorer, Unet5_Scorer, Unet4_ResidualScorer,\
+                                            Unet5_ResidualScorer
 
 
 # from    sklearn.metrics     import precision_recall_curve, auc, roc_auc_score
@@ -180,7 +181,8 @@ class BinaryClassifier(object):
         Args:
             - target (T.tensor): image feeded into the netwerk to be reconstructed 
             - reconstruction (T.tensor): image reconstructed by the decoder
-            - range255 (boolean): specify with which image range compute the loss
+            - use_abs (boolean): Use Mean Absolute Error for loss. Otherwise is used the Mean squared error. Default is True
+            - range255 (boolean): specify with which image range compute the loss. Default is False
         
         Returns:
             MSE loss (T.Tensor) with one scalar
@@ -1057,7 +1059,7 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         -
 
     """
-    def __init__(self, scenario, useGPU = True, batch_size = 64):
+    def __init__(self, scenario, useGPU = True, batch_size = 64, model_type = "Unet5_Residual_Scorer"):
         """ init classifier
 
         Args:
@@ -1071,8 +1073,14 @@ class DFD_BinClassifier_v4(BinaryClassifier):
             
             useGPU (bool, optional): flag to use CUDA device or cpu hardware by the model. Defaults to True.
             batch_size (int, optional): batch size used by dataloaders. Defaults is 32.
+            model_type (str, optional): choose the Unet architecture between :
+                - "Unet4_Scorer"
+                - "Unet4_Residual_Scorer"
+                - "Unet5_Scorer"
+                - "Unet5_Residual_Scorer"
+             Defaults is ""Unet5_Residual_Scorer"". 
         """
-        super(DFD_BinClassifier_v4, self).__init__(useGPU = useGPU, batch_size = batch_size, model_type = "U-net_Scorer")
+        super(DFD_BinClassifier_v4, self).__init__(useGPU = useGPU, batch_size = batch_size, model_type = model_type)
         self.version = 4
         self.scenario = scenario
         self.augment_data_train = True
@@ -1088,9 +1096,18 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         self.valid_dataset, self.test_dataset = sampleValidSet(trainset= self.train_dataset, testset= test_dataset, useOnlyTest = True, verbose = True)
         
         # load model
-        self.model_type = "U-net_Scorer" 
-        self.model = Unet4_Scorer(n_channels=3, n_classes=2)
-          
+        if model_type == "Unet4_Scorer":
+            self.model = Unet4_Scorer(n_channels=3, n_classes=2)
+        elif model_type == "Unet4_Residual_Scorer":
+            self.model = Unet4_ResidualScorer(n_channels=3, n_classes=2)
+        elif model_type == "Unet5_Scorer":
+            self.model = Unet5_Scorer(n_channels=3, n_classes=2)
+        elif model_type == "Unet5_Residual_Scorer":
+            self.model = Unet5_ResidualScorer(n_channels=3, n_classes=2)
+        else:
+            raise ValueError("The model type is not a Unet model")
+        
+        
         self.model.to(self.device)
         self.model.eval()
         
@@ -1349,6 +1366,7 @@ class DFD_BinClassifier_v4(BinaryClassifier):
             
             # early stopping update
             if self.early_stopping_trigger == "loss" and last_epoch >= self.start_early_stopping:
+                print("Early stopping step ...")
                 valid_history.append(criterion)             
                 if epoch_idx > 0:
                     if valid_history[-1] > valid_history[-2]:
@@ -1363,6 +1381,7 @@ class DFD_BinClassifier_v4(BinaryClassifier):
                         print("loss decreased respect previous epoch")
                         
             elif self.early_stopping_trigger == "acc" and last_epoch >= self.start_early_stopping:
+                print("Early stopping step ...")
                 valid_history.append(criterion)
                 if epoch_idx > 0:
                     if valid_history[-1] < valid_history[-2]:
@@ -1597,19 +1616,20 @@ if __name__ == "__main__":
     
     # ________________________________ v4  ________________________________
     
-    def train_v4_content_scenario():
-        bin_classifier = DFD_BinClassifier_v4(scenario = "content", useGPU= True)
-        bin_classifier.train(name_train= "faces_Unet4Scorer")
+    def train_v4_content_scenario(model_type):
+        bin_classifier = DFD_BinClassifier_v4(scenario = "content", useGPU= True, model_type=model_type)
+        bin_classifier.train(name_train= "faces_" + model_type)
     
     def test_v4_metrics(name_model, epoch, scenario):
         bin_classifier = DFD_BinClassifier_v4(scenario = scenario, useGPU= True)
         bin_classifier.load(name_model, epoch)
         bin_classifier.test()
         
-    test_v4_metrics(name_model = "faces_Unet4Scorer_v4_21-11-2023", epoch = 12, scenario = "content")
+        
+    train_v4_content_scenario(model_type="Unet4_Residual_Scorer")
     pass
-    #                           [End test section] 
 
+    #                           [End test section] 
     """ 
             Past test/train launched: 
     
@@ -1628,6 +1648,7 @@ if __name__ == "__main__":
     
     train_v4_content_scenario()
     test_v4_metrics(name_model = "faces_Unet4Scorer_v4_21-11-2023", epoch = 12, scenario = "content")
+    train_v4_content_scenario(model_type="Unet4_Residual_Scorer")
     
     """
 

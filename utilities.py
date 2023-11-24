@@ -1005,26 +1005,26 @@ class ExpLogger(object):
         self.delimiter_name = lambda x: "#"*self.delimiter_len +"{:^24}".format(x) + "#"*self.delimiter_len
         self.delimiter_line = "#"*(self.delimiter_len*2 + 24)
         self.train_lines    = []   # one line for each epoch
-        self.open()
+        self.open_logger()
         
     def write_hyper(self, hyper_dict):
-        self.write(self.delimiter_name("Hyperparameters"))
+        self.write_logger(self.delimiter_name("Hyperparameters"))
         text = "\n".join(["{:<40}: {:<40}".format(str(key),str(value)) for key, value in hyper_dict.items()])
-        self.write(text)
-        self.write(self.delimiter_line)
+        self.write_logger(text)
+        self.write_logger(self.delimiter_line)
         self.flush()
         
     def write_config(self, config_dict):
-        self.write(self.delimiter_name("Configuration"))
+        self.write_logger(self.delimiter_name("Configuration"))
         text = "\n".join(["{:<40}: {:<40}".format(str(key),str(value)) for key, value in config_dict.items()])
-        self.write(text)
-        self.write(self.delimiter_line)
+        self.write_logger(text)
+        self.write_logger(self.delimiter_line)
         self.flush()
     
     def write_model(self, model_summary: str):
-        self.write(self.delimiter_name("Model architecture"))
-        self.write(model_summary)
-        self.write(self.delimiter_line)
+        self.write_logger(self.delimiter_name("Model architecture"))
+        self.write_logger(model_summary)
+        self.write_logger(self.delimiter_line)
         self.flush()
     
     def log(self, epoch_dict: dict, in_line = True):
@@ -1046,28 +1046,28 @@ class ExpLogger(object):
         else:
             text = "\n".join(["{:<20}: {:<10}".format(str(key),str(value)) for key, value in epoch_dict.items()]) + "\n"
         if self.train_lines == []:
-            self.write(self.delimiter_name("Training"))
-        self.write(text)
+            self.write_logger(self.delimiter_name("Training"))
+        self.write_logger(text)
         self.train_lines.append(text)
         
     def end_log(self):
-        self.write(self.delimiter_line)  # close section training for each epoch
-        self.close()
+        self.write_logger(self.delimiter_line)  # close section training for each epoch
+        self.close_logger()
      
-    def open(self):
+    def open_logger(self):
         if os.path.exists(self.path_save):
             os.remove(self.path_save)
         self.file = open(self.path_save, "a")
         self.file.write("*** Started model training log ***\n\n\n\n")
     
-    def write(self, text):
+    def write_logger(self, text):
         self.file.write(text + "\n")
     
     def flush(self):
         self.file.flush()
         
-    def close(self):
-        self.write("\n\n\n\n*** Ended model training log ***")
+    def close_logger(self):
+        self.write_logger("\n\n\n\n*** Ended model training log ***")
         self.flush()
         self.file.close()
     
