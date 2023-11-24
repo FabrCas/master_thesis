@@ -321,6 +321,8 @@ class ResNet_ImageNet():   # not nn.Module subclass, but still implement forward
     
 # _____________________________________ U net ______________________________________________________
 
+exp_featureMaps = 4
+
 class Conv_block(nn.Module):
     def __init__(self, in_c, out_c):
         super().__init__()
@@ -374,7 +376,7 @@ class Unet4(nn.Module):
         self.n_channels = n_channels
         self.w = w
         self.h = h
-        self.features_order = 3   # orders greater and equal than 5 saturates the GPU!
+        self.features_order = exp_featureMaps   # orders greater and equal than 5 saturates the GPU!
         self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
         
         
@@ -485,7 +487,7 @@ class Unet5(nn.Module):
         self.n_channels = n_channels
         self.w = w
         self.h = h
-        self.features_order = 3   # orders greater and equal than 5 saturates the GPU!
+        self.features_order = exp_featureMaps   # orders greater and equal than 5 saturates the GPU!
         self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
         
         
@@ -910,7 +912,7 @@ class Unet4_Scorer(nn.Module):
         self.w = w
         self.h = h
         self.n_classes = n_classes
-        self.features_order = 3   # orders greater and equal than 5 saturates the GPU!
+        self.features_order = exp_featureMaps   # orders greater and equal than 5 saturates the GPU!
         self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
         self.bottleneck_size = int(self.feature_maps(4)*(w/16)*(w/16))
         
@@ -1046,7 +1048,7 @@ class Unet5_Scorer(nn.Module):
         self.w = w
         self.h = h
         self.n_classes = n_classes
-        self.features_order = 3   # orders greater and equal than 5 saturates the GPU!
+        self.features_order = exp_featureMaps   # orders greater and equal than 5 saturates the GPU!
         self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
         self.bottleneck_size = int(self.feature_maps(5)*(w/32)*(w/32))
         
@@ -1176,19 +1178,20 @@ class Unet5_Scorer(nn.Module):
         return logits, rec, enc
 
 class Encoder_block_residual(nn.Module):
-    def __init__(self, in_c, out_c, before_pooling = False):
+    def __init__(self, in_c, out_c, after_conv = False):
         super().__init__()
-        self.before_pooling = before_pooling
+        self.after_conv = after_conv
         
         # Downsample layer for identity shortcut
-        if not(self.before_pooling):
-            self.ds_layer = nn.Sequential(
-                nn.Conv2d(in_c, out_c, kernel_size=1, stride=2),
-                nn.BatchNorm2d(out_c)
-            )
-        else:
+        if self.after_conv:          # after conv
             self.ds_layer = nn.Sequential(
                 nn.Conv2d(in_c, out_c, kernel_size=1, stride=1),
+                nn.BatchNorm2d(out_c)
+            )
+
+        else:                           # after pooling
+            self.ds_layer = nn.Sequential(
+                nn.Conv2d(in_c, out_c, kernel_size=1, stride=2),
                 nn.BatchNorm2d(out_c)
             )
         
@@ -1201,7 +1204,7 @@ class Encoder_block_residual(nn.Module):
         x = self.conv(inputs)
         
         # identity shortcuts after conv block
-        if self.before_pooling:
+        if self.after_conv:
             inputs_converted =  self.ds_layer(inputs_init)
             x += inputs_converted
         
@@ -1210,7 +1213,7 @@ class Encoder_block_residual(nn.Module):
         # print("pooling -> ", p.shape)
         
         # identity shortcuts after pooling
-        if not(self.before_pooling):
+        if not(self.after_conv):
             inputs_downsampled =  self.ds_layer(inputs_init)
             # print("x_downsampled ->", inputs_downsampled.shape)
             p += inputs_downsampled
@@ -1229,10 +1232,10 @@ class Unet4_ResidualScorer(nn.Module):
         self.w = w
         self.h = h
         self.n_classes = n_classes
-        self.features_order = 3   # orders greater and equal than 5 saturates the GPU!
+        self.features_order = exp_featureMaps     # orders greater and equal than 5 saturates the GPU!
         self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
         self.bottleneck_size = int(self.feature_maps(4)*(w/16)*(w/16))
-        self.residual2conv = False
+        self.residual2conv = False  # if False identity shortcuts are connected after the pooling layer
         
         # create net and initialize
         self._createNet()
@@ -1365,10 +1368,11 @@ class Unet5_ResidualScorer(nn.Module):
         self.w = w
         self.h = h
         self.n_classes = n_classes
-        self.features_order = 3   # orders greater and equal than 5 saturates the GPU!
+        self.features_order = exp_featureMaps # orders greater and equal than 5 saturates the GPU!
         self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
         self.bottleneck_size = int(self.feature_maps(5)*(w/32)*(w/32))
-        self.residual2conv = False
+        self.residual2conv = False  # if False identity shortcuts are connected after the pooling layer
+        
         # create net and initialize
         self._createNet()
         

@@ -1051,15 +1051,14 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         Model used: Custom Unet with encoder/decoder structure
         This fourth etends and edits v3,
         - Usage of Unet with scorer model:
-        - batch size from 32 to 64
         - early stopping start from half epochs
         
         training model folders:
-        - faces_Unet4Scorer_v4_21-11-2023 (bad results)
+        - faces_Unet4Scorer_v4_21-11-2023 (bad results, batch size 64)
         -
 
     """
-    def __init__(self, scenario, useGPU = True, batch_size = 64, model_type = "Unet5_Residual_Scorer"):
+    def __init__(self, scenario, useGPU = True, batch_size = 32, model_type = "Unet5_Residual_Scorer"):
         """ init classifier
 
         Args:
@@ -1154,7 +1153,12 @@ class DFD_BinClassifier_v4(BinaryClassifier):
             d_out = self.model.decoder_out_fn.__class__.__name__
         except:
             d_out = "empty"
-        
+        try:
+            flag = self.model.residual2conv
+            if flag: residual_connection = "Conv_layer"
+            else: residual_connection = "Pooling_layer"
+        except:
+            residual_connection = "empty"
         
         return {
             "date_training": date.today().strftime("%d-%m-%Y"),
@@ -1168,7 +1172,8 @@ class DFD_BinClassifier_v4(BinaryClassifier):
             "base_augmentation": self.augment_data_train,
             "cutmix": self.use_cutmix,            
             "grad_scaler": True,                # always true
-            "features_exp_order": self.model.features_order
+            "features_exp_order": self.model.features_order,
+            "Residual_connection": residual_connection
             }
     
     
@@ -1360,40 +1365,37 @@ class DFD_BinClassifier_v4(BinaryClassifier):
             
             # include validation here if needed
             criterion = self.valid(epoch=epoch_idx+1, valid_dataloader= valid_dataloader)
-            
+            valid_history.append(criterion)  
             # initialize not early stopping
             early_exit = False 
             
             # early stopping update
-            if self.early_stopping_trigger == "loss" and last_epoch >= self.start_early_stopping:
+            if epoch_idx > 0 and last_epoch >= self.start_early_stopping:
                 print("Early stopping step ...")
-                valid_history.append(criterion)             
-                if epoch_idx > 0:
-                    if valid_history[-1] > valid_history[-2]:
-                        if counter_stopping >= self.patience:
-                            print("Early stop")
-                            early_exit = True
-                            # break
+                
+                if self.early_stopping_trigger == "loss":
+                        if valid_history[-1] > valid_history[-2]:
+                            if counter_stopping >= self.patience:
+                                print("Early stop")
+                                early_exit = True
+                                # break
+                            else:
+                                print("Pantience counter increased")
+                                counter_stopping += 1
                         else:
-                            print("Pantience counter increased")
-                            counter_stopping += 1
-                    else:
-                        print("loss decreased respect previous epoch")
-                        
-            elif self.early_stopping_trigger == "acc" and last_epoch >= self.start_early_stopping:
-                print("Early stopping step ...")
-                valid_history.append(criterion)
-                if epoch_idx > 0:
-                    if valid_history[-1] < valid_history[-2]:
-                        if counter_stopping >= self.patience:
-                            print("Early stop")
-                            early_exit = True
-                            # break
+                            print("loss decreased respect previous epoch")
+                            
+                elif self.early_stopping_trigger == "acc":
+                        if valid_history[-1] < valid_history[-2]:
+                            if counter_stopping >= self.patience:
+                                print("Early stop")
+                                early_exit = True
+                                # break
+                            else:
+                                print("Pantience counter increased")
+                                counter_stopping += 1
                         else:
-                            print("Pantience counter increased")
-                            counter_stopping += 1
-                    else:
-                        print("Accuracy increased respect previous epoch")
+                            print("Accuracy increased respect previous epoch")
             
             
             # create dictionary with info frome epoch: loss + valid, and log it
