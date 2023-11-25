@@ -1014,6 +1014,133 @@ class ResNet_EDS(nn.Module):
         
         return features, logits, reconstruction
 
+# custom Unet blocks
+
+class LargeConv_block(nn.Module):
+    """ larger version of the Conv_block class"""
+    def __init__(self, in_c, out_c):
+        super().__init__()
+        self.expand_multiplier = 2
+        
+        self.conv1 = nn.Conv2d(in_c, in_c, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(in_c)
+        self.conv2 = nn.Conv2d(in_c, out_c*self.expand_multiplier, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(out_c*self.expand_multiplier)
+        self.conv3 = nn.Conv2d(out_c*self.expand_multiplier, out_c, kernel_size=3, padding=1)
+        self.bn3 = nn.BatchNorm2d(out_c)
+        self.relu = nn.ReLU()
+        
+    def forward(self, inputs):
+        x = self.conv1(inputs)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.conv2(x)
+        x = self.bn2(x)
+        x = self.relu(x)
+        x = self.conv3(x)
+        x = self.bn3(x)
+        x = self.relu(x)
+        return x 
+
+class LargeEncoder_block(nn.Module):
+    def __init__(self, in_c, out_c):
+        super().__init__()
+        self.conv = LargeConv_block(in_c, out_c)
+        self.pool = nn.MaxPool2d((2, 2))
+        
+    def forward(self, inputs):
+        x = self.conv(inputs)
+        p = self.pool(x)
+        return x, p
+
+class Encoder_block_residual(nn.Module):
+    def __init__(self, in_c, out_c, after_conv = False, kernel_size = 1):
+        super().__init__()
+        self.after_conv = after_conv
+        
+        # Downsample layer for identity shortcut
+        if self.after_conv:          # after conv, no downsampling just adjustment feature maps
+            self.ds_layer = nn.Sequential(
+                nn.Conv2d(in_c, out_c, kernel_size = kernel_size, stride=1),
+                nn.BatchNorm2d(out_c)
+            )
+
+        else:                           # after pooling
+            self.ds_layer = nn.Sequential(
+                nn.Conv2d(in_c, out_c, kernel_size= kernel_size, stride=2),
+                nn.BatchNorm2d(out_c)
+            )
+        
+        self.conv = Conv_block(in_c, out_c)
+        self.pool = nn.MaxPool2d((2, 2))
+        
+    def forward(self, inputs):
+        inputs_init  = inputs.clone()
+        
+        x = self.conv(inputs)
+        
+        # identity shortcuts after conv block
+        if self.after_conv:
+            inputs_converted =  self.ds_layer(inputs_init)
+            x += inputs_converted
+        
+        p = self.pool(x)
+        
+        # print("pooling -> ", p.shape)
+        
+        # identity shortcuts after pooling
+        if not(self.after_conv):
+            inputs_downsampled =  self.ds_layer(inputs_init)
+            # print("x_downsampled ->", inputs_downsampled.shape)
+            
+            p += inputs_downsampled
+        
+        return x, p
+
+class LargeEncoder_block_residual(nn.Module):
+    def __init__(self, in_c, out_c, after_conv = False, kernel_size = 1):
+        super().__init__()
+        self.after_conv = after_conv
+        
+        # Downsample layer for identity shortcut
+        if self.after_conv:          # after conv, no downsampling just adjustment feature maps
+            self.ds_layer = nn.Sequential(
+                nn.Conv2d(in_c, out_c, kernel_size = kernel_size, stride=1),
+                nn.BatchNorm2d(out_c)
+            )
+
+        else:                           # after pooling
+            self.ds_layer = nn.Sequential(
+                nn.Conv2d(in_c, out_c, kernel_size= kernel_size, stride=2),
+                nn.BatchNorm2d(out_c)
+            )
+        
+        self.conv = LargeConv_block(in_c, out_c)
+        self.pool = nn.MaxPool2d((2, 2))
+        
+    def forward(self, inputs):
+        inputs_init  = inputs.clone()
+        
+        x = self.conv(inputs)
+        
+        # identity shortcuts after conv block
+        if self.after_conv:
+            inputs_converted =  self.ds_layer(inputs_init)
+            x += inputs_converted
+        
+        p = self.pool(x)
+        
+        # print("pooling -> ", p.shape)
+        
+        # identity shortcuts after pooling
+        if not(self.after_conv):
+            inputs_downsampled =  self.ds_layer(inputs_init)
+            # print("x_downsampled ->", inputs_downsampled.shape)
+            
+            p += inputs_downsampled
+        
+        return x, p
+
 class Unet4_Scorer(nn.Module):
     """
         U-net 4 + Scorer, 4 encoders and 4 decoders
@@ -1293,7 +1420,7 @@ class Unet5_Scorer(nn.Module):
 class Unet6_Scorer(nn.Module):
     """
         U-net 6 + Scorer, 6 encoders and 6 decoders.
-        This version include an additional layer for the scorer and LargeConv_block instead of Conv_blocks
+        This version include an additional layer for the scorer
     """
 
     def __init__(self,  n_channels = 3, n_classes= 10, w= 224, h=224):
@@ -1439,6 +1566,174 @@ class Unet6_Scorer(nn.Module):
         f5_drop     = self.do(f5)
         logits      = self.fc6(f5_drop)
 
+        # print(enc.shape)
+        # print(f1.shape)
+        # print(f2.shape)
+        # print(f3.shape)
+        # print(f4.shape)
+        # print(f5.shape)
+        # print(logits.shape)
+        
+        d1 = self.d1(bottleneck, s6)
+        d2 = self.d2(d1, s5)
+        d3 = self.d3(d2, s4)
+        d4 = self.d4(d3, s3)
+        d5 = self.d5(d4, s2)
+        d6 = self.d6(d5, s1)
+        
+        # reconstuction
+        rec = self.decoder_out_fn(self.out(d6))  # check sigmoid vs tanh
+        return logits, rec, enc
+
+class Unet6L_Scorer(nn.Module):
+    """
+        U-net 6 + Scorer, 6 encoders and 6 decoders.
+        This version include an additional layer for the scorer and LargeConv_block instead of Conv_blocks
+    """
+
+    def __init__(self,  n_channels = 3, n_classes= 10, w= 224, h=224):
+        super(Unet6L_Scorer, self).__init__()
+        print("Initializing {} ...".format(self.__class__.__name__))
+        self.n_channels = n_channels
+        self.w = w
+        self.h = h
+        self.n_classes = n_classes
+        self.features_order = exp_featureMaps   # orders greater and equal than 5 saturates the GPU!
+        self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
+        # self.bottleneck_size = int(self.feature_maps(6)*(w/64)*(w/64))
+        self.bottleneck_size = int(self.feature_maps(6)*3**2)  # 3 comes from the computation on spatial dimensionality, kernel applied on odd tensor (if image different from 244 check again this value)
+        
+        # create net and initialize
+        self._createNet()
+        
+        # initialize conv layers
+        self._init_weights_kaimingNormal()
+        
+        # initialize FC layer
+        self._init_weights_normal(self.fc1)
+        self._init_weights_normal(self.fc2)
+        self._init_weights_normal(self.fc3)
+    
+    def _createNet(self):
+        
+        # encoder
+        self.e1 = LargeEncoder_block(self.n_channels, self.feature_maps(0))
+        self.e2 = LargeEncoder_block(self.feature_maps(0) , self.feature_maps(1))
+        self.e3 = LargeEncoder_block(self.feature_maps(1) , self.feature_maps(2))
+        self.e4 = LargeEncoder_block(self.feature_maps(2) , self.feature_maps(3))
+        self.e5 = LargeEncoder_block(self.feature_maps(3) , self.feature_maps(4))
+        self.e6 = LargeEncoder_block(self.feature_maps(4) , self.feature_maps(5))
+        
+        # bottlenech (encoding)
+        self.b = LargeConv_block(self.feature_maps(5) , self.feature_maps(6))
+        
+        # Flatten the encoding
+        self.flatten = nn.Flatten()
+        
+        # classification branch
+        self.do     = nn.Dropout(p=0.3)
+        self.relu   = nn.ReLU()
+        
+        # series of FC layers
+        self.fc1 = nn.Linear(self.bottleneck_size, int(self.bottleneck_size/2))
+        self.bn1 = nn.BatchNorm1d(int(self.bottleneck_size/2))
+        self.fc2 = nn.Linear(int(self.bottleneck_size/2), int(self.bottleneck_size/8))
+        self.bn2 = nn.BatchNorm1d(int(self.bottleneck_size/8))
+        self.fc3 = nn.Linear(int(self.bottleneck_size/8), int(self.bottleneck_size/32))
+        self.bn3 = nn.BatchNorm1d(int(self.bottleneck_size/32))
+        self.fc4 = nn.Linear(int(self.bottleneck_size/32), int(self.bottleneck_size/128))
+        self.bn4 = nn.BatchNorm1d(int(self.bottleneck_size/128))
+        self.fc5 = nn.Linear(int(self.bottleneck_size/128), int(self.bottleneck_size/512))
+        self.bn5 = nn.BatchNorm1d(int(self.bottleneck_size/512))
+        self.fc6 = nn.Linear(int(self.bottleneck_size/512), self.n_classes)
+        
+        # decoder 
+        self.d1 = Decoder_block(self.feature_maps(6) , self.feature_maps(5), out_pad=1) # for odd spatial dimensions
+        self.d2 = Decoder_block(self.feature_maps(5) , self.feature_maps(4))
+        self.d3 = Decoder_block(self.feature_maps(4) , self.feature_maps(3))
+        self.d4 = Decoder_block(self.feature_maps(3) , self.feature_maps(2))
+        self.d5 = Decoder_block(self.feature_maps(2) , self.feature_maps(1))
+        self.d6 = Decoder_block(self.feature_maps(1) , self.feature_maps(0))
+            
+        # self.out= decoder_block(64, self.n_channels)
+        self.out = nn.Conv2d(self.feature_maps(0), self.n_channels, kernel_size=1, padding=0)
+        self.decoder_out_fn = nn.Sigmoid()
+
+
+    def _init_weights_kaimingNormal(self, model = None):
+        # Initialize the weights  using He initialization
+        print("Weights initialization using kaiming Normal")
+        
+        if model is None: model = self
+        
+        for param in model.parameters():
+            if len(param.shape) > 1:
+                T.nn.init.kaiming_normal_(param, mode='fan_out', nonlinearity='relu')
+    
+
+    def _init_weights_normal(self, model = None):
+        # Initialize the weights with Gaussian distribution
+        print(f"Weights initialization using Gaussian distribution")
+        
+        if model is None: model = self
+        for param in model.parameters():
+            if len(param.shape) > 1:
+                T.nn.init.normal_(param, mean=0, std=0.01) 
+
+    def getSummary(self, verbose = True): 
+        summary = ""
+        n_params = 0
+        for k,v in self.getLayers().items():
+            summary += "{:<30} -> {:<30}".format(k,str(tuple(v.shape))) + "\n"
+            n_params += T.numel(v)
+        summary += "Total number of parameters: {}\n".format(n_params)
+        if verbose: print(summary)
+        return summary
+     
+    def to_device(self, device):
+        self.to(device)
+    
+    def getLayers(self):
+        return dict(self.named_parameters())
+    
+    def freeze(self):
+        for name, param in self.named_parameters():
+            param.requires_grad = False
+    
+    def forward(self, x):
+        """
+            Returns: logits, reconstruction, encoding
+        """
+        
+        # encoder
+        s1, p1 = self.e1(x)
+        s2, p2 = self.e2(p1)
+        s3, p3 = self.e3(p2)
+        s4, p4 = self.e4(p3)
+        s5, p5 = self.e5(p4)
+        s6, p6 = self.e6(p5)
+    
+        # bottleneck (encoding)
+        bottleneck  = self.b(p6)
+        enc         = self.flatten(bottleneck)
+        
+        # print(bottleneck.shape)
+        # print(enc.shape)
+        # print(self.bottleneck_size)
+        
+        # classification
+        f1          = self.relu(self.bn1(self.fc1(enc)))
+        f1_drop     = self.do(f1)
+        f2          = self.relu(self.bn2(self.fc2(f1_drop)))
+        f2_drop     = self.do(f2)
+        f3          = self.relu(self.bn3(self.fc3(f2_drop)))
+        f3_drop     = self.do(f3)
+        f4          = self.relu(self.bn4(self.fc4(f3_drop)))
+        f4_drop     = self.do(f4)
+        f5          = self.relu(self.bn5(self.fc5(f4_drop)))
+        f5_drop     = self.do(f5)
+        logits      = self.fc6(f5_drop)
+
         print(enc.shape)
         print(f1.shape)
         print(f2.shape)
@@ -1457,68 +1752,6 @@ class Unet6_Scorer(nn.Module):
         # reconstuction
         rec = self.decoder_out_fn(self.out(d6))  # check sigmoid vs tanh
         return logits, rec, enc
-
-class LargeConv_block(nn.Module):
-    """ larger version of the Conv_block class"""
-    def __init__(self, in_c, out_c):
-        super().__init__()
-        self.conv1 = nn.Conv2d(in_c, out_c, kernel_size=3, padding=1)
-        self.bn1 = nn.BatchNorm2d(out_c)
-        self.conv2 = nn.Conv2d(out_c, out_c, kernel_size=3, padding=1)
-        self.bn2 = nn.BatchNorm2d(out_c)
-        self.relu = nn.ReLU()
-        
-    def forward(self, inputs):
-        x = self.conv1(inputs)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.conv2(x)
-        x = self.bn2(x)
-        x = self.relu(x)
-        return x 
-
-class Encoder_block_residual(nn.Module):
-    def __init__(self, in_c, out_c, after_conv = False):
-        super().__init__()
-        self.after_conv = after_conv
-        
-        # Downsample layer for identity shortcut
-        if self.after_conv:          # after conv
-            self.ds_layer = nn.Sequential(
-                nn.Conv2d(in_c, out_c, kernel_size=1, stride=1),
-                nn.BatchNorm2d(out_c)
-            )
-
-        else:                           # after pooling
-            self.ds_layer = nn.Sequential(
-                nn.Conv2d(in_c, out_c, kernel_size=1, stride=2),
-                nn.BatchNorm2d(out_c)
-            )
-        
-        self.conv = Conv_block(in_c, out_c)
-        self.pool = nn.MaxPool2d((2, 2))
-        
-    def forward(self, inputs):
-        inputs_init  = inputs.clone()
-        
-        x = self.conv(inputs)
-        
-        # identity shortcuts after conv block
-        if self.after_conv:
-            inputs_converted =  self.ds_layer(inputs_init)
-            x += inputs_converted
-        
-        p = self.pool(x)
-        
-        # print("pooling -> ", p.shape)
-        
-        # identity shortcuts after pooling
-        if not(self.after_conv):
-            inputs_downsampled =  self.ds_layer(inputs_init)
-            # print("x_downsampled ->", inputs_downsampled.shape)
-            p += inputs_downsampled
-        
-        return x, p
 
 class Unet4_ResidualScorer(nn.Module):
     """
@@ -1658,7 +1891,7 @@ class Unet4_ResidualScorer(nn.Module):
 
 class Unet5_ResidualScorer(nn.Module):
     """
-        U-net 5 with Resiudal Encoder + Scorer, 5 encoders and 5 decoders
+        U-net 5 with Resiudal Encoder + Scorer, 5 encoders (residual) and 5 decoders
     """
     
     def __init__(self,  n_channels = 3, n_classes= 10, w= 224, h=224):
@@ -1798,6 +2031,320 @@ class Unet5_ResidualScorer(nn.Module):
         rec = self.decoder_out_fn(self.out(d5))  # check sigmoid vs tanh
         return logits, rec, enc
     
+class Unet6_ResidualScorer(nn.Module):
+    """
+        U-net 6 + Scorer, 6 encoders (residual) and 6 decoders.
+        This version include an additional layer for the scorer
+    """
+
+    def __init__(self,  n_channels = 3, n_classes= 10, w= 224, h=224):
+        super(Unet6_ResidualScorer, self).__init__()
+        print("Initializing {} ...".format(self.__class__.__name__))
+        self.n_channels = n_channels
+        self.w = w
+        self.h = h
+        self.n_classes = n_classes
+        self.features_order = exp_featureMaps   # orders greater and equal than 5 saturates the GPU!
+        self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
+        # self.bottleneck_size = int(self.feature_maps(6)*(w/64)*(w/64))
+        self.bottleneck_size = int(self.feature_maps(6)*3**2)  # 3 comes from the computation on spatial dimensionality, kernel applied on odd tensor (if image different from 244 check again this value)
+        self.residual2conv = False  # if False identity shortcuts are connected after the pooling layer
+        # create net and initialize
+        self._createNet()
+        
+        # initialize conv layers
+        self._init_weights_kaimingNormal()
+        
+        # initialize FC layer
+        self._init_weights_normal(self.fc1)
+        self._init_weights_normal(self.fc2)
+        self._init_weights_normal(self.fc3)
+    
+    def _createNet(self):
+        
+        # encoder
+        self.e1 = Encoder_block_residual(self.n_channels, self.feature_maps(0), self.residual2conv)
+        self.e2 = Encoder_block_residual(self.feature_maps(0) , self.feature_maps(1), self.residual2conv)
+        self.e3 = Encoder_block_residual(self.feature_maps(1) , self.feature_maps(2), self.residual2conv)
+        self.e4 = Encoder_block_residual(self.feature_maps(2) , self.feature_maps(3), self.residual2conv)
+        self.e5 = Encoder_block_residual(self.feature_maps(3) , self.feature_maps(4), self.residual2conv)
+        self.e6 = Encoder_block_residual(self.feature_maps(4) , self.feature_maps(5), self.residual2conv, kernel_size=2)
+    
+        # bottlenech (encoding)
+        self.b = Conv_block(self.feature_maps(5) , self.feature_maps(6))
+        
+        # Flatten the encoding
+        self.flatten = nn.Flatten()
+        
+        # classification branch
+        self.do     = nn.Dropout(p=0.3)
+        self.relu   = nn.ReLU()
+        
+        # series of FC layers
+        self.fc1 = nn.Linear(self.bottleneck_size, int(self.bottleneck_size/2))
+        self.bn1 = nn.BatchNorm1d(int(self.bottleneck_size/2))
+        self.fc2 = nn.Linear(int(self.bottleneck_size/2), int(self.bottleneck_size/8))
+        self.bn2 = nn.BatchNorm1d(int(self.bottleneck_size/8))
+        self.fc3 = nn.Linear(int(self.bottleneck_size/8), int(self.bottleneck_size/32))
+        self.bn3 = nn.BatchNorm1d(int(self.bottleneck_size/32))
+        self.fc4 = nn.Linear(int(self.bottleneck_size/32), int(self.bottleneck_size/128))
+        self.bn4 = nn.BatchNorm1d(int(self.bottleneck_size/128))
+        self.fc5 = nn.Linear(int(self.bottleneck_size/128), int(self.bottleneck_size/512))
+        self.bn5 = nn.BatchNorm1d(int(self.bottleneck_size/512))
+        self.fc6 = nn.Linear(int(self.bottleneck_size/512), self.n_classes)
+        
+        # decoder 
+        self.d1 = Decoder_block(self.feature_maps(6) , self.feature_maps(5), out_pad=1) # for odd spatial dimensions
+        self.d2 = Decoder_block(self.feature_maps(5) , self.feature_maps(4))
+        self.d3 = Decoder_block(self.feature_maps(4) , self.feature_maps(3))
+        self.d4 = Decoder_block(self.feature_maps(3) , self.feature_maps(2))
+        self.d5 = Decoder_block(self.feature_maps(2) , self.feature_maps(1))
+        self.d6 = Decoder_block(self.feature_maps(1) , self.feature_maps(0))
+            
+        # self.out= decoder_block(64, self.n_channels)
+        self.out = nn.Conv2d(self.feature_maps(0), self.n_channels, kernel_size=1, padding=0)
+        self.decoder_out_fn = nn.Sigmoid()
+
+
+    def _init_weights_kaimingNormal(self, model = None):
+        # Initialize the weights  using He initialization
+        print("Weights initialization using kaiming Normal")
+        
+        if model is None: model = self
+        
+        for param in model.parameters():
+            if len(param.shape) > 1:
+                T.nn.init.kaiming_normal_(param, mode='fan_out', nonlinearity='relu')
+    
+
+    def _init_weights_normal(self, model = None):
+        # Initialize the weights with Gaussian distribution
+        print(f"Weights initialization using Gaussian distribution")
+        
+        if model is None: model = self
+        for param in model.parameters():
+            if len(param.shape) > 1:
+                T.nn.init.normal_(param, mean=0, std=0.01) 
+
+    def getSummary(self, verbose = True): 
+        summary = ""
+        n_params = 0
+        for k,v in self.getLayers().items():
+            summary += "{:<30} -> {:<30}".format(k,str(tuple(v.shape))) + "\n"
+            n_params += T.numel(v)
+        summary += "Total number of parameters: {}\n".format(n_params)
+        if verbose: print(summary)
+        return summary
+     
+    def to_device(self, device):
+        self.to(device)
+    
+    def getLayers(self):
+        return dict(self.named_parameters())
+    
+    def freeze(self):
+        for name, param in self.named_parameters():
+            param.requires_grad = False
+    
+    def forward(self, x):
+        """
+            Returns: logits, reconstruction, encoding
+        """
+        
+        # encoder
+        s1, p1 = self.e1(x)
+        s2, p2 = self.e2(p1)
+        s3, p3 = self.e3(p2)
+        s4, p4 = self.e4(p3)
+        s5, p5 = self.e5(p4)
+        s6, p6 = self.e6(p5)
+    
+        # bottleneck (encoding)
+        bottleneck  = self.b(p6)
+        enc         = self.flatten(bottleneck)
+        
+        # classification
+        f1          = self.relu(self.bn1(self.fc1(enc)))
+        f1_drop     = self.do(f1)
+        f2          = self.relu(self.bn2(self.fc2(f1_drop)))
+        f2_drop     = self.do(f2)
+        f3          = self.relu(self.bn3(self.fc3(f2_drop)))
+        f3_drop     = self.do(f3)
+        f4          = self.relu(self.bn4(self.fc4(f3_drop)))
+        f4_drop     = self.do(f4)
+        f5          = self.relu(self.bn5(self.fc5(f4_drop)))
+        f5_drop     = self.do(f5)
+        logits      = self.fc6(f5_drop)
+
+        d1 = self.d1(bottleneck, s6)
+        d2 = self.d2(d1, s5)
+        d3 = self.d3(d2, s4)
+        d4 = self.d4(d3, s3)
+        d5 = self.d5(d4, s2)
+        d6 = self.d6(d5, s1)
+        
+        # reconstuction
+        rec = self.decoder_out_fn(self.out(d6))  # check sigmoid vs tanh
+        return logits, rec, enc
+
+class Unet6L_ResidualScorer(nn.Module):
+    """
+        U-net 6 + Scorer, 6 encoders (residual) and 6 decoders.
+        This version include an additional layer for the scorer and LargeConv_block instead of Conv_blocks
+    """
+
+    def __init__(self,  n_channels = 3, n_classes= 10, w= 224, h=224):
+        super(Unet6L_ResidualScorer, self).__init__()
+        print("Initializing {} ...".format(self.__class__.__name__))
+        self.n_channels = n_channels
+        self.w = w
+        self.h = h
+        self.n_classes = n_classes
+        self.features_order = exp_featureMaps   # orders greater and equal than 5 saturates the GPU!
+        self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
+        # self.bottleneck_size = int(self.feature_maps(6)*(w/64)*(w/64))
+        self.bottleneck_size = int(self.feature_maps(6)*3**2)  # 3 comes from the computation on spatial dimensionality, kernel applied on odd tensor (if image different from 244 check again this value)
+        self.residual2conv = False  # if False identity shortcuts are connected after the pooling layer
+        # create net and initialize
+        self._createNet()
+        
+        # initialize conv layers
+        self._init_weights_kaimingNormal()
+        
+        # initialize FC layer
+        self._init_weights_normal(self.fc1)
+        self._init_weights_normal(self.fc2)
+        self._init_weights_normal(self.fc3)
+    
+    def _createNet(self):
+        
+        # encoder
+        self.e1 = LargeEncoder_block_residual(self.n_channels, self.feature_maps(0), self.residual2conv)
+        self.e2 = LargeEncoder_block_residual(self.feature_maps(0) , self.feature_maps(1), self.residual2conv)
+        self.e3 = LargeEncoder_block_residual(self.feature_maps(1) , self.feature_maps(2), self.residual2conv)
+        self.e4 = LargeEncoder_block_residual(self.feature_maps(2) , self.feature_maps(3), self.residual2conv)
+        self.e5 = LargeEncoder_block_residual(self.feature_maps(3) , self.feature_maps(4), self.residual2conv)
+        self.e6 = LargeEncoder_block_residual(self.feature_maps(4) , self.feature_maps(5), self.residual2conv, kernel_size=2)
+    
+        # bottlenech (encoding)
+        self.b = Conv_block(self.feature_maps(5) , self.feature_maps(6))
+        
+        # Flatten the encoding
+        self.flatten = nn.Flatten()
+        
+        # classification branch
+        self.do     = nn.Dropout(p=0.3)
+        self.relu   = nn.ReLU()
+        
+        # series of FC layers
+        self.fc1 = nn.Linear(self.bottleneck_size, int(self.bottleneck_size/2))
+        self.bn1 = nn.BatchNorm1d(int(self.bottleneck_size/2))
+        self.fc2 = nn.Linear(int(self.bottleneck_size/2), int(self.bottleneck_size/8))
+        self.bn2 = nn.BatchNorm1d(int(self.bottleneck_size/8))
+        self.fc3 = nn.Linear(int(self.bottleneck_size/8), int(self.bottleneck_size/32))
+        self.bn3 = nn.BatchNorm1d(int(self.bottleneck_size/32))
+        self.fc4 = nn.Linear(int(self.bottleneck_size/32), int(self.bottleneck_size/128))
+        self.bn4 = nn.BatchNorm1d(int(self.bottleneck_size/128))
+        self.fc5 = nn.Linear(int(self.bottleneck_size/128), int(self.bottleneck_size/512))
+        self.bn5 = nn.BatchNorm1d(int(self.bottleneck_size/512))
+        self.fc6 = nn.Linear(int(self.bottleneck_size/512), self.n_classes)
+        
+        # decoder 
+        self.d1 = Decoder_block(self.feature_maps(6) , self.feature_maps(5), out_pad=1) # for odd spatial dimensions
+        self.d2 = Decoder_block(self.feature_maps(5) , self.feature_maps(4))
+        self.d3 = Decoder_block(self.feature_maps(4) , self.feature_maps(3))
+        self.d4 = Decoder_block(self.feature_maps(3) , self.feature_maps(2))
+        self.d5 = Decoder_block(self.feature_maps(2) , self.feature_maps(1))
+        self.d6 = Decoder_block(self.feature_maps(1) , self.feature_maps(0))
+            
+        # self.out= decoder_block(64, self.n_channels)
+        self.out = nn.Conv2d(self.feature_maps(0), self.n_channels, kernel_size=1, padding=0)
+        self.decoder_out_fn = nn.Sigmoid()
+
+
+    def _init_weights_kaimingNormal(self, model = None):
+        # Initialize the weights  using He initialization
+        print("Weights initialization using kaiming Normal")
+        
+        if model is None: model = self
+        
+        for param in model.parameters():
+            if len(param.shape) > 1:
+                T.nn.init.kaiming_normal_(param, mode='fan_out', nonlinearity='relu')
+    
+
+    def _init_weights_normal(self, model = None):
+        # Initialize the weights with Gaussian distribution
+        print(f"Weights initialization using Gaussian distribution")
+        
+        if model is None: model = self
+        for param in model.parameters():
+            if len(param.shape) > 1:
+                T.nn.init.normal_(param, mean=0, std=0.01) 
+
+    def getSummary(self, verbose = True): 
+        summary = ""
+        n_params = 0
+        for k,v in self.getLayers().items():
+            summary += "{:<30} -> {:<30}".format(k,str(tuple(v.shape))) + "\n"
+            n_params += T.numel(v)
+        summary += "Total number of parameters: {}\n".format(n_params)
+        if verbose: print(summary)
+        return summary
+     
+    def to_device(self, device):
+        self.to(device)
+    
+    def getLayers(self):
+        return dict(self.named_parameters())
+    
+    def freeze(self):
+        for name, param in self.named_parameters():
+            param.requires_grad = False
+    
+    def forward(self, x):
+        """
+            Returns: logits, reconstruction, encoding
+        """
+        
+        # encoder
+        s1, p1 = self.e1(x)
+        s2, p2 = self.e2(p1)
+        s3, p3 = self.e3(p2)
+        s4, p4 = self.e4(p3)
+        s5, p5 = self.e5(p4)
+        s6, p6 = self.e6(p5)
+    
+        # bottleneck (encoding)
+        bottleneck  = self.b(p6)
+        enc         = self.flatten(bottleneck)
+        
+        # classification
+        f1          = self.relu(self.bn1(self.fc1(enc)))
+        f1_drop     = self.do(f1)
+        f2          = self.relu(self.bn2(self.fc2(f1_drop)))
+        f2_drop     = self.do(f2)
+        f3          = self.relu(self.bn3(self.fc3(f2_drop)))
+        f3_drop     = self.do(f3)
+        f4          = self.relu(self.bn4(self.fc4(f3_drop)))
+        f4_drop     = self.do(f4)
+        f5          = self.relu(self.bn5(self.fc5(f4_drop)))
+        f5_drop     = self.do(f5)
+        logits      = self.fc6(f5_drop)
+
+        d1 = self.d1(bottleneck, s6)
+        d2 = self.d2(d1, s5)
+        d3 = self.d3(d2, s4)
+        d4 = self.d4(d3, s3)
+        d5 = self.d5(d4, s2)
+        d6 = self.d6(d5, s1)
+        
+        # reconstuction
+        rec = self.decoder_out_fn(self.out(d6))  # check sigmoid vs tanh
+        return logits, rec, enc
+
+
+
 class Abnormality_module(nn.Module): 
     def __init__(self, logits_shape, encoding_shape, residual_shape):
         super(Abnormality_module, self).__init__()
@@ -1989,7 +2536,7 @@ if __name__ == "__main__":
         input("press something to exit ")
 
     def test_UnetScorer():
-        unet = Unet6_Scorer(n_channels=3, n_classes=2)
+        unet = Unet6L_Scorer(n_channels=3, n_classes=2)
         unet.to_device(device)
         print(unet.bottleneck_size)
         # unet.getSummary()
@@ -2008,7 +2555,7 @@ if __name__ == "__main__":
         # print(p.shape)
         
         x = T.rand((32, 3, 224, 224)).to(device)
-        unet = Unet5_ResidualScorer(n_channels=3, n_classes=2)
+        unet = Unet6L_ResidualScorer(n_channels=3, n_classes=2)
         unet.to_device(device)
         # print(unet.bottleneck_size)
         # unet.getSummary()
@@ -2025,7 +2572,7 @@ if __name__ == "__main__":
 
         
      
-    test_UnetScorer()
+    test_UnetResidualScorer()
 
     #                           [End test section] 
     
