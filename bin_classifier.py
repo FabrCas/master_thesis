@@ -1,9 +1,8 @@
 from    time                                import time
 import  random              
 from    tqdm                                import tqdm
-from    datetime                            import date
+from    datetime                            import date, datetime
 import  math
-
 import  torch                               as T
 import  numpy                               as np
 import  os              
@@ -855,9 +854,9 @@ class DFD_BinClassifier_v3(BinaryClassifier):
         
         # learning rate scheduler
         if self.early_stopping_trigger == "loss":
-            self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor = 0.5, patience = 5, cooldown = 2, min_lr = self.lr, verbose = True) # reduce of a half the learning rate 
+            self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor = 0.5, patience = 3, cooldown = 2, min_lr = self.lr*0.01, verbose = True) # reduce of a half the learning rate 
         elif self.early_stopping_trigger == "acc":
-            self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='max', factor = 0.5, patience = 5, cooldown = 2, min_lr = self.lr, verbose = True) # reduce of a half the learning rate 
+            self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='max', factor = 0.5, patience = 3, cooldown = 2, min_lr = self.lr*0.01, verbose = True) # reduce of a half the learning rate 
         
         # model in training mode
         self.model.train()
@@ -973,7 +972,6 @@ class DFD_BinClassifier_v3(BinaryClassifier):
                     else:
                         print("Accuracy increased respect previous epoch")
             
-            self.early_stopping_trigger
             # create dictionary with info frome epoch: loss + valid, and log it
             epoch_data = {"epoch": last_epoch, "avg_loss": avg_loss, "max_loss": max_loss_epoch, \
                           "min_loss": min_loss_epoch, self.early_stopping_trigger + "_valid": criterion}
@@ -1050,15 +1048,19 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         binary classifier for deepfake detection using partial CDDB dataset for the chosen scenario configuration.
         Model used: Custom Unet with encoder/decoder structure
         This fourth etends and edits v3,
-        - Usage of Unet with scorer model:
-        - early stopping start from half epochs
+        - mixed usage of batchsize 32 and 64
+        - Usage of Unet + scorer model, with and without Residual connection in the Encoder
+        - Change in the reconstruction loss, now is uses the MAE instead of MSE
+        - early stopping starts from half epochs
         
         training model folders:
         - faces_Unet4Scorer_v4_21-11-2023 (bad results, batch size 64)
-        -
+        - faces_Unet4_Residual_Scorer_v4_24-11-2023
+        - faces_Unet5_Residual_Scorer_v4_25-11-2023
+        - faces_Unet5_Scorer_v4_25-11-2023
 
     """
-    def __init__(self, scenario, useGPU = True, batch_size = 32, model_type = "Unet5_Residual_Scorer"):
+    def __init__(self, scenario, useGPU = True, batch_size = 64, model_type = "Unet5_Residual_Scorer"):
         """ init classifier
 
         Args:
@@ -1071,7 +1073,7 @@ class DFD_BinClassifier_v4(BinaryClassifier):
             1st ,2nd,3rd groups and do the same for OOD without intersection.
             
             useGPU (bool, optional): flag to use CUDA device or cpu hardware by the model. Defaults to True.
-            batch_size (int, optional): batch size used by dataloaders. Defaults is 32.
+            batch_size (int, optional): batch size used by dataloaders, Usually 32 or 64 (for lighter models). Defaults is 32.
             model_type (str, optional): choose the Unet architecture between :
                 - "Unet4_Scorer"
                 - "Unet4_Residual_Scorer"
@@ -1281,9 +1283,9 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         
         # learning rate scheduler
         if self.early_stopping_trigger == "loss":
-            self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor = 0.5, patience = 5, cooldown = 2, min_lr = self.lr, verbose = True) # reduce of a half the learning rate 
+            self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor = 0.5, patience = 3, cooldown = 2, min_lr = self.lr*0.01, verbose = True) # reduce of a half the learning rate 
         elif self.early_stopping_trigger == "acc":
-            self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='max', factor = 0.5, patience = 5, cooldown = 2, min_lr = self.lr, verbose = True) # reduce of a half the learning rate 
+            self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='max', factor = 0.5, patience = 3, cooldown = 2, min_lr = self.lr*0.01, verbose = True) # reduce of a half the learning rate 
         
         # model in training mode
         self.model.train()
@@ -1411,6 +1413,9 @@ class DFD_BinClassifier_v4(BinaryClassifier):
             
             # lr scheduler step based on validation result
             self.scheduler.step(criterion)
+
+        # log GPU memory statistics during training
+        logger.log_mem(T.cuda.memory_summary(device=self.device))
         
         # create path for the model save
         name_model_file         = str(last_epoch) +'.ckpt'
@@ -1620,17 +1625,32 @@ if __name__ == "__main__":
     
     def train_v4_content_scenario(model_type):
         bin_classifier = DFD_BinClassifier_v4(scenario = "content", useGPU= True, model_type=model_type)
-        bin_classifier.train(name_train= "faces_" + model_type)
+        bin_classifier.train(name_train= "faces_" + model_type, test_loop=False)
     
-    def test_v4_metrics(name_model, epoch, scenario):
-        bin_classifier = DFD_BinClassifier_v4(scenario = scenario, useGPU= True)
+    def test_v4_metrics(name_model, epoch, scenario, model_type):
+        bin_classifier = DFD_BinClassifier_v4(scenario = scenario, useGPU= True, model_type= model_type)
         bin_classifier.load(name_model, epoch)
         bin_classifier.test()
+    
+    def showReconstruction_v4(name_model, epoch, scenario, model_type, save = False):
         
+        random.seed(datetime.now().timestamp())
         
-    train_v4_content_scenario(model_type="Unet4_Residual_Scorer")
-    pass
-
+        bin_classifier = DFD_BinClassifier_v4(scenario = scenario, useGPU= True,  model_type = model_type)
+        bin_classifier.load(name_model, epoch)
+        idx = random.randint(0, len(bin_classifier.test_dataset))
+        img, _ = bin_classifier.test_dataset.__getitem__(idx)
+        showImage(img, save_image= save)
+        
+        img     = T.unsqueeze(img, dim= 0).to(bin_classifier.device)
+        logits, rec_img, enc = bin_classifier.model.forward(img)
+        rec_img = T.squeeze(rec_img, dim = 0)
+        print(logits)
+        showImage(rec_img, save_image=save) 
+     
+    # train_v4_content_scenario(model_type="Unet5_Scorer")
+    # showReconstruction_v4(name_model="faces_Unet5_Scorer_v4_25-11-2023", epoch=32, scenario="content", model_type = "Unet5_Scorer")
+    
     #                           [End test section] 
     """ 
             Past test/train launched: 
@@ -1649,9 +1669,13 @@ if __name__ == "__main__":
     test_v3_metrics(name_model = "faces_resnet50EDS_v3_.17-11-2023", epoch = 20, scenario = "content")
     
     train_v4_content_scenario()
-    test_v4_metrics(name_model = "faces_Unet4Scorer_v4_21-11-2023", epoch = 12, scenario = "content")
+    test_v4_metrics(name_model = "faces_Unet4_Scorer_v4_21-11-2023", epoch = 12, scenario = "content")
     train_v4_content_scenario(model_type="Unet4_Residual_Scorer")
-    
+    train_v4_content_scenario(model_type="Unet5_Residual_Scorer")
+    train_v4_content_scenario(model_type="Unet5_Scorer")
+    test_v4_metrics(name_model = "faces_Unet4_Residual_Scorer_v4_24-11-2023", epoch = 32, scenario = "content", model_type="Unet4_Residual_Scorer")
+    test_v4_metrics(name_model = "faces_Unet5_Residual_Scorer_v4_25-11-2023", epoch = 30, scenario = "content", model_type = "Unet5_Residual_Scorer")
+    test_v4_metrics(name_model = "faces_Unet5_Scorer_v4_25-11-2023", epoch = 32, scenario = "content",  model_type = "Unet5_Scorer")
     """
 
     

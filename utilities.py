@@ -1049,9 +1049,16 @@ class ExpLogger(object):
             self.write_logger(self.delimiter_name("Training"))
         self.write_logger(text)
         self.train_lines.append(text)
-        
+    
+    def log_mem(self, mem_summ):
+        self.write_logger(self.delimiter_line)
+        self.write_logger(self.delimiter_name("Memory usage"))
+        self.write_logger(mem_summ)
+        self.write_logger(self.delimiter_line)
+        self.flush()
+    
     def end_log(self):
-        self.write_logger(self.delimiter_line)  # close section training for each epoch
+        # self.write_logger(self.delimiter_line)  # close section training for each epoch
         self.close_logger()
      
     def open_logger(self):
