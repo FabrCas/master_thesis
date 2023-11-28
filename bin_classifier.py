@@ -1068,6 +1068,13 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         - faces_Unet4_Residual_Scorer_v4_24-11-2023
         - faces_Unet5_Residual_Scorer_v4_25-11-2023
         - faces_Unet5_Scorer_v4_25-11-2023
+        - faces_Unet6_Scorer_v4_25-11-2023
+        - faces_Unet6_Residual_Scorer_v4_26-11-2023
+        - faces_Unet6L_Residual_Scorer_v4_26-11-2023
+        - faces_Unet5_Scorer+_v4_27-11-2023
+        - faces_Unet5_Residual_Scorer+_v4_27-11-2023
+        - faces_Unet5_Residual_Scorer+MSE_v4_27-11-2023
+        
 
     """
     def __init__(self, scenario, useGPU = True, batch_size = 64, model_type = "Unet5_Residual_Scorer"):
@@ -1093,7 +1100,7 @@ class DFD_BinClassifier_v4(BinaryClassifier):
                 - "Unet6L_Scorer"
                 - "Unet6_Residual_Scorer"
                 - "Unet6L_Residual_Scorer"
-             Defaults is ""Unet5_Residual_Scorer"". 
+            Defaults is "Unet5_Residual_Scorer". 
         """
         super(DFD_BinClassifier_v4, self).__init__(useGPU = useGPU, batch_size = batch_size, model_type = model_type)
         self.version = 4
@@ -1677,7 +1684,7 @@ if __name__ == "__main__":
         showImage(rec_img, save_image=save) 
      
 
-    test_v4_metrics("faces_Unet5_Residual_Scorer+MSE_v4_27-11-2023", 36, "content", "Unet5_Residual_Scorer")
+
 
     
     #                           [End test section] 
@@ -1713,6 +1720,7 @@ if __name__ == "__main__":
     train_v4_content_scenario(model_type="Unet5_Residual_Scorer", add_name="+MSE") # MSE instead of MAE
     test_v4_metrics("faces_Unet5_Scorer+_v4_27-11-2023", 39, "content", "Unet5_Scorer")
     test_v4_metrics("faces_Unet5_Residual_Scorer+_v4_27-11-2023", 37, "content", "Unet5_Residual_Scorer")
+    test_v4_metrics("faces_Unet5_Residual_Scorer+MSE_v4_27-11-2023", 36, "content", "Unet5_Residual_Scorer")
     """
 
     

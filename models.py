@@ -718,6 +718,8 @@ class Unet6(nn.Module):
 
 #_____________________________________ OOD custom modules __________________________________________
 
+# custom ResNet
+
 class ResNet_EDS(nn.Module): 
     """ ResNet multi head module with Encoder, Decoder and scorer (Classifier) """
     def __init__(self, n_channels = 3, n_classes = 10, use_upsample = False):  # expect image of shape 224x224
@@ -1014,7 +1016,7 @@ class ResNet_EDS(nn.Module):
         
         return features, logits, reconstruction
 
-# custom Unet blocks
+# custom Unet
 
 # TODO test other version of large conv flack results fail to increase with this
 class LargeConv_block(nn.Module):
@@ -2389,21 +2391,25 @@ class Unet6L_ResidualScorer(nn.Module):
         rec = self.decoder_out_fn(self.out(d6))  # check sigmoid vs tanh
         return logits, rec, enc
 
+# custom abnormality module
+
 class Abnormality_module(nn.Module): 
     def __init__(self, logits_shape, encoding_shape, residual_shape):
         super(Abnormality_module, self).__init__()
         print("Initializing {} ...".format(self.__class__.__name__))
+        
+        # all vectors with 2 axis, first batch, second features
         self.logits_shape   = logits_shape
         self.encoding_shape = encoding_shape
         self.residual_shape = residual_shape
         
-        self._createNet()
-        self._init_weights_normal()
-    
-    def _createNet(self):
-        pass
+        # same batch size
+        assert logits_shape[0] == encoding_shape[0] and encoding_shape[0] == residual_shape[0]
         
-    
+
+    def _createNet(self):
+        raise NotImplementedError
+            
     def _init_weights_normal(self, model = None):
         # Initialize the weights with Gaussian distribution
         print(f"Weights initialization using Gaussian distribution")
@@ -2413,10 +2419,13 @@ class Abnormality_module(nn.Module):
             if len(param.shape) > 1:
                 T.nn.init.normal_(param, mean=0, std=0.01) 
                 
-    def getSummary(self, verbose = True): 
+    def getSummary(self, verbose = True):
         summary = ""
+        n_params = 0
         for k,v in self.getLayers().items():
             summary += "{:<30} -> {:<30}".format(k,str(tuple(v.shape))) + "\n"
+            n_params += T.numel(v)
+        summary += "Total number of parameters: {}\n".format(n_params)
         if verbose: print(summary)
         return summary
         
@@ -2429,7 +2438,63 @@ class Abnormality_module(nn.Module):
     def freeze(self):
         for name, param in self.named_parameters():
             param.requires_grad = False
+    
+
+class Abnormality_module_Basic(Abnormality_module):
+    
+    def __init__(self, logits_shape, encoding_shape, residual_shape):
+        super().__init__(logits_shape, encoding_shape, residual_shape)
+        self._createNet()
+        self._init_weights_normal()
+    
+    def _createNet(self):
+        
+        tot_features_0      = self.logits_shape[1] + self.encoding_shape[1] + self.residual_shape[1]
+        if int(tot_features_0/1000) > 8192:
+            tot_features_1      = int(tot_features_0/1000)
+        else:
+            tot_features_1      = 8192
             
+        tot_features_2      = 2046
+        
+        
+        # taken from official work 
+        tot_feaures_risk_1  = 512
+        tot_feaures_risk_2  = 128
+        tot_feaures_final   = 1
+        
+        self.gelu = T.nn.GELU()
+        self.sigmoid = T.nn.Sigmoid()
+        
+        # preliminary layers
+        self.fc1 = T.nn.Linear(tot_features_0,tot_features_1)
+        self.bn1 = T.nn.BatchNorm1d(tot_features_1)
+        self.fc2 = T.nn.Linear(tot_features_1,tot_features_2)
+        self.bn2 = T.nn.BatchNorm1d(tot_features_2)
+        
+        # risk section
+        self.fc_risk_1      = T.nn.Linear(tot_features_2,tot_feaures_risk_1)
+        self.bn_risk_1      = T.nn.BatchNorm1d(tot_feaures_risk_1)
+        self.fc_risk_2      = T.nn.Linear(tot_feaures_risk_1,tot_feaures_risk_2)
+        self.bn_risk_2      = T.nn.BatchNorm1d(tot_feaures_risk_2)
+        self.fc_risk_final  = T.nn.Linear(tot_feaures_risk_2,tot_feaures_final)
+        self.bn_risk_final  = T.nn.BatchNorm1d(tot_feaures_final)
+        
+    def forward(self, x):
+        
+        # preliminary layers
+        x = self.gelu(self.bn1(self.fc1(x)))
+        x = self.gelu(self.bn2(self.fc2(x)))
+        
+        # risk section
+        x = self.gelu(self.bn_risk_1(self.fc_risk_1(x)))
+        x = self.gelu(self.bn_risk_2(self.fc_risk_2(x)))
+        x = self.gelu(self.bn_risk_final(self.fc_risk_final(x)))
+        
+        return x
+    
+
+       
 #_____________________________________Vision Transformer (ViT)_____________________________________        
 
 
@@ -2614,10 +2679,33 @@ if __name__ == "__main__":
         print("enc shape: ", enc.shape)
         input("press something to exit ")
         
-
+    def test_abnorm_expanded():
+        from bin_classifier import DFD_BinClassifier_v4
         
-     
-    test_UnetResidualScorer()
+        classifier = DFD_BinClassifier_v4(scenario="content", model_type="Unet5_Residual_Scorer")
+        classifier.load("faces_Unet5_Residual_Scorer+MSE_v4_27-11-2023", 36)
+        x_module_a = T.rand((32, 3, 224, 224)).to(device)
+        logits, reconstruction, encoding = classifier.model.forward(x_module_a)
+        
+        print(logits.shape)
+        print(reconstruction.shape)
+        print(encoding.shape)
+        
+        # reconstuction to residual
+        
+        residual = T.square(reconstruction - x_module_a)
+        residual_flatten = T.flatten(residual, start_dim=1)
+        print(residual_flatten.shape)
+        
+        x_module_b = T.cat((logits, encoding, residual_flatten), dim = 1)
+        
+        print(x_module_b.shape)
+        
+        abnorm_module = Abnormality_module_Basic(logits_shape = logits.shape, encoding_shape = logits.shape, residual_shape = logits.shape)
+        
+        
+        
+    test_abnorm_expanded()
     pass
     #                           [End test section] 
     

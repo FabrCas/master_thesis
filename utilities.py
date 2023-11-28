@@ -335,19 +335,22 @@ class NormalizeByChannelMeanStd(T.nn.Module):
 
 # data perturbation
 
+def normalize(x):
+    return (x - np.min(x)) / (np.max(x) - np.min(x))
+
 def add_noise(batch_input, complexity=0.5):
-    return batch_input + np.random.normal(size=batch_input.shape, scale=1e-9 + complexity)
+    return normalize(batch_input +np.random.normal(size=batch_input.shape, scale=1e-9 + complexity))
 
 def add_blur(img, complexity=0.5):
     """ img as fist dimension we have the color channel."""
     # image = img.reshape((-1, 28, 28))
     shape = img.shape
     # return gaussian(img, sigma=5*complexity).reshape((-1, 28*28))
-    return gaussian(img, sigma=5*complexity)
+    return normalize(gaussian(img, sigma=5*complexity, channel_axis=-1))
 
 def add_distortion_noise(batch_input):
     distortion = np.random.uniform(low=0.9, high=1.2)
-    return batch_input + np.random.normal(size=batch_input.shape, scale=1e-9 + distortion)
+    return normalize(batch_input + np.random.normal(size=batch_input.shape, scale=1e-9 + distortion))
     
 ##################################################  Save/Load functions ###############################################################
 

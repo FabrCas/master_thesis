@@ -10,12 +10,13 @@ from    sklearn.metrics     import precision_recall_curve, auc, roc_auc_score
 # local import
 from    dataset             import CDDB_binary, CDDB_binary_Partial, OOD_dataset, getCIFAR100_dataset, getMNIST_dataset, getFMNIST_dataset
 from    experiments         import MNISTClassifier, MNISTClassifier_keras
-from    bin_classifier      import DFD_BinClassifier_v1
-from    utilities           import saveJson, loadJson, metrics_binClass, metrics_OOD, print_dict, showImage, check_folder
+from    bin_classifier      import DFD_BinClassifier_v1, DFD_BinClassifier_v4
+from    utilities           import saveJson, loadJson, metrics_binClass, metrics_OOD, print_dict, showImage, check_folder, sampleValidSet, \
+                            add_noise, add_distortion_noise, add_blur
 
 class OOD_Classifier(object):
     
-    def __init__(self, id_data_test, ood_data_test, id_data_train, ood_data_train, useGPU):
+    def __init__(self, id_data_test = None, ood_data_test = None, id_data_train = None, ood_data_train = None, useGPU = True):
         super(OOD_Classifier, self).__init__()
         
         
@@ -740,16 +741,68 @@ class Baseline_ODIN(OOD_Classifier):
 # TODO
 class Abnormality_module(OOD_Classifier):
     """ Custom implementation of the abnormality module using ResNet, look https://arxiv.org/abs/1610.02136 chapter 4"""
-    def __init__(self, classifier,  id_data_test = None, ood_data_test = None, id_data_train = None, ood_data_train = None, useGPU = True):
-        super(OOD_Baseline, self).__init__(id_data_test = id_data_test, ood_data_test = ood_data_test,                  \
-                                           id_data_train = id_data_train, ood_data_train = id_data_train, useGPU = useGPU)
+    
+    def __init__(self, classifier, scenario:str, useGPU = True):
+        """ scenario (str): choose between: "content", "mix", "group" """
+        
+        super(Abnormality_module, self).__init__(useGPU=useGPU)
+        
         # set the classifier
         self.classifier  = classifier
+        self.scenario = scenario
+        self._prepare_data(extended_ood = False)
+        
+        
+        
+    
+    def _prepare_data(self, extended_ood = False):
+        # if not(extended_ood):
+        self.id_data_train = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False, augment = False, label_vector= False, transform2ood = True)
+        
+        # take test set removing the valid set
+        test_dataset        = CDDB_binary_Partial(scenario = self.scenario, train = False, ood = False, augment= False, label_vector= False)
+        _ , self.id_data_test = sampleValidSet(trainset= self.id_data_train, testset= test_dataset, useOnlyTest = True, verbose = True)
+        
+        
+        x,y = self.id_data_train.__getitem__(5)
+        # x_ = T.clone(x)
+        
+        # x_ = add_blur(x_)
+        # x_ = add_noise(x_)
+        # x_ = add_distortion_noise(x_)
+        # x_ = T.tensor(x_)
+        
+        # print(T.min(x_), T.max(x_))
+        print(T.min(x), T.max(x))
+        
+        showImage(x)
+        # showImage(x_)
+             
+                           
+        if extended_ood:
+            self.ood_data_train = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = True, augment = False, label_vector= False)
+            self.ood_data_test  = CDDB_binary_Partial(scenario = self.scenario, train = False,  ood = True, augment = False, label_vector= False)
+        
+        
+        
+            
+            
+        
+
+    
+    def train(self):
+        pass
+        
+        
+        
+        
+        
         
         
 if __name__ == "__main__":
     #                           [Start test section] 
     
+    # ________________________________ baseline  _______________________________________
     def test_baseline_implementation():
         ood_detector = OOD_Baseline(classifier= None, id_data_test = None, ood_data_test = None, useGPU= True)
         ood_detector.verify_implementation()
@@ -782,7 +835,27 @@ if __name__ == "__main__":
     
     # TODO define test for the other scenarios
     
-    pass
+    # ________________________________ baseline + ODIN  ________________________________
+    
+    
+    # ________________________________ abnormality module  _____________________________
+    
+    def test_abn():
+        classifier_name = "faces_Unet5_Residual_Scorer+MSE_v4_27-11-2023"
+        classifier_type = "Unet5_Residual_Scorer"
+        classifier_epoch = 36
+        
+        # classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
+        # classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
+        
+        abnormer = Abnormality_module(None, scenario="content")
+        
+        
+    
+    test_abn() 
+        
+        
+    
     
     #                           [End test section] 
    

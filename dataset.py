@@ -3,7 +3,7 @@ from PIL                                    import Image
 import numpy                                as np
 import math
 import random
-from utilities                              import showImage, sampleValidSet
+from utilities                              import showImage, sampleValidSet, add_blur,add_noise,add_distortion_noise
 import torch                                as T
 import torchvision
 from torchvision                            import transforms
@@ -226,7 +226,7 @@ class CDDB_binary_Partial(Dataset):
         Selecting the study case ("content","group","mix") the data are organized,
         using remaining samples as OOD data.
     """
-    def __init__(self, scenario, width_img= 224, height_img = 224, train = True, ood = False, augment = False, label_vector = True):
+    def __init__(self, scenario, width_img= 224, height_img = 224, train = True, ood = False, augment = False, label_vector = True, transform2ood = False):
         """ CDDB_binary_Partial constructor
 
         Args:
@@ -254,7 +254,7 @@ class CDDB_binary_Partial(Dataset):
         self.ood            = ood
         self.augment        = augment
         self.label_vector   = label_vector
-        
+        self.transform2ood  = transform2ood
              
         self.width_img = width_img
         self.height_img = height_img
@@ -414,6 +414,20 @@ class CDDB_binary_Partial(Dataset):
     def _transform(self,x):
         return self.transform_ops(x)
 
+    def _ood_distortion(self,x, idx):
+        # take a Pil image and returns a numpy array
+
+        distortion_idx = idx%3
+        x = np.array(x)
+        if distortion_idx == 0:
+            return add_blur(x)
+        elif distortion_idx == 1:
+            return add_noise(x)
+        elif distortion_idx == 2:
+            return add_distortion_noise(x)
+        
+        
+    
     def __len__(self):
         return len(self.y)
     
@@ -421,6 +435,11 @@ class CDDB_binary_Partial(Dataset):
         img_path = self.x[idx]
         # print(img_path)
         img = Image.open(img_path)
+        
+        if self.transform2ood:
+            print("------------- ao {}".format(idx))
+            img = self._ood_distortion(img, idx)
+            
         img = self._transform(img)    #dtype = float32
         
         
