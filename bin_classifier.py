@@ -17,8 +17,8 @@ from    torch.utils.data                    import default_collate
 from    utilities                           import plot_loss, saveModel, metrics_binClass, loadModel, test_num_workers, sampleValidSet, \
                                             duration, check_folder, cutmix_image, showImage, image2int, ExpLogger
 from    dataset                             import CDDB_binary, CDDB_binary_Partial
-from    models                              import ResNet_ImageNet, ResNet, ResNet_EDS, Unet4_Scorer, Unet5_Scorer, Unet4_ResidualScorer,\
-                                            Unet5_ResidualScorer
+from    models                              import ResNet_ImageNet, ResNet, ResNet_EDS, Unet4_Scorer, Unet5_Scorer, Unet6_Scorer, Unet6L_Scorer, \
+                                            Unet4_ResidualScorer, Unet5_ResidualScorer, Unet6_ResidualScorer, Unet6L_ResidualScorer
 
 
 # from    sklearn.metrics     import precision_recall_curve, auc, roc_auc_score
@@ -163,6 +163,16 @@ class BinaryClassifier(object):
         # compute metrics from test data
         metrics_binClass(predictions, targets, predicted_probabilities, epoch_model= str(self.modelEpochs), path_save = self.path2model_results)
     
+    def train_and_test(self, name_train):
+        """ for both train and test the model
+        
+        Args:
+            name_train (str) should include the scenario selected and the model name (i.e. ResNet50), keep this convention {scenario}_{model_name}
+
+        """
+        self.train(name_train)
+        self.test()
+        
     def cutmix_custom(self, x, y, prob = 0.5, verbose = False):
         
         uniform_sampled = random .random()
@@ -854,9 +864,9 @@ class DFD_BinClassifier_v3(BinaryClassifier):
         
         # learning rate scheduler
         if self.early_stopping_trigger == "loss":
-            self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor = 0.5, patience = 3, cooldown = 2, min_lr = self.lr*0.01, verbose = True) # reduce of a half the learning rate 
+            self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor = 0.5, patience = 3, cooldown = 0, min_lr = self.lr*0.01, verbose = True) # reduce of a half the learning rate 
         elif self.early_stopping_trigger == "acc":
-            self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='max', factor = 0.5, patience = 3, cooldown = 2, min_lr = self.lr*0.01, verbose = True) # reduce of a half the learning rate 
+            self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='max', factor = 0.5, patience = 3, cooldown = 0, min_lr = self.lr*0.01, verbose = True) # reduce of a half the learning rate 
         
         # model in training mode
         self.model.train()
@@ -918,7 +928,7 @@ class DFD_BinClassifier_v3(BinaryClassifier):
                     # logits = self.model.forward(x)
 
                     class_loss  = self.bce(input=logits, target=y)   # logits bce version
-                    rec_loss    = self.reconstruction_loss(target = x, reconstruction = reconstruction)
+                    rec_loss    = self.reconstruction_loss(target = x, reconstruction = reconstruction, use_abs= False)
                     loss = self.alpha_loss * class_loss + self.beta_loss * rec_loss 
                     
                 
@@ -1079,6 +1089,10 @@ class DFD_BinClassifier_v4(BinaryClassifier):
                 - "Unet4_Residual_Scorer"
                 - "Unet5_Scorer"
                 - "Unet5_Residual_Scorer"
+                - "Unet6_Scorer"
+                - "Unet6L_Scorer"
+                - "Unet6_Residual_Scorer"
+                - "Unet6L_Residual_Scorer"
              Defaults is ""Unet5_Residual_Scorer"". 
         """
         super(DFD_BinClassifier_v4, self).__init__(useGPU = useGPU, batch_size = batch_size, model_type = model_type)
@@ -1105,9 +1119,16 @@ class DFD_BinClassifier_v4(BinaryClassifier):
             self.model = Unet5_Scorer(n_channels=3, n_classes=2)
         elif model_type == "Unet5_Residual_Scorer":
             self.model = Unet5_ResidualScorer(n_channels=3, n_classes=2)
+        elif model_type == "Unet6_Scorer":
+            self.model = Unet6_Scorer(n_channels=3, n_classes=2)
+        elif model_type == "Unet6L_Scorer":
+            self.model = Unet6L_Scorer(n_channels=3, n_classes=2)
+        elif model_type == "Unet6_Residual_Scorer":
+            self.model = Unet6_ResidualScorer(n_channels=3, n_classes=2)
+        elif model_type == "Unet6L_Residual_Scorer":
+            self.model = Unet6L_ResidualScorer(n_channels=3, n_classes=2)
         else:
             raise ValueError("The model type is not a Unet model")
-        
         
         self.model.to(self.device)
         self.model.eval()
@@ -1118,7 +1139,7 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         
         # learning hyperparameters (default)
         self.lr                     = 1e-4
-        self.n_epochs               = 40
+        self.n_epochs               = 50
         self.start_early_stopping   = self.n_epochs/2   # epoch to start early stopping
         self.weight_decay           = 0.001             # L2 regularization term 
         self.patience               = 5                 # early stopping patience
@@ -1432,8 +1453,11 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         self.modelEpochs        = last_epoch
         
         # save loss plot
-        plot_loss(loss_epochs, title_plot= name_train, path_save = path_lossPlot_save)
-        plot_loss(loss_epochs, title_plot= name_train, path_save = os.path.join(path_model_folder,name_loss_file), show=False)
+        if test_loop:
+            plot_loss(loss_epochs, title_plot= name_train, path_save = None)
+        else: 
+            plot_loss(loss_epochs, title_plot= name_train, path_save = path_lossPlot_save)
+            plot_loss(loss_epochs, title_plot= name_train, path_save = os.path.join(path_model_folder,name_loss_file), show=False)
         
         # save model
         saveModel(self.model, path_model_save)
@@ -1553,7 +1577,7 @@ if __name__ == "__main__":
         bin_classifier.load("resnet50_ImageNet_13-10-2023", 20)
         bin_classifier.train(name_train="resnet50_ImageNet")
         
-    def test_v1():
+    def test_v1_metrics():
         bin_classifier = DFD_BinClassifier_v1(useGPU = True, model_type="resnet_pretrained")
         bin_classifier.load("resnet50_ImageNet_13-10-2023", 20)
         bin_classifier.test()
@@ -1623,14 +1647,18 @@ if __name__ == "__main__":
     
     # ________________________________ v4  ________________________________
     
-    def train_v4_content_scenario(model_type):
+    def train_v4_content_scenario(model_type, add_name =""):
         bin_classifier = DFD_BinClassifier_v4(scenario = "content", useGPU= True, model_type=model_type)
-        bin_classifier.train(name_train= "faces_" + model_type, test_loop=False)
+        bin_classifier.train(name_train= "faces_" + model_type + add_name, test_loop = False)
     
     def test_v4_metrics(name_model, epoch, scenario, model_type):
         bin_classifier = DFD_BinClassifier_v4(scenario = scenario, useGPU= True, model_type= model_type)
         bin_classifier.load(name_model, epoch)
         bin_classifier.test()
+    
+    def train_test_v4_content_scenario(model_type, add_name =""):
+        bin_classifier = DFD_BinClassifier_v4(scenario = "content", useGPU= True, model_type=model_type)
+        bin_classifier.train_and_test(name_train= "faces_" + model_type + add_name, test_loop = False)
     
     def showReconstruction_v4(name_model, epoch, scenario, model_type, save = False):
         
@@ -1648,15 +1676,16 @@ if __name__ == "__main__":
         print(logits)
         showImage(rec_img, save_image=save) 
      
-    # train_v4_content_scenario(model_type="Unet5_Scorer")
-    # showReconstruction_v4(name_model="faces_Unet5_Scorer_v4_25-11-2023", epoch=32, scenario="content", model_type = "Unet5_Scorer")
+
+    test_v4_metrics("faces_Unet5_Residual_Scorer+MSE_v4_27-11-2023", 36, "content", "Unet5_Residual_Scorer")
+
     
     #                           [End test section] 
     """ 
             Past test/train launched: 
     
     train_v1()
-    test_v1()
+    test_v1_metrics()
     
     train_v2_content_scenario()
     train_v2_group_scenario()
@@ -1676,6 +1705,14 @@ if __name__ == "__main__":
     test_v4_metrics(name_model = "faces_Unet4_Residual_Scorer_v4_24-11-2023", epoch = 32, scenario = "content", model_type="Unet4_Residual_Scorer")
     test_v4_metrics(name_model = "faces_Unet5_Residual_Scorer_v4_25-11-2023", epoch = 30, scenario = "content", model_type = "Unet5_Residual_Scorer")
     test_v4_metrics(name_model = "faces_Unet5_Scorer_v4_25-11-2023", epoch = 32, scenario = "content",  model_type = "Unet5_Scorer")
+    train_test_v4_content_scenario(model_type="Unet6_Scorer")
+    train_test_v4_content_scenario(model_type="Unet6_Residual_Scorer")
+    train_test_v4_content_scenario(model_type="Unet6L_Residual_Scorer")
+    train_v4_content_scenario(model_type="Unet5_Scorer", add_name="+") # more fc layers
+    train_v4_content_scenario(model_type="Unet5_Residual_Scorer", add_name="+")    # more fc layers
+    train_v4_content_scenario(model_type="Unet5_Residual_Scorer", add_name="+MSE") # MSE instead of MAE
+    test_v4_metrics("faces_Unet5_Scorer+_v4_27-11-2023", 39, "content", "Unet5_Scorer")
+    test_v4_metrics("faces_Unet5_Residual_Scorer+_v4_27-11-2023", 37, "content", "Unet5_Residual_Scorer")
     """
 
     

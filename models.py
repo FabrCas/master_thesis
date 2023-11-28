@@ -1016,18 +1016,20 @@ class ResNet_EDS(nn.Module):
 
 # custom Unet blocks
 
+# TODO test other version of large conv flack results fail to increase with this
 class LargeConv_block(nn.Module):
     """ larger version of the Conv_block class"""
     def __init__(self, in_c, out_c):
         super().__init__()
-        self.expand_multiplier = 2
         
-        self.conv1 = nn.Conv2d(in_c, in_c, kernel_size=3, padding=1)
+        self.conv1 = nn.Conv2d(in_c, in_c, kernel_size=1, padding=0)
         self.bn1 = nn.BatchNorm2d(in_c)
-        self.conv2 = nn.Conv2d(in_c, out_c*self.expand_multiplier, kernel_size=3, padding=1)
-        self.bn2 = nn.BatchNorm2d(out_c*self.expand_multiplier)
-        self.conv3 = nn.Conv2d(out_c*self.expand_multiplier, out_c, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(in_c, out_c, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(out_c)
+        self.conv3 = nn.Conv2d(out_c, out_c, kernel_size=1, padding=0)
         self.bn3 = nn.BatchNorm2d(out_c)
+        
+        
         self.relu = nn.ReLU()
         
     def forward(self, inputs):
@@ -1045,11 +1047,15 @@ class LargeConv_block(nn.Module):
 class LargeEncoder_block(nn.Module):
     def __init__(self, in_c, out_c):
         super().__init__()
-        self.conv = LargeConv_block(in_c, out_c)
+        self.conv_1 = LargeConv_block(in_c, in_c)
+        self.conv_2 = LargeConv_block(in_c, out_c)
+        self.conv_3 = LargeConv_block(out_c, out_c)
         self.pool = nn.MaxPool2d((2, 2))
         
     def forward(self, inputs):
-        x = self.conv(inputs)
+        x = self.conv_1(inputs)
+        x = self.conv_2(x)
+        x = self.conv_3(x)
         p = self.pool(x)
         return x, p
 
@@ -1303,6 +1309,8 @@ class Unet5_Scorer(nn.Module):
         self._init_weights_normal(self.fc1)
         self._init_weights_normal(self.fc2)
         self._init_weights_normal(self.fc3)
+        self._init_weights_normal(self.fc4)
+        self._init_weights_normal(self.fc5)
     
     def _createNet(self):
         
@@ -1323,11 +1331,22 @@ class Unet5_Scorer(nn.Module):
         self.do     = nn.Dropout(p=0.3)
         self.relu   = nn.ReLU()
         
-        self.fc1 = nn.Linear(self.bottleneck_size, int(self.bottleneck_size/16))
-        self.bn1 = nn.BatchNorm1d(int(self.bottleneck_size/16))
-        self.fc2 = nn.Linear(int(self.bottleneck_size/16), int(self.bottleneck_size/64))
-        self.bn2 = nn.BatchNorm1d(int(self.bottleneck_size/64))
-        self.fc3 = nn.Linear(int(self.bottleneck_size/64), self.n_classes)
+        # self.fc1 = nn.Linear(self.bottleneck_size, int(self.bottleneck_size/16))
+        # self.bn1 = nn.BatchNorm1d(int(self.bottleneck_size/16))
+        # self.fc2 = nn.Linear(int(self.bottleneck_size/16), int(self.bottleneck_size/64))
+        # self.bn2 = nn.BatchNorm1d(int(self.bottleneck_size/64))
+        # self.fc3 = nn.Linear(int(self.bottleneck_size/64), self.n_classes)
+        
+        self.fc1 = nn.Linear(self.bottleneck_size, int(self.bottleneck_size/8))
+        self.bn1 = nn.BatchNorm1d(int(self.bottleneck_size/8))
+        self.fc2 = nn.Linear(int(self.bottleneck_size/8), int(self.bottleneck_size/32))
+        self.bn2 = nn.BatchNorm1d(int(self.bottleneck_size/32))
+        self.fc3 = nn.Linear(int(self.bottleneck_size/32), int(self.bottleneck_size/64))
+        self.bn3 = nn.BatchNorm1d(int(self.bottleneck_size/64))
+        self.fc4 = nn.Linear(int(self.bottleneck_size/64), int(self.bottleneck_size/128))
+        self.bn4 = nn.BatchNorm1d(int(self.bottleneck_size/128))
+        self.fc5 = nn.Linear(int(self.bottleneck_size/128), int(self.n_classes))
+        
         
         # decoder 
         self.d1 = Decoder_block(self.feature_maps(5) , self.feature_maps(4))
@@ -1400,11 +1419,21 @@ class Unet5_Scorer(nn.Module):
         enc         = self.flatten(bottleneck)
         
         # classification
-        f1          = self.relu(self.bn1(self.fc1(enc)))
-        f1_drop     = self.do(f1)
-        f2          = self.relu(self.bn2(self.fc2(f1_drop)))
-        f2_drop     = self.do(f2)
-        logits      = self.fc3(f2_drop)
+        # f1          = self.relu(self.bn1(self.fc1(enc)))
+        # f1_drop     = self.do(f1)
+        # f2          = self.relu(self.bn2(self.fc2(f1_drop)))
+        # f2_drop     = self.do(f2)
+        # logits      = self.fc3(f2_drop)
+        out         = self.relu(self.bn1(self.fc1(enc)))
+        out         = self.do(out)
+        out         = self.relu(self.bn2(self.fc2(out)))
+        out         = self.do(out)
+        out         = self.relu(self.bn3(self.fc3(out)))
+        out         = self.do(out)
+        out         = self.relu(self.bn4(self.fc4(out)))
+        out         = self.do(out)
+        logits      = self.fc5(out)
+        
 
         # decoder 
         d1 = self.d1(bottleneck, s5)
@@ -1445,6 +1474,9 @@ class Unet6_Scorer(nn.Module):
         self._init_weights_normal(self.fc1)
         self._init_weights_normal(self.fc2)
         self._init_weights_normal(self.fc3)
+        self._init_weights_normal(self.fc4)
+        self._init_weights_normal(self.fc5)
+        self._init_weights_normal(self.fc6)
     
     def _createNet(self):
         
@@ -1549,30 +1581,20 @@ class Unet6_Scorer(nn.Module):
         bottleneck  = self.b(p6)
         enc         = self.flatten(bottleneck)
         
-        # print(bottleneck.shape)
-        # print(enc.shape)
-        # print(self.bottleneck_size)
         
         # classification
-        f1          = self.relu(self.bn1(self.fc1(enc)))
-        f1_drop     = self.do(f1)
-        f2          = self.relu(self.bn2(self.fc2(f1_drop)))
-        f2_drop     = self.do(f2)
-        f3          = self.relu(self.bn3(self.fc3(f2_drop)))
-        f3_drop     = self.do(f3)
-        f4          = self.relu(self.bn4(self.fc4(f3_drop)))
-        f4_drop     = self.do(f4)
-        f5          = self.relu(self.bn5(self.fc5(f4_drop)))
-        f5_drop     = self.do(f5)
-        logits      = self.fc6(f5_drop)
+        out         = self.relu(self.bn1(self.fc1(enc)))
+        out         = self.do(out)
+        out         = self.relu(self.bn2(self.fc2(out)))
+        out         = self.do(out)
+        out         = self.relu(self.bn3(self.fc3(out)))
+        out         = self.do(out)
+        out         = self.relu(self.bn4(self.fc4(out)))
+        out         = self.do(out)
+        out         = self.relu(self.bn5(self.fc5(out)))
+        out         = self.do(out)
+        logits      = self.fc6(out)
 
-        # print(enc.shape)
-        # print(f1.shape)
-        # print(f2.shape)
-        # print(f3.shape)
-        # print(f4.shape)
-        # print(f5.shape)
-        # print(logits.shape)
         
         d1 = self.d1(bottleneck, s6)
         d2 = self.d2(d1, s5)
@@ -1613,6 +1635,9 @@ class Unet6L_Scorer(nn.Module):
         self._init_weights_normal(self.fc1)
         self._init_weights_normal(self.fc2)
         self._init_weights_normal(self.fc3)
+        self._init_weights_normal(self.fc4)
+        self._init_weights_normal(self.fc5)
+        self._init_weights_normal(self.fc6)
     
     def _createNet(self):
         
@@ -1722,25 +1747,17 @@ class Unet6L_Scorer(nn.Module):
         # print(self.bottleneck_size)
         
         # classification
-        f1          = self.relu(self.bn1(self.fc1(enc)))
-        f1_drop     = self.do(f1)
-        f2          = self.relu(self.bn2(self.fc2(f1_drop)))
-        f2_drop     = self.do(f2)
-        f3          = self.relu(self.bn3(self.fc3(f2_drop)))
-        f3_drop     = self.do(f3)
-        f4          = self.relu(self.bn4(self.fc4(f3_drop)))
-        f4_drop     = self.do(f4)
-        f5          = self.relu(self.bn5(self.fc5(f4_drop)))
-        f5_drop     = self.do(f5)
-        logits      = self.fc6(f5_drop)
-
-        print(enc.shape)
-        print(f1.shape)
-        print(f2.shape)
-        print(f3.shape)
-        print(f4.shape)
-        print(f5.shape)
-        print(logits.shape)
+        out         = self.relu(self.bn1(self.fc1(enc)))
+        out         = self.do(out)
+        out         = self.relu(self.bn2(self.fc2(out)))
+        out         = self.do(out)
+        out         = self.relu(self.bn3(self.fc3(out)))
+        out         = self.do(out)
+        out         = self.relu(self.bn4(self.fc4(out)))
+        out         = self.do(out)
+        out         = self.relu(self.bn5(self.fc5(out)))
+        out         = self.do(out)
+        logits      = self.fc6(out)
         
         d1 = self.d1(bottleneck, s6)
         d2 = self.d2(d1, s5)
@@ -1916,6 +1933,8 @@ class Unet5_ResidualScorer(nn.Module):
         self._init_weights_normal(self.fc1)
         self._init_weights_normal(self.fc2)
         self._init_weights_normal(self.fc3)
+        self._init_weights_normal(self.fc4)
+        self._init_weights_normal(self.fc5)
     
     def _createNet(self):
         
@@ -1936,11 +1955,21 @@ class Unet5_ResidualScorer(nn.Module):
         self.do     = nn.Dropout(p=0.3)
         self.relu   = nn.ReLU()
         
-        self.fc1 = nn.Linear(self.bottleneck_size, int(self.bottleneck_size/16))
-        self.bn1 = nn.BatchNorm1d(int(self.bottleneck_size/16))
-        self.fc2 = nn.Linear(int(self.bottleneck_size/16), int(self.bottleneck_size/64))
-        self.bn2 = nn.BatchNorm1d(int(self.bottleneck_size/64))
-        self.fc3 = nn.Linear(int(self.bottleneck_size/64), self.n_classes)
+        # self.fc1 = nn.Linear(self.bottleneck_size, int(self.bottleneck_size/16))
+        # self.bn1 = nn.BatchNorm1d(int(self.bottleneck_size/16))
+        # self.fc2 = nn.Linear(int(self.bottleneck_size/16), int(self.bottleneck_size/64))
+        # self.bn2 = nn.BatchNorm1d(int(self.bottleneck_size/64))
+        # self.fc3 = nn.Linear(int(self.bottleneck_size/64), self.n_classes)
+        self.fc1 = nn.Linear(self.bottleneck_size, int(self.bottleneck_size/8))
+        self.bn1 = nn.BatchNorm1d(int(self.bottleneck_size/8))
+        self.fc2 = nn.Linear(int(self.bottleneck_size/8), int(self.bottleneck_size/32))
+        self.bn2 = nn.BatchNorm1d(int(self.bottleneck_size/32))
+        self.fc3 = nn.Linear(int(self.bottleneck_size/32), int(self.bottleneck_size/64))
+        self.bn3 = nn.BatchNorm1d(int(self.bottleneck_size/64))
+        self.fc4 = nn.Linear(int(self.bottleneck_size/64), int(self.bottleneck_size/128))
+        self.bn4 = nn.BatchNorm1d(int(self.bottleneck_size/128))
+        self.fc5 = nn.Linear(int(self.bottleneck_size/128), int(self.n_classes))
+        
         
         # decoder 
         self.d1 = Decoder_block(self.feature_maps(5) , self.feature_maps(4))
@@ -2014,11 +2043,22 @@ class Unet5_ResidualScorer(nn.Module):
         # print(enc.shape)
         
         # classification
-        f1          = self.relu(self.bn1(self.fc1(enc)))
-        f1_drop     = self.do(f1)
-        f2          = self.relu(self.bn2(self.fc2(f1_drop)))
-        f2_drop     = self.do(f2)
-        logits      = self.fc3(f2_drop)
+        # f1          = self.relu(self.bn1(self.fc1(enc)))
+        # f1_drop     = self.do(f1)
+        # f2          = self.relu(self.bn2(self.fc2(f1_drop)))
+        # f2_drop     = self.do(f2)
+        # logits      = self.fc3(f2_drop)
+        out         = self.relu(self.bn1(self.fc1(enc)))
+        out         = self.do(out)
+        out         = self.relu(self.bn2(self.fc2(out)))
+        out         = self.do(out)
+        out         = self.relu(self.bn3(self.fc3(out)))
+        out         = self.do(out)
+        out         = self.relu(self.bn4(self.fc4(out)))
+        out         = self.do(out)
+        logits      = self.fc5(out)
+        
+        
 
         # decoder 
         d1 = self.d1(bottleneck, s5)
@@ -2059,6 +2099,9 @@ class Unet6_ResidualScorer(nn.Module):
         self._init_weights_normal(self.fc1)
         self._init_weights_normal(self.fc2)
         self._init_weights_normal(self.fc3)
+        self._init_weights_normal(self.fc4)
+        self._init_weights_normal(self.fc5)
+        self._init_weights_normal(self.fc6)
     
     def _createNet(self):
         
@@ -2164,17 +2207,17 @@ class Unet6_ResidualScorer(nn.Module):
         enc         = self.flatten(bottleneck)
         
         # classification
-        f1          = self.relu(self.bn1(self.fc1(enc)))
-        f1_drop     = self.do(f1)
-        f2          = self.relu(self.bn2(self.fc2(f1_drop)))
-        f2_drop     = self.do(f2)
-        f3          = self.relu(self.bn3(self.fc3(f2_drop)))
-        f3_drop     = self.do(f3)
-        f4          = self.relu(self.bn4(self.fc4(f3_drop)))
-        f4_drop     = self.do(f4)
-        f5          = self.relu(self.bn5(self.fc5(f4_drop)))
-        f5_drop     = self.do(f5)
-        logits      = self.fc6(f5_drop)
+        out         = self.relu(self.bn1(self.fc1(enc)))
+        out         = self.do(out)
+        out         = self.relu(self.bn2(self.fc2(out)))
+        out         = self.do(out)
+        out         = self.relu(self.bn3(self.fc3(out)))
+        out         = self.do(out)
+        out         = self.relu(self.bn4(self.fc4(out)))
+        out         = self.do(out)
+        out         = self.relu(self.bn5(self.fc5(out)))
+        out         = self.do(out)
+        logits      = self.fc6(out)
 
         d1 = self.d1(bottleneck, s6)
         d2 = self.d2(d1, s5)
@@ -2215,6 +2258,9 @@ class Unet6L_ResidualScorer(nn.Module):
         self._init_weights_normal(self.fc1)
         self._init_weights_normal(self.fc2)
         self._init_weights_normal(self.fc3)
+        self._init_weights_normal(self.fc4)
+        self._init_weights_normal(self.fc5)
+        self._init_weights_normal(self.fc6)
     
     def _createNet(self):
         
@@ -2320,17 +2366,17 @@ class Unet6L_ResidualScorer(nn.Module):
         enc         = self.flatten(bottleneck)
         
         # classification
-        f1          = self.relu(self.bn1(self.fc1(enc)))
-        f1_drop     = self.do(f1)
-        f2          = self.relu(self.bn2(self.fc2(f1_drop)))
-        f2_drop     = self.do(f2)
-        f3          = self.relu(self.bn3(self.fc3(f2_drop)))
-        f3_drop     = self.do(f3)
-        f4          = self.relu(self.bn4(self.fc4(f3_drop)))
-        f4_drop     = self.do(f4)
-        f5          = self.relu(self.bn5(self.fc5(f4_drop)))
-        f5_drop     = self.do(f5)
-        logits      = self.fc6(f5_drop)
+        out         = self.relu(self.bn1(self.fc1(enc)))
+        out         = self.do(out)
+        out         = self.relu(self.bn2(self.fc2(out)))
+        out         = self.do(out)
+        out         = self.relu(self.bn3(self.fc3(out)))
+        out         = self.do(out)
+        out         = self.relu(self.bn4(self.fc4(out)))
+        out         = self.do(out)
+        out         = self.relu(self.bn5(self.fc5(out)))
+        out         = self.do(out)
+        logits      = self.fc6(out)
 
         d1 = self.d1(bottleneck, s6)
         d2 = self.d2(d1, s5)
@@ -2342,8 +2388,6 @@ class Unet6L_ResidualScorer(nn.Module):
         # reconstuction
         rec = self.decoder_out_fn(self.out(d6))  # check sigmoid vs tanh
         return logits, rec, enc
-
-
 
 class Abnormality_module(nn.Module): 
     def __init__(self, logits_shape, encoding_shape, residual_shape):
@@ -2536,7 +2580,7 @@ if __name__ == "__main__":
         input("press something to exit ")
 
     def test_UnetScorer():
-        unet = Unet6L_Scorer(n_channels=3, n_classes=2)
+        unet = Unet5_Scorer(n_channels=3, n_classes=2)
         unet.to_device(device)
         print(unet.bottleneck_size)
         # unet.getSummary()
@@ -2555,10 +2599,11 @@ if __name__ == "__main__":
         # print(p.shape)
         
         x = T.rand((32, 3, 224, 224)).to(device)
-        unet = Unet6L_ResidualScorer(n_channels=3, n_classes=2)
+        # unet = Unet6L_ResidualScorer(n_channels=3, n_classes=2)
+        unet = Unet5_ResidualScorer(n_channels=3, n_classes=2)
         unet.to_device(device)
         # print(unet.bottleneck_size)
-        # unet.getSummary()
+        unet.getSummary()
         try:
             logits, rec, enc = unet.forward(x)
             print("logits shape: ", logits.shape)
@@ -2573,6 +2618,6 @@ if __name__ == "__main__":
         
      
     test_UnetResidualScorer()
-
+    pass
     #                           [End test section] 
     
