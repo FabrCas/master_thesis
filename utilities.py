@@ -219,8 +219,8 @@ def get_transformation_Resnet50(isTensor = False):
     return transform_ops
 
 def augment_v1(x,w  =224,h=224):
-    x = v2.Resize((w, h), interpolation= InterpolationMode.BILINEAR, antialias= True)(x)
     x = v2.ToTensor()(x)   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+    x = v2.Resize((w, h), interpolation= InterpolationMode.BILINEAR, antialias= True)(x)
     # x = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])   # to have pixel values close between -1 and 1 (imagenet distribution)
     x = v2.RandomHorizontalFlip(0.5)(x)
     x = v2.RandomVerticalFlip(0.1)(x)
@@ -336,21 +336,27 @@ class NormalizeByChannelMeanStd(T.nn.Module):
 # data perturbation
 
 def normalize(x):
-    return (x - np.min(x)) / (np.max(x) - np.min(x))
+    # return (x - np.min(x)) / (np.max(x) - np.min(x))
+    return x 
 
 def add_noise(batch_input, complexity=0.5):
-    return normalize(batch_input +np.random.normal(size=batch_input.shape, scale=1e-9 + complexity))
+    mean = 0
+    std = 1e-9 + complexity
+    # return batch_input +np.random.normal(size=batch_input.shape, scale=1e-9 + complexity)
+    return batch_input + T.rand_like(batch_input) * std + mean
 
 def add_blur(img, complexity=0.5):
     """ img as fist dimension we have the color channel."""
     # image = img.reshape((-1, 28, 28))
-    shape = img.shape
-    # return gaussian(img, sigma=5*complexity).reshape((-1, 28*28))
-    return normalize(gaussian(img, sigma=5*complexity, channel_axis=-1))
+    return gaussian(img, sigma=5*complexity, channel_axis=-1)
 
 def add_distortion_noise(batch_input):
     distortion = np.random.uniform(low=0.9, high=1.2)
-    return normalize(batch_input + np.random.normal(size=batch_input.shape, scale=1e-9 + distortion))
+    mean = 0
+    std = 1e-9 + distortion
+    return batch_input + T.rand_like(batch_input) * std + mean
+    
+    # return batch_input + np.random.normal(size=batch_input.shape, scale=1e-9 + distortion)
     
 ##################################################  Save/Load functions ###############################################################
 

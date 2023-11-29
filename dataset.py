@@ -61,7 +61,7 @@ class CDDB_binary(Dataset):
     """_
         Dataset class that uses the full data from CDDB dataset as In-Distribuion (ID) for binary deepfake detection
     """
-    def __init__(self, width_img= 224, height_img = 224, train = True, augment = False, label_vector = True):
+    def __init__(self, width_img= 224, height_img = 224, train = True, augment = False, label_vector = True, transform2ood = False):
         """ CDDB_binary constructor
 
         Args:                
@@ -72,6 +72,7 @@ class CDDB_binary(Dataset):
             - augment (bool, optional):   boolean flag to activate the data augmentation. Defaults to False.
             - label_vector (bool, optional): boolean flag to indicate the label format in output for the labels.
                 if True one-hot encoding labels are returned, otherwise index based representation is used.Defaults to True.
+            - transform2ood (bool, optional): boolean flag to activate synthesis of OOD data from ID data, Defaults to False
         """
         
         super(CDDB_binary,self).__init__()
@@ -80,23 +81,24 @@ class CDDB_binary(Dataset):
         self.label_vector = label_vector
         self.width_img = width_img
         self.height_img = height_img
+        self.transform2ood  = transform2ood
+        self.toTensor       = transforms.ToTensor()  # function to pytorch tensor
+        
         if self.augment:
             self.transform_ops = transforms.Compose([
-                v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
                 v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+                v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
                 # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])   # to have pixel values close between -1 and 1 (imagenet distribution)
-                
                 # v2.ToImage(),
                 # v2.ToDtype(T.float32, scale=True),
-                
                 v2.RandomHorizontalFlip(0.5),
                 v2.RandomVerticalFlip(0.1),
                 v2.RandAugment(num_ops = 1, magnitude= 7, num_magnitude_bins= 51, interpolation = InterpolationMode.BILINEAR),
             ])
         else:
             self.transform_ops = transforms.Compose([
-                v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
                 v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+                v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
                 # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])   # to have pixel values close between -1 and 1 (imagenet distribution)
                 # transforms.Normalize(mean=[0.5,0.5,0.5], std=[0.5,0.5,0.5])   # normlization between -1 and 1, using the whole range uniformly, formula: (pixel - mean)/std
             ])
@@ -194,6 +196,28 @@ class CDDB_binary(Dataset):
     def _transform(self,x):
         return self.transform_ops(x)
 
+    def _ood_distortion(self,x, idx):
+        # take a Pil image and returns a numpy array
+
+        distortion_idx = idx%3   # change module if includes more distortions
+        
+        if distortion_idx == 0:
+            # return np.clip(add_blur(x),  0, 1)
+            x  = np.array(x)
+            x_ = add_blur(x)
+            x_ = self.toTensor(x_)
+        elif distortion_idx == 1:
+            # return np.clip(add_noise(x),  0, 1)
+            x  = self.toTensor(x)
+            x_ = add_noise(x)
+        elif distortion_idx == 2:
+            # return np.clip(add_distortion_noise(x),  0, 1)
+            x  = self.toTensor(x)
+            x_ = add_distortion_noise(x)
+        
+        
+        return T.clamp(x_, 0 ,1)
+    
     def __len__(self):
         return len(self.y)
     
@@ -201,6 +225,10 @@ class CDDB_binary(Dataset):
         img_path = self.x[idx]
         # print(img_path)
         img = Image.open(img_path)
+        
+        if self.transform2ood:
+            img = self._ood_distortion(img, idx)
+        
         img = self._transform(img)
         
         # check whether grayscale image, perform pseudocolor inversion 
@@ -244,7 +272,8 @@ class CDDB_binary_Partial(Dataset):
             - ood (bool, optional):   boolean flag to retrieve ID data, otherwise OOD. Defaults to False.
             - augment (bool, optional):   boolean flag to activate the data augmentation. Defaults to False.
             - label_vector (bool, optional): boolean flag to indicate the label format in output for the labels.
-                if True one-hot encoding labels are returned, otherwise index based representation is used.Defaults to True.
+                if True one-hot encoding labels are returned, otherwise index based representation is used. Defaults to True.
+            - transform2ood (bool, optional): boolean flag to activate synthesis of OOD data from ID data, Defaults to False
         """
         super(CDDB_binary_Partial,self).__init__()
         
@@ -255,13 +284,14 @@ class CDDB_binary_Partial(Dataset):
         self.augment        = augment
         self.label_vector   = label_vector
         self.transform2ood  = transform2ood
+        self.toTensor       = transforms.ToTensor()  # function to pytorch tensor
              
         self.width_img = width_img
         self.height_img = height_img
         if self.augment:
             self.transform_ops = transforms.Compose([
-                v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
                 v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+                v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
                 # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])   # to have pixel values close between -1 and 1 (imagenet distribution)
                 
                 # v2.ToImage(),
@@ -273,8 +303,9 @@ class CDDB_binary_Partial(Dataset):
             ])
         else:
             self.transform_ops = transforms.Compose([
+                v2.ToTensor(),
                 v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
-                v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+                # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
                 # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])   # to have pixel values close between -1 and 1 (imagenet distribution)
                 # transforms.Normalize(mean=[0.5,0.5,0.5], std=[0.5,0.5,0.5])   # normlization between -1 and 1, using the whole range uniformly, formula: (pixel - mean)/std
             ])
@@ -417,15 +448,24 @@ class CDDB_binary_Partial(Dataset):
     def _ood_distortion(self,x, idx):
         # take a Pil image and returns a numpy array
 
-        distortion_idx = idx%3
-        x = np.array(x)
-        if distortion_idx == 0:
-            return add_blur(x)
-        elif distortion_idx == 1:
-            return add_noise(x)
-        elif distortion_idx == 2:
-            return add_distortion_noise(x)
+        distortion_idx = idx%3   # change module if includes more distortions
         
+        if distortion_idx == 0:
+            # return np.clip(add_blur(x),  0, 1)
+            x  = np.array(x)
+            x_ = add_blur(x)
+            x_ = self.toTensor(x_)
+        elif distortion_idx == 1:
+            # return np.clip(add_noise(x),  0, 1)
+            x  = self.toTensor(x)
+            x_ = add_noise(x)
+        elif distortion_idx == 2:
+            # return np.clip(add_distortion_noise(x),  0, 1)
+            x  = self.toTensor(x)
+            x_ = add_distortion_noise(x)
+        
+        
+        return T.clamp(x_, 0 ,1)
         
     
     def __len__(self):
@@ -435,13 +475,13 @@ class CDDB_binary_Partial(Dataset):
         img_path = self.x[idx]
         # print(img_path)
         img = Image.open(img_path)
-        
+                
         if self.transform2ood:
-            print("------------- ao {}".format(idx))
+            # print("------------- ao {}".format(idx))
             img = self._ood_distortion(img, idx)
-            
+                    
         img = self._transform(img)    #dtype = float32
-        
+        # print(img)
         
         # check whether grayscale image, perform pseudocolor inversion 
         if img.shape[0] == 1:
@@ -464,7 +504,7 @@ class CDDB(Dataset):
     """_
         Dataset class that uses the full data from CDDB dataset as In-Distribuion (ID) for multi-label deepfake detection
     """
-    def __init__(self, width_img= 224, height_img = 224, train = True, augment = False, real_grouping = "single", label_vector = False):
+    def __init__(self, width_img= 224, height_img = 224, train = True, augment = False, real_grouping = "single", label_vector = False, transform2ood = False):
         """
         CDDB_binary_Partial constructor
 
@@ -480,6 +520,7 @@ class CDDB(Dataset):
                 - "models" separate the real images for each of the models present in the dataset. so real and fake labels have equal number
             - label_vector (bool, optional): boolean flag to indicate the label format in output for the labels.
                 if True one-hot encoding labels are returned, otherwise index based representation is used.Defaults to True.
+            - transform2ood (bool, optional): boolean flag to activate synthesis of OOD data from ID data, Defaults to False
         """
         super(CDDB,self).__init__()
         self.train              = train                      # boolean flag to select train or test data
@@ -488,10 +529,14 @@ class CDDB(Dataset):
         self.real_grouping      = real_grouping
         self.width_img          = width_img
         self.height_img         = height_img
+        self.transform2ood  = transform2ood
+        self.toTensor       = transforms.ToTensor()  # function to pytorch tensor
+        
         if self.augment:
             self.transform_ops = transforms.Compose([
-                v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
                 v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+                v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
+
                 # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])   # to have pixel values close between -1 and 1 (imagenet distribution)
                 
                 # v2.ToImage(),
@@ -503,8 +548,8 @@ class CDDB(Dataset):
             ])
         else:
             self.transform_ops = transforms.Compose([
-                v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
                 v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+                v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
                 # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])   # to have pixel values close between -1 and 1 (imagenet distribution)
                 # transforms.Normalize(mean=[0.5,0.5,0.5], std=[0.5,0.5,0.5])   # normlization between -1 and 1, using the whole range uniformly, formula: (pixel - mean)/std
             ])
@@ -846,6 +891,28 @@ class CDDB(Dataset):
     def _transform(self,x):
         return self.transform_ops(x)
     
+    def _ood_distortion(self,x, idx):
+        # take a Pil image and returns a numpy array
+
+        distortion_idx = idx%3   # change module if includes more distortions
+        
+        if distortion_idx == 0:
+            # return np.clip(add_blur(x),  0, 1)
+            x  = np.array(x)
+            x_ = add_blur(x)
+            x_ = self.toTensor(x_)
+        elif distortion_idx == 1:
+            # return np.clip(add_noise(x),  0, 1)
+            x  = self.toTensor(x)
+            x_ = add_noise(x)
+        elif distortion_idx == 2:
+            # return np.clip(add_distortion_noise(x),  0, 1)
+            x  = self.toTensor(x)
+            x_ = add_distortion_noise(x)
+        
+        
+        return T.clamp(x_, 0 ,1)
+    
     def _one_hot_encoding(self, label_idx):
         encoding = [0] * len(self.idx2label)
         encoding[label_idx] = 1
@@ -858,6 +925,10 @@ class CDDB(Dataset):
         img_path = self.x[idx]
         # print(img_path)
         img = Image.open(img_path)
+        
+        if self.transform2ood:
+            img = self._ood_distortion(img, idx)
+        
         img = self._transform(img)    #dtype = float32
         
         
@@ -880,7 +951,7 @@ class CDDB_Partial(Dataset):
         Selecting the study case ("content","group","mix") the data are organized,
         using remaining samples as OOD data.
     """
-    def __init__(self, scenario, width_img= 224, height_img = 224, train = True, ood = False, augment = False, real_grouping = "single", label_vector = False):
+    def __init__(self, scenario, width_img= 224, height_img = 224, train = True, ood = False, augment = False, real_grouping = "single", label_vector = False, transform2ood = False):
         """CDDB_Partial constructor
 
         Args:
@@ -904,6 +975,7 @@ class CDDB_Partial(Dataset):
                 
             - label_vector (bool, optional): boolean flag to indicate the label format in output for the labels.
             if True one-hot encoding labels are returned, otherwise index based representation is used.Defaults to True.
+            - transform2ood (bool, optional): boolean flag to activate synthesis of OOD data from ID data, Defaults to False
         """
         super(CDDB_Partial,self).__init__()
         self.scenario           = scenario
@@ -914,10 +986,14 @@ class CDDB_Partial(Dataset):
         self.real_grouping      = real_grouping
         self.width_img          = width_img
         self.height_img         = height_img
+        self.transform2ood  = transform2ood
+        self.toTensor       = transforms.ToTensor()  # function to pytorch tensor
+        
         if self.augment:
             self.transform_ops = transforms.Compose([
-                v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
                 v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+                v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
+
                 # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])   # to have pixel values close between -1 and 1 (imagenet distribution)
                 
                 # v2.ToImage(),
@@ -929,8 +1005,8 @@ class CDDB_Partial(Dataset):
             ])
         else:
             self.transform_ops = transforms.Compose([
-                v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
                 v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+                v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
                 # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])   # to have pixel values close between -1 and 1 (imagenet distribution)
                 # transforms.Normalize(mean=[0.5,0.5,0.5], std=[0.5,0.5,0.5])   # normlization between -1 and 1, using the whole range uniformly, formula: (pixel - mean)/std
             ])
@@ -1482,6 +1558,28 @@ class CDDB_Partial(Dataset):
     def _transform(self,x):
         return self.transform_ops(x)
     
+    def _ood_distortion(self,x, idx):
+        # take a Pil image and returns a numpy array
+
+        distortion_idx = idx%3   # change module if includes more distortions
+        
+        if distortion_idx == 0:
+            # return np.clip(add_blur(x),  0, 1)
+            x  = np.array(x)
+            x_ = add_blur(x)
+            x_ = self.toTensor(x_)
+        elif distortion_idx == 1:
+            # return np.clip(add_noise(x),  0, 1)
+            x  = self.toTensor(x)
+            x_ = add_noise(x)
+        elif distortion_idx == 2:
+            # return np.clip(add_distortion_noise(x),  0, 1)
+            x  = self.toTensor(x)
+            x_ = add_distortion_noise(x)
+        
+        
+        return T.clamp(x_, 0 ,1)
+    
     def _one_hot_encoding(self, label_idx):
         encoding = [0] * len(self.idx2label)
         encoding[label_idx] = 1
@@ -1494,6 +1592,10 @@ class CDDB_Partial(Dataset):
         img_path = self.x[idx]
         # print(img_path)
         img = Image.open(img_path)
+        
+        if self.transform2ood:
+            img = self._ood_distortion(img, idx)
+        
         img = self._transform(img)    #dtype = float32
         
         

@@ -753,8 +753,6 @@ class Abnormality_module(OOD_Classifier):
         self._prepare_data(extended_ood = False)
         
         
-        
-    
     def _prepare_data(self, extended_ood = False):
         # if not(extended_ood):
         self.id_data_train = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False, augment = False, label_vector= False, transform2ood = True)
@@ -764,7 +762,7 @@ class Abnormality_module(OOD_Classifier):
         _ , self.id_data_test = sampleValidSet(trainset= self.id_data_train, testset= test_dataset, useOnlyTest = True, verbose = True)
         
         
-        x,y = self.id_data_train.__getitem__(5)
+        x,y = self.id_data_train.__getitem__(3)
         # x_ = T.clone(x)
         
         # x_ = add_blur(x_)
@@ -773,12 +771,11 @@ class Abnormality_module(OOD_Classifier):
         # x_ = T.tensor(x_)
         
         # print(T.min(x_), T.max(x_))
-        print(T.min(x), T.max(x))
+        # print(T.min(x), T.max(x))
         
         showImage(x)
         # showImage(x_)
-             
-                           
+                      
         if extended_ood:
             self.ood_data_train = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = True, augment = False, label_vector= False)
             self.ood_data_test  = CDDB_binary_Partial(scenario = self.scenario, train = False,  ood = True, augment = False, label_vector= False)
