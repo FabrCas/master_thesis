@@ -11,6 +11,7 @@ from torchvision.transforms                 import v2    # new version for tranf
 from torchvision.transforms.functional      import InterpolationMode
 from torch.utils.data                       import Dataset, DataLoader
 T.manual_seed(22)
+np.random.seed(22)
 random.seed(22)
 
 # Paths and data structure
@@ -199,24 +200,34 @@ class CDDB_binary(Dataset):
     def _ood_distortion(self,x, idx):
         # take a Pil image and returns a numpy array
 
-        distortion_idx = idx%3   # change module if includes more distortions
+        distortion_idx = idx%4   # change module if includes more distortions
         
         if distortion_idx == 0:
             # return np.clip(add_blur(x),  0, 1)
             x  = np.array(x)
             x_ = add_blur(x)
             x_ = self.toTensor(x_)
+            
         elif distortion_idx == 1:
             # return np.clip(add_noise(x),  0, 1)
             x  = self.toTensor(x)
             x_ = add_noise(x)
+            
         elif distortion_idx == 2:
             # return np.clip(add_distortion_noise(x),  0, 1)
             x  = self.toTensor(x)
             x_ = add_distortion_noise(x)
+            
+        elif distortion_idx == 3:
+            times_rotation = np.random.randint(low = 1, high=4) # random integer from 0 to 1
+            x  = np.array(x)
+            # x  = np.rot90(x, k= times_rotation)
+            x  = self.toTensor(x)
+            print(x.shape)
+            x = T.rot90(x, k=times_rotation, dims= (1,2))
+            x_ = add_noise(x)
         
-        
-        return T.clamp(x_, 0 ,1)
+        return T.clamp(x_, 0 ,1)  # clamp float values btw 0 and 1
     
     def __len__(self):
         return len(self.y)
@@ -448,24 +459,34 @@ class CDDB_binary_Partial(Dataset):
     def _ood_distortion(self,x, idx):
         # take a Pil image and returns a numpy array
 
-        distortion_idx = idx%3   # change module if includes more distortions
+        distortion_idx = idx%4   # change module if includes more distortions
         
         if distortion_idx == 0:
             # return np.clip(add_blur(x),  0, 1)
             x  = np.array(x)
             x_ = add_blur(x)
             x_ = self.toTensor(x_)
+            
         elif distortion_idx == 1:
             # return np.clip(add_noise(x),  0, 1)
             x  = self.toTensor(x)
             x_ = add_noise(x)
+            
         elif distortion_idx == 2:
             # return np.clip(add_distortion_noise(x),  0, 1)
             x  = self.toTensor(x)
             x_ = add_distortion_noise(x)
+            
+        elif distortion_idx == 3:
+            times_rotation = np.random.randint(low = 1, high=4) # random integer from 0 to 1
+            x  = np.array(x)
+            # x  = np.rot90(x, k= times_rotation)
+            x  = self.toTensor(x)
+            print(x.shape)
+            x = T.rot90(x, k=times_rotation, dims= (1,2))
+            x_ = add_noise(x)
         
-        
-        return T.clamp(x_, 0 ,1)
+        return T.clamp(x_, 0 ,1)  # clamp float values btw 0 and 1
         
     
     def __len__(self):
@@ -894,24 +915,34 @@ class CDDB(Dataset):
     def _ood_distortion(self,x, idx):
         # take a Pil image and returns a numpy array
 
-        distortion_idx = idx%3   # change module if includes more distortions
+        distortion_idx = idx%4   # change module if includes more distortions
         
         if distortion_idx == 0:
             # return np.clip(add_blur(x),  0, 1)
             x  = np.array(x)
             x_ = add_blur(x)
             x_ = self.toTensor(x_)
+            
         elif distortion_idx == 1:
             # return np.clip(add_noise(x),  0, 1)
             x  = self.toTensor(x)
             x_ = add_noise(x)
+            
         elif distortion_idx == 2:
             # return np.clip(add_distortion_noise(x),  0, 1)
             x  = self.toTensor(x)
             x_ = add_distortion_noise(x)
+            
+        elif distortion_idx == 3:
+            times_rotation = np.random.randint(low = 1, high=4) # random integer from 0 to 1
+            x  = np.array(x)
+            # x  = np.rot90(x, k= times_rotation)
+            x  = self.toTensor(x)
+            print(x.shape)
+            x = T.rot90(x, k=times_rotation, dims= (1,2))
+            x_ = add_noise(x)
         
-        
-        return T.clamp(x_, 0 ,1)
+        return T.clamp(x_, 0 ,1)  # clamp float values btw 0 and 1
     
     def _one_hot_encoding(self, label_idx):
         encoding = [0] * len(self.idx2label)
@@ -1561,24 +1592,34 @@ class CDDB_Partial(Dataset):
     def _ood_distortion(self,x, idx):
         # take a Pil image and returns a numpy array
 
-        distortion_idx = idx%3   # change module if includes more distortions
+        distortion_idx = idx%4   # change module if includes more distortions
         
         if distortion_idx == 0:
             # return np.clip(add_blur(x),  0, 1)
             x  = np.array(x)
             x_ = add_blur(x)
             x_ = self.toTensor(x_)
+            
         elif distortion_idx == 1:
             # return np.clip(add_noise(x),  0, 1)
             x  = self.toTensor(x)
             x_ = add_noise(x)
+            
         elif distortion_idx == 2:
             # return np.clip(add_distortion_noise(x),  0, 1)
             x  = self.toTensor(x)
             x_ = add_distortion_noise(x)
+            
+        elif distortion_idx == 3:
+            times_rotation = np.random.randint(low = 1, high=4) # random integer from 0 to 1
+            x  = np.array(x)
+            # x  = np.rot90(x, k= times_rotation)
+            x  = self.toTensor(x)
+            print(x.shape)
+            x = T.rot90(x, k=times_rotation, dims= (1,2))
+            x_ = add_noise(x)
         
-        
-        return T.clamp(x_, 0 ,1)
+        return T.clamp(x_, 0 ,1)  # clamp float values btw 0 and 1
     
     def _one_hot_encoding(self, label_idx):
         encoding = [0] * len(self.idx2label)

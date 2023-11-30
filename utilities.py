@@ -339,22 +339,22 @@ def normalize(x):
     # return (x - np.min(x)) / (np.max(x) - np.min(x))
     return x 
 
-def add_noise(batch_input, complexity=0.5):
+def add_noise(x, complexity=0.5):
     mean = 0
     std = 1e-9 + complexity
     # return batch_input +np.random.normal(size=batch_input.shape, scale=1e-9 + complexity)
-    return batch_input + T.rand_like(batch_input) * std + mean
+    return x + T.rand_like(x) * std + mean
 
 def add_blur(img, complexity=0.5):
     """ img as fist dimension we have the color channel."""
     # image = img.reshape((-1, 28, 28))
     return gaussian(img, sigma=5*complexity, channel_axis=-1)
 
-def add_distortion_noise(batch_input):
+def add_distortion_noise(x):
     distortion = np.random.uniform(low=0.9, high=1.2)
     mean = 0
     std = 1e-9 + distortion
-    return batch_input + T.rand_like(batch_input) * std + mean
+    return x + T.rand_like(x) * std + mean
     
     # return batch_input + np.random.normal(size=batch_input.shape, scale=1e-9 + distortion)
     

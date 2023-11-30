@@ -8,11 +8,11 @@ from    tqdm                import tqdm
 from    sklearn.metrics     import precision_recall_curve, auc, roc_auc_score
 
 # local import
-from    dataset             import CDDB_binary, CDDB_binary_Partial, OOD_dataset, getCIFAR100_dataset, getMNIST_dataset, getFMNIST_dataset
+from    dataset             import CDDB_binary, CDDB_binary_Partial, CDDB, CDDB_Partial, OOD_dataset, getCIFAR100_dataset, getMNIST_dataset, getFMNIST_dataset
 from    experiments         import MNISTClassifier, MNISTClassifier_keras
 from    bin_classifier      import DFD_BinClassifier_v1, DFD_BinClassifier_v4
 from    utilities           import saveJson, loadJson, metrics_binClass, metrics_OOD, print_dict, showImage, check_folder, sampleValidSet, \
-                            add_noise, add_distortion_noise, add_blur
+                            mergeDatasets
 
 class OOD_Classifier(object):
     
@@ -231,9 +231,7 @@ class OOD_Classifier(object):
         check_folder(path_results_folder)
         
         return path_results_folder
-        
-    
-       
+          
 class OOD_Baseline(OOD_Classifier):
     """
         OOD detection baseline using softmax probability
@@ -405,20 +403,6 @@ class OOD_Baseline(OOD_Classifier):
             
             print(path_result_save)
                   
-            # name_task                   = self.types_classifier[task_type_prog]
-            # path_results_task           = os.path.join(self.path_results, name_task)
-            # path_results_baseline       = os.path.join(path_results_task, self.name)
-            # path_results_ood_data       = os.path.joint(path_results_baseline, "ood_"+name_ood_data)
-            # path_results_folder         = os.path.join(path_results_ood_data, name_classifier)    
-            # name_result_file            = 'metrics_ood_{}.json'.format(name_ood_data)
-            # path_result_save            = os.path.join(path_results_folder, name_result_file)   # full path to json file
-            
-            # # prepare file-system
-            # check_folder(path_results_task)
-            # check_folder(path_results_baseline)
-            # check_folder(path_results_ood_data)
-            # check_folder(path_results_folder)
-            
             saveJson(path = path_result_save, data = data)
     
     def verify_implementation(self):
@@ -562,15 +546,6 @@ class OOD_Baseline(OOD_Classifier):
             
         """
         
-        
-        # name_task                   = self.types_classifier[task_type_prog]
-        # path_results_task           = os.path.join(self.path_results, name_task)
-        # path_results_baseline       = os.path.join(path_results_task, self.name)
-        # path_results_ood_data       = os.path.joint(path_results_baseline, "ood_"+name_ood_data)
-        # path_results_folder         = os.path.join(path_results_ood_data, name_classifier)    
-        # name_result_file            = 'metrics_ood_{}.json'.format(name_ood_data)
-        # path_result_save            = os.path.join(path_results_folder, name_result_file)   # full path to json file
-        
         # load data from analyze
         path_results_folder         = self.get_path2SaveResults(self, name_classifier, task_type_prog, name_ood_data)
         name_result_file            = 'metrics_ood_{}.json'.format(name_ood_data)
@@ -631,15 +606,6 @@ class OOD_Baseline(OOD_Classifier):
         pred = np.array(pred)
         target = test_labels[:,1]
         
-        # print(pred)
-        # print(target)
-    
-        # prepare file-system
-        # check_folder(path_results_task)
-        # check_folder(path_results_baseline)
-        # check_folder(path_results_ood_data)
-        # check_folder(path_results_folder)
-            
         # compute and save metrics 
         name_resultClass_file  = 'metrics_ood_classification_{}.json'.format(name_ood_data)
         metrics_class =  metrics_binClass(preds = pred, targets= target, pred_probs = None, path_save = path_results_folder, name_ood_file = name_resultClass_file)
@@ -664,16 +630,6 @@ class OOD_Baseline(OOD_Classifier):
         # adjust to handle single image, increasing dimensions for batch
         if len(x.shape) == 3:
             x = x.expand(1,-1,-1,-1)
-        
-
-        # load data from analyze
-        # name_task                   = self.types_classifier[task_type_prog]
-        # path_results_task           = os.path.join(self.path_results, name_task)
-        # path_results_baseline       = os.path.join(path_results_task, self.name)
-        # path_results_ood_data       = os.path.joint(path_results_baseline, "ood_"+name_ood_data)
-        # path_results_folder         = os.path.join(path_results_ood_data, name_classifier)    
-        # name_result_file            = 'metrics_ood_{}.json'.format(name_ood_data)
-        # path_result_save            = os.path.join(path_results_folder, name_result_file)   # full path to json file
         
         path_results_folder         = self.get_path2SaveResults(self, name_classifier, task_type_prog, name_ood_data)
         name_result_file            = 'metrics_ood_{}.json'.format(name_ood_data)
@@ -742,7 +698,7 @@ class Baseline_ODIN(OOD_Classifier):
 class Abnormality_module(OOD_Classifier):
     """ Custom implementation of the abnormality module using ResNet, look https://arxiv.org/abs/1610.02136 chapter 4"""
     
-    def __init__(self, classifier, scenario:str, useGPU = True):
+    def __init__(self, classifier, scenario:str, useGPU = True, binary_dataset = True):
         """ scenario (str): choose between: "content", "mix", "group" """
         
         super(Abnormality_module, self).__init__(useGPU=useGPU)
@@ -750,43 +706,48 @@ class Abnormality_module(OOD_Classifier):
         # set the classifier
         self.classifier  = classifier
         self.scenario = scenario
-        self._prepare_data(extended_ood = False)
+        self.binary_dataset = binary_dataset
+        if self.binary_dataset:
+            self.dataset_class = CDDB_binary_Partial
+        else:
+            self.dataset_class = CDDB_Partial
+            
+        # manage data ID/OOD
+        self._prepare_data(extended_ood = False, verbose = True)
         
         
-    def _prepare_data(self, extended_ood = False):
-        # if not(extended_ood):
-        self.id_data_train = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False, augment = False, label_vector= False, transform2ood = True)
+    def _prepare_data(self, extended_ood = False, verbose = False):
+        """ method used to prepare Dataset class used for both training and testing"""
         
-        # take test set removing the valid set
-        test_dataset        = CDDB_binary_Partial(scenario = self.scenario, train = False, ood = False, augment= False, label_vector= False)
-        _ , self.id_data_test = sampleValidSet(trainset= self.id_data_train, testset= test_dataset, useOnlyTest = True, verbose = True)
+        # synthesis of OOD data
+        self.ood_data_train     = self.dataset_class(scenario = self.scenario, train = True,  ood = False, augment = False, label_vector= False, transform2ood = True)
+        test_dataset            = self.dataset_class(scenario = self.scenario, train = False, ood = False, augment = False, label_vector= False, transform2ood = True)
+        _ , self.ood_data_test  = sampleValidSet(trainset= self.ood_data_train, testset= test_dataset, useOnlyTest = True, verbose = True)
         
+        # fetch ID data
+        self.id_data_train      = self.dataset_class(scenario = self.scenario, train = True,  ood = False, augment = False, label_vector= False, transform2ood = False)
+        test_dataset            = self.dataset_class(scenario = self.scenario, train = False, ood = False, augment = False, label_vector= False, transform2ood = False)
+        _ , self.id_data_test   = sampleValidSet(trainset= self.id_data_train, testset= test_dataset, useOnlyTest = True, verbose = True)
+                
+        if verbose: print("length OOD dataset (train and test) synthetized -> ", len(self.ood_data_train), len(self.ood_data_test))
+        if verbose: print("length ID dataset (train and test) -> ",  len(self.id_data_train), len(self.id_data_test))
+        # x,_ = self.ood_data_train.__getitem__(30000)
+        # showImage(x)
         
-        x,y = self.id_data_train.__getitem__(3)
-        # x_ = T.clone(x)
-        
-        # x_ = add_blur(x_)
-        # x_ = add_noise(x_)
-        # x_ = add_distortion_noise(x_)
-        # x_ = T.tensor(x_)
-        
-        # print(T.min(x_), T.max(x_))
-        # print(T.min(x), T.max(x))
-        
-        showImage(x)
-        # showImage(x_)
-                      
         if extended_ood:
-            self.ood_data_train = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = True, augment = False, label_vector= False)
-            self.ood_data_test  = CDDB_binary_Partial(scenario = self.scenario, train = False,  ood = True, augment = False, label_vector= False)
-        
-        
-        
+            ood_train_expansion = self.dataset_class(scenario = self.scenario, train = True,  ood = True, augment = False, label_vector= False)
+            ood_test_expansion  = self.dataset_class(scenario = self.scenario, train = False,  ood = True, augment = False, label_vector= False)
             
-            
+            self.ood_data_train = mergeDatasets(self.ood_data_train, ood_train_expansion) 
+            self.ood_data_test  = mergeDatasets(self.ood_data_test, ood_test_expansion)
+            if verbose: print("length OOD dataset after extension (train and test) -> ", len(self.ood_data_train), len(self.ood_data_test))
         
-
-    
+        self.dataset_train = OOD_dataset(self.id_data_train, self.ood_data_train, balancing_mode="max")
+        self.dataset_test  = OOD_dataset(self.id_data_test , self.ood_data_test, balancing_mode="max")
+        
+        if verbose: print("length full dataset (train and test) with balancing -> ", len(self.dataset_train), len(self.dataset_test))
+        
+        
     def train(self):
         pass
         
