@@ -695,7 +695,7 @@ class DFD_BinClassifier_v3(BinaryClassifier):
         
         # load model
         self.model_type = "resnet_eds" 
-        self.model = ResNet_EDS(n_channels=3, n_classes=2, use_upsample= False)
+        self.model = ResNet_EDS(n_classes=2, use_upsample= False)
           
         self.model.to(self.device)
         self.model.eval()
@@ -741,11 +741,15 @@ class DFD_BinClassifier_v3(BinaryClassifier):
             d_out = self.model.decoder_out_fn.__class__.__name__
         except:
             d_out = "empty"
-        
+        try:
+            input_shape = str(self.model.input_shape)
+        except:
+            input_shape = "empty"
         
         return {
             "date_training": date.today().strftime("%d-%m-%Y"),
             "model": self.model_type,
+            "input_shape": input_shape,
             "decoder_out_activation": d_out,
             "data_scenario": self.scenario,
             "version_train": self.version,
@@ -1119,21 +1123,21 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         
         # load model
         if model_type == "Unet4_Scorer":
-            self.model = Unet4_Scorer(n_channels=3, n_classes=2)
+            self.model = Unet4_Scorer(n_classes=2)
         elif model_type == "Unet4_Residual_Scorer":
-            self.model = Unet4_ResidualScorer(n_channels=3, n_classes=2)
+            self.model = Unet4_ResidualScorer(n_classes=2)
         elif model_type == "Unet5_Scorer":
-            self.model = Unet5_Scorer(n_channels=3, n_classes=2)
+            self.model = Unet5_Scorer(n_classes=2)
         elif model_type == "Unet5_Residual_Scorer":
-            self.model = Unet5_ResidualScorer(n_channels=3, n_classes=2)
+            self.model = Unet5_ResidualScorer(n_classes=2)
         elif model_type == "Unet6_Scorer":
-            self.model = Unet6_Scorer(n_channels=3, n_classes=2)
+            self.model = Unet6_Scorer(n_classes=2)
         elif model_type == "Unet6L_Scorer":
-            self.model = Unet6L_Scorer(n_channels=3, n_classes=2)
+            self.model = Unet6L_Scorer(n_classes=2)
         elif model_type == "Unet6_Residual_Scorer":
-            self.model = Unet6_ResidualScorer(n_channels=3, n_classes=2)
+            self.model = Unet6_ResidualScorer(n_classes=2)
         elif model_type == "Unet6L_Residual_Scorer":
-            self.model = Unet6L_ResidualScorer(n_channels=3, n_classes=2)
+            self.model = Unet6L_ResidualScorer(n_classes=2)
         else:
             raise ValueError("The model type is not a Unet model")
         
@@ -1189,10 +1193,15 @@ class DFD_BinClassifier_v4(BinaryClassifier):
             else: residual_connection = "Pooling_layer"
         except:
             residual_connection = "empty"
+        try:
+            input_shape = str(self.model.input_shape)
+        except:
+            input_shape = "empty"
         
         return {
             "date_training": date.today().strftime("%d-%m-%Y"),
             "model": self.model_type,
+            "input_shape": input_shape,
             "decoder_out_activation": d_out,
             "data_scenario": self.scenario,
             "version_train": self.version,
@@ -1656,7 +1665,7 @@ if __name__ == "__main__":
     
     def train_v4_content_scenario(model_type, add_name =""):
         bin_classifier = DFD_BinClassifier_v4(scenario = "content", useGPU= True, model_type=model_type)
-        bin_classifier.train(name_train= "faces_" + model_type + add_name, test_loop = False)
+        bin_classifier.train(name_train= "faces_" + model_type + "_" + add_name, test_loop = False)
     
     def test_v4_metrics(name_model, epoch, scenario, model_type):
         bin_classifier = DFD_BinClassifier_v4(scenario = scenario, useGPU= True, model_type= model_type)
@@ -1690,10 +1699,11 @@ if __name__ == "__main__":
     #                           [End test section] 
     """ 
             Past test/train launched: 
-    
+    #                                           v1
     train_v1()
     test_v1_metrics()
     
+    #                                           v2
     train_v2_content_scenario()
     train_v2_group_scenario()
     train_v2_mix_scenario()
@@ -1701,9 +1711,11 @@ if __name__ == "__main__":
     test_v2_metrics(name_model = "group_resnet50_ImageNet_v2_05-11-2023", epoch = 26 , scenario = "group")
     test_v2_metrics(name_model = "mix_resnet50_ImageNet_v2_05-11-2023", epoch = 21 ,    scenario = "mix")
     
+    #                                           v3
     train_v3_content_scenario()
     test_v3_metrics(name_model = "faces_resnet50EDS_v3_.17-11-2023", epoch = 20, scenario = "content")
     
+    #                                           v4
     train_v4_content_scenario()
     test_v4_metrics(name_model = "faces_Unet4_Scorer_v4_21-11-2023", epoch = 12, scenario = "content")
     train_v4_content_scenario(model_type="Unet4_Residual_Scorer")
@@ -1721,6 +1733,12 @@ if __name__ == "__main__":
     test_v4_metrics("faces_Unet5_Scorer+_v4_27-11-2023", 39, "content", "Unet5_Scorer")
     test_v4_metrics("faces_Unet5_Residual_Scorer+_v4_27-11-2023", 37, "content", "Unet5_Residual_Scorer")
     test_v4_metrics("faces_Unet5_Residual_Scorer+MSE_v4_27-11-2023", 36, "content", "Unet5_Residual_Scorer")
+    
+    #                        change of dimension for the input from 224x224 to 112x112
+    
+    
+    
+    
     """
 
     

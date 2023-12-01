@@ -3,13 +3,14 @@ from PIL                                    import Image
 import numpy                                as np
 import math
 import random
-from utilities                              import showImage, sampleValidSet, add_blur,add_noise,add_distortion_noise
+from utilities                              import showImage, sampleValidSet, add_blur,add_noise,add_distortion_noise, get_inputConfig
 import torch                                as T
 import torchvision
 from torchvision                            import transforms
 from torchvision.transforms                 import v2    # new version for tranformation methods
 from torchvision.transforms.functional      import InterpolationMode
 from torch.utils.data                       import Dataset, DataLoader
+
 T.manual_seed(22)
 np.random.seed(22)
 random.seed(22)
@@ -20,6 +21,10 @@ CIFAR100_PATH   = "./data/cifar100"
 MNIST_PATH      = "./data/MNIST"
 FMNIST_PATH      = "./data/FashionMNIST"
 
+input_config = get_inputConfig()
+w = input_config['width']
+h = input_config['height']
+c = input_config['channels']
 
 # dictionary to explicit the content in each model folder of the dataset, DON'T MODIFY
 DF_GROUP_CONTENT    = {
@@ -62,12 +67,12 @@ class CDDB_binary(Dataset):
     """_
         Dataset class that uses the full data from CDDB dataset as In-Distribuion (ID) for binary deepfake detection
     """
-    def __init__(self, width_img= 224, height_img = 224, train = True, augment = False, label_vector = True, transform2ood = False):
+    def __init__(self, width_img= w, height_img = h, train = True, augment = False, label_vector = True, transform2ood = False):
         """ CDDB_binary constructor
 
         Args:                
-            - width_img (int, optional): image width reshape. Defaults to 224.
-            - height_img (int, optional): image height reshape. Defaults to 224.
+            - width_img (int, optional): image width reshape. Defaults to config['width'].
+            - height_img (int, optional): image height reshape. Defaults to config['height'].
             - train (bool, optional): boolean flag to retrieve trainset, otherwise testset. Defaults to True.
             - ood (bool, optional):   boolean flag to retrieve ID data, otherwise OOD. Defaults to False.
             - augment (bool, optional):   boolean flag to activate the data augmentation. Defaults to False.
@@ -95,11 +100,13 @@ class CDDB_binary(Dataset):
                 v2.RandomHorizontalFlip(0.5),
                 v2.RandomVerticalFlip(0.1),
                 v2.RandAugment(num_ops = 1, magnitude= 7, num_magnitude_bins= 51, interpolation = InterpolationMode.BILINEAR),
+                lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
             ])
         else:
             self.transform_ops = transforms.Compose([
                 v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
                 v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
+                lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
                 # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])   # to have pixel values close between -1 and 1 (imagenet distribution)
                 # transforms.Normalize(mean=[0.5,0.5,0.5], std=[0.5,0.5,0.5])   # normlization between -1 and 1, using the whole range uniformly, formula: (pixel - mean)/std
             ])
@@ -265,7 +272,7 @@ class CDDB_binary_Partial(Dataset):
         Selecting the study case ("content","group","mix") the data are organized,
         using remaining samples as OOD data.
     """
-    def __init__(self, scenario, width_img= 224, height_img = 224, train = True, ood = False, augment = False, label_vector = True, transform2ood = False):
+    def __init__(self, scenario, width_img= w, height_img = h, train = True, ood = False, augment = False, label_vector = True, transform2ood = False):
         """ CDDB_binary_Partial constructor
 
         Args:
@@ -277,8 +284,8 @@ class CDDB_binary_Partial(Dataset):
                 - mix: mix ID and ODD without maintaining the integrity of the CDDB groups, i.e take models samples from
                 1st ,2nd,3rd groups and do the same for OOD without intersection.
                 
-            - width_img (int, optional): image width reshape. Defaults to 224.
-            - height_img (int, optional): image height reshape. Defaults to 224.
+            - width_img (int, optional): image width reshape. Defaults to config['width'].
+            - height_img (int, optional): image height reshape. Defaults to config['height'].
             - train (bool, optional): boolean flag to retrieve trainset, otherwise testset. Defaults to True.
             - ood (bool, optional):   boolean flag to retrieve ID data, otherwise OOD. Defaults to False.
             - augment (bool, optional):   boolean flag to activate the data augmentation. Defaults to False.
@@ -311,6 +318,7 @@ class CDDB_binary_Partial(Dataset):
                 v2.RandomHorizontalFlip(0.5),
                 v2.RandomVerticalFlip(0.1),
                 v2.RandAugment(num_ops = 1, magnitude= 7, num_magnitude_bins= 51, interpolation = InterpolationMode.BILINEAR),
+                lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
             ])
         else:
             self.transform_ops = transforms.Compose([
@@ -319,6 +327,7 @@ class CDDB_binary_Partial(Dataset):
                 # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
                 # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])   # to have pixel values close between -1 and 1 (imagenet distribution)
                 # transforms.Normalize(mean=[0.5,0.5,0.5], std=[0.5,0.5,0.5])   # normlization between -1 and 1, using the whole range uniformly, formula: (pixel - mean)/std
+                lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
             ])
         
         # initialization of path for the input images and the labels
@@ -525,13 +534,13 @@ class CDDB(Dataset):
     """_
         Dataset class that uses the full data from CDDB dataset as In-Distribuion (ID) for multi-label deepfake detection
     """
-    def __init__(self, width_img= 224, height_img = 224, train = True, augment = False, real_grouping = "single", label_vector = False, transform2ood = False):
+    def __init__(self, width_img= w, height_img = h, train = True, augment = False, real_grouping = "single", label_vector = False, transform2ood = False):
         """
         CDDB_binary_Partial constructor
 
         Args:                
-            - width_img (int, optional): image width reshape. Defaults to 224.
-            - height_img (int, optional): image height reshape. Defaults to 224.
+            - width_img (int, optional): image width reshape. Defaults to config['width'].
+            - height_img (int, optional): image height reshape. Defaults to config['height'].
             - train (bool, optional): boolean flag to retrieve trainset, otherwise testset. Defaults to True.
             - ood (bool, optional):   boolean flag to retrieve ID data, otherwise OOD. Defaults to False.
             - augment (bool, optional):   boolean flag to activate the data augmentation. Defaults to False.
@@ -566,6 +575,7 @@ class CDDB(Dataset):
                 v2.RandomHorizontalFlip(0.5),
                 v2.RandomVerticalFlip(0.1),
                 v2.RandAugment(num_ops = 1, magnitude= 7, num_magnitude_bins= 51, interpolation = InterpolationMode.BILINEAR),
+                lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
             ])
         else:
             self.transform_ops = transforms.Compose([
@@ -573,6 +583,7 @@ class CDDB(Dataset):
                 v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
                 # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])   # to have pixel values close between -1 and 1 (imagenet distribution)
                 # transforms.Normalize(mean=[0.5,0.5,0.5], std=[0.5,0.5,0.5])   # normlization between -1 and 1, using the whole range uniformly, formula: (pixel - mean)/std
+                lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
             ])
         
         
@@ -982,7 +993,7 @@ class CDDB_Partial(Dataset):
         Selecting the study case ("content","group","mix") the data are organized,
         using remaining samples as OOD data.
     """
-    def __init__(self, scenario, width_img= 224, height_img = 224, train = True, ood = False, augment = False, real_grouping = "single", label_vector = False, transform2ood = False):
+    def __init__(self, scenario, width_img= w, height_img = h, train = True, ood = False, augment = False, real_grouping = "single", label_vector = False, transform2ood = False):
         """CDDB_Partial constructor
 
         Args:
@@ -994,8 +1005,8 @@ class CDDB_Partial(Dataset):
                 - mix: mix ID and ODD without maintaining the integrity of the CDDB groups, i.e take models samples from
                 1st ,2nd,3rd groups and do the same for OOD without intersection.
                 
-            - width_img (int, optional): image width reshape. Defaults to 224.
-            - height_img (int, optional): image height reshape. Defaults to 224.
+            - width_img (int, optional): image width reshape. Defaults to config['width'].
+            - height_img (int, optional): image height reshape. Defaults to config['height'].
             - train (bool, optional): boolean flag to retrieve trainset, otherwise testset. Defaults to True.
             - ood (bool, optional):   boolean flag to retrieve ID data, otherwise OOD. Defaults to False.
             - augment (bool, optional):   boolean flag to activate the data augmentation. Defaults to False.
@@ -1033,6 +1044,7 @@ class CDDB_Partial(Dataset):
                 v2.RandomHorizontalFlip(0.5),
                 v2.RandomVerticalFlip(0.1),
                 v2.RandAugment(num_ops = 1, magnitude= 7, num_magnitude_bins= 51, interpolation = InterpolationMode.BILINEAR),
+                lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
             ])
         else:
             self.transform_ops = transforms.Compose([
@@ -1040,6 +1052,7 @@ class CDDB_Partial(Dataset):
                 v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
                 # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])   # to have pixel values close between -1 and 1 (imagenet distribution)
                 # transforms.Normalize(mean=[0.5,0.5,0.5], std=[0.5,0.5,0.5])   # normlization between -1 and 1, using the whole range uniformly, formula: (pixel - mean)/std
+                lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
             ])
         
         
@@ -1655,13 +1668,13 @@ class CDDB_Partial(Dataset):
 
 ##################################################### [Out-Of-Distribution Detection] ################################################################
 
-def getCIFAR100_dataset(train, width_img= 224, height_img = 224):
+def getCIFAR100_dataset(train, width_img= w, height_img = h):
     """ get CIFAR100 dataset
 
     Args:
         train (bool): choose between the train or test set. Defaults to True.
-        width_img (int, optional): img width for the resize. Defaults to 224.
-        height_img (int, optional): img height for the resize. Defaults to 224.
+        width_img (int, optional): img width for the resize. Defaults to config['width'].
+        height_img (int, optional): img height for the resize. Defaults to config['height'].
         
     Returns:
         torch.Dataset : Cifar100 dataset object
@@ -1669,6 +1682,7 @@ def getCIFAR100_dataset(train, width_img= 224, height_img = 224):
     transform_ops = transforms.Compose([
         transforms.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
         transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+        lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
     ])
     
     # create folder if not exists and download locally
@@ -1699,6 +1713,7 @@ def getMNIST_dataset(train, width_img = 28, height_img = 28):
     transform_ops = transforms.Compose([
         transforms.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
         transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+        lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
     ])
     
     # create folder if not exists and download the dataset
@@ -1729,6 +1744,7 @@ def getFMNIST_dataset(train, width_img = 28, height_img = 28):
     transform_ops = transforms.Compose([
         transforms.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
         transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+        lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
     ])
     
     # create folder if not exists and download the dataset
@@ -1749,7 +1765,7 @@ def getFMNIST_dataset(train, width_img = 28, height_img = 28):
 class GaussianNoise(Dataset):
     """Gaussian Noise Dataset"""
 
-    def __init__(self, size=(3, 224, 224), n_samples=10000, mean=0.5, variance=1.0):
+    def __init__(self, size=(c, h, w), n_samples=10000, mean=0.5, variance=1.0):
         """ 
             size (int,int,int) -> tuple representing size of the sample to be generated, respecting (n° of channels, height, width)
         """
@@ -1770,7 +1786,7 @@ class GaussianNoise(Dataset):
 class UniformNoise(Dataset):
     """Uniform Noise Dataset"""
 
-    def __init__(self, size=(3, 224, 224), n_samples=10000, low=0, high=1):
+    def __init__(self, size=(c, h, w), n_samples=10000, low=0, high=1):
         """ 
             size (int,int,int) -> tuple representing size of the sample to be generated, respecting (n° of channels, height, width)
         """
@@ -2045,5 +2061,6 @@ if __name__ == "__main__":
             
     
         print(f"train samples number: {len(dl_train)}, test samples number {len(dl_test)}")
+    
     pass
     #                           [End test section] 

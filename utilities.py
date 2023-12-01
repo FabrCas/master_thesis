@@ -25,6 +25,15 @@ from    sklearn.metrics     import  precision_score, recall_score, f1_score, con
 from    sklearn.metrics     import  auc, roc_curve, average_precision_score, precision_recall_curve
 
 
+################################################## Settings ###########################################################################
+
+def get_inputConfig():
+    return {
+        "width"     : 112,
+        "height"    : 112,
+        "channels"  : 3
+    }
+
 
 ##################################################  Dataset utilties ##################################################################
 
@@ -201,30 +210,44 @@ def balanceLabels(self, dataloader, verbose = False):
 
 ##################################################  image transformation/data augmentation ############################################
 
-def get_transformation_Resnet50(isTensor = False):
+def get_transformationInput(isTensor = False):
     """ function that returns trasnformation operations sequence for the image input to be compatible for ResNet50 model
 
     Returns:
         compose pytorch object
     """
+    
+    config = get_inputConfig()
+    w = config['width']
+    h = config['height']
+    
+    
     if isTensor:
-        transform_ops = transforms.Resize((224, 224), interpolation= InterpolationMode.BILINEAR, antialias= True),
+        transform_ops = transforms.Resize((h, w), interpolation= InterpolationMode.BILINEAR, antialias= True),
     else: 
         transform_ops = transforms.Compose([
-            transforms.Resize((224, 224), interpolation= InterpolationMode.BILINEAR, antialias= True),
+            transforms.Resize((h, w), interpolation= InterpolationMode.BILINEAR, antialias= True),
             transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+            lambda x: T.clamp(x, 0, 1),
             # transforms.Normalize(mean=[0.5,0.5,0.5], std=[0.5,0.5,0.5])   # normlization between -1 and 1, using the whole range uniformly, formula: (pixel - mean)/std
         ])
     
     return transform_ops
 
-def augment_v1(x,w  =224,h=224):
+def augment_v1(x):
+    
+    config = get_inputConfig()
+    w = config['width']
+    h = config['height']
+    
     x = v2.ToTensor()(x)   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
     x = v2.Resize((w, h), interpolation= InterpolationMode.BILINEAR, antialias= True)(x)
     # x = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])   # to have pixel values close between -1 and 1 (imagenet distribution)
     x = v2.RandomHorizontalFlip(0.5)(x)
     x = v2.RandomVerticalFlip(0.1)(x)
     x = v2.RandAugment(num_ops = 1, magnitude= 7, num_magnitude_bins= 51, interpolation = InterpolationMode.BILINEAR)(x)
+    x = T.clamp(x, 0, 1)
+    
     return x
 
 def image2int(img_tensor, is_range_zero_one = True):
