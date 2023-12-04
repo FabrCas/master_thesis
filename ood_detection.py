@@ -5,6 +5,7 @@ from    torch.nn            import functional as F
 from    torch.utils.data    import DataLoader
 from    torch.cuda.amp      import autocast
 from    tqdm                import tqdm
+from    datetime            import date
 from    sklearn.metrics     import precision_recall_curve, auc, roc_auc_score
 
 # local import
@@ -12,7 +13,7 @@ from    dataset             import CDDB_binary, CDDB_binary_Partial, CDDB, CDDB_
 from    experiments         import MNISTClassifier, MNISTClassifier_keras
 from    bin_classifier      import DFD_BinClassifier_v1, DFD_BinClassifier_v4
 from    utilities           import saveJson, loadJson, metrics_binClass, metrics_OOD, print_dict, showImage, check_folder, sampleValidSet, \
-                            mergeDatasets
+                            mergeDatasets, ExpLogger
 
 class OOD_Classifier(object):
     
@@ -38,7 +39,8 @@ class OOD_Classifier(object):
         self.useGPU = useGPU
         if self.useGPU: self.device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
         else: self.device = "cpu"
-        self.batch_size     = 32
+        
+        self.batch_size   = 64
         
     #                                       math/statistics aux functions
     
@@ -215,28 +217,43 @@ class OOD_Classifier(object):
     
     # path utilities
     
-    def get_path2SaveResults(self, name_classifier, task_type_prog, name_ood_data):
+    def get_path2SaveResults(self):
         """ Return the path to the folder to save results both for OOD metrics and ID/OOD bin classification"""
         
-        name_task                   = self.types_classifier[task_type_prog]
+        name_task                   = self.types_classifier[self.task_type_prog]
         path_results_task           = os.path.join(self.path_results, name_task)
-        path_results_baseline       = os.path.join(path_results_task, self.name)
-        path_results_ood_data       = os.path.joint(path_results_baseline, "ood_"+name_ood_data)
-        path_results_folder         = os.path.join(path_results_ood_data, name_classifier)    
+        path_results_method         = os.path.join(path_results_task, self.name)
+        path_results_ood_data       = os.path.join(path_results_method, "ood_" + self.name_ood_data)
+        path_results_folder         = os.path.join(path_results_ood_data, self.name_classifier)    
         
         # prepare file-system
         check_folder(path_results_task)
-        check_folder(path_results_baseline)
+        check_folder(path_results_method)
         check_folder(path_results_ood_data)
         check_folder(path_results_folder)
         
         return path_results_folder
-          
-class OOD_Baseline(OOD_Classifier):
+    
+    def get_path2SaveModels(self):
+        name_task                   = self.types_classifier[self.task_type_prog]
+        path_models_task            = os.path.join(self.path_models, name_task)
+        path_models_method          = os.path.join(path_models_task, self.name)
+        path_models_ood_data        = os.path.join(path_models_method, "ood_"+self.name_ood_data)
+        path_models_folder          = os.path.join(path_models_ood_data, self.name_classifier)
+        
+        # prepare file-system
+        check_folder(path_models_task)
+        check_folder(path_models_method)
+        check_folder(path_models_ood_data)
+        check_folder(path_models_folder)
+        
+        return path_models_folder
+    
+class OOD_Baseline(OOD_Classifier):         # No model training necessary (Empty model forlder)
     """
         OOD detection baseline using softmax probability
     """
-    def __init__(self, classifier,  id_data_test = None, ood_data_test = None, id_data_train = None, ood_data_train = None, useGPU = True):
+    def __init__(self, classifier,  task_type_prog, name_ood_data = None, id_data_test = None, ood_data_test = None, id_data_train = None, ood_data_train = None, useGPU = True):
         """
         OOD_Baseline instantiation 
 
@@ -250,6 +267,10 @@ class OOD_Baseline(OOD_Classifier):
                                            id_data_train = id_data_train, ood_data_train = id_data_train, useGPU = useGPU)
         # set the classifier
         self.classifier  = classifier
+        self.name_classifier = self.classifier.classifier_name
+        
+        self.task_type_prog = task_type_prog
+        self.name_ood_data  = name_ood_data
         
         # load the Pytorch dataset here
         try:
@@ -261,7 +282,7 @@ class OOD_Baseline(OOD_Classifier):
         self.name = "baseline"
     
     #                                     analysis and testing functions
-    def analyze(self, name_classifier, task_type_prog, name_ood_data = None):
+    def analyze(self, name_classifier, ):
         """ analyze function, computing OOD metrics that are not threshold related
 
         Args:
@@ -532,7 +553,7 @@ class OOD_Baseline(OOD_Classifier):
         name_file = "baseline_simulated_experiment.json"
         saveJson(path_file = os.path.join(path_model_test_results, name_file), data = data)
         
-    def testing_binary_class(self, name_classifier, task_type_prog, name_ood_data, thr_type = "fpr95"):
+    def testing_binary_class(self, thr_type = "fpr95"):
         """
             This function compute metrics (binary classification ID/OOD) that are threshold related (discriminator)
             
@@ -547,8 +568,8 @@ class OOD_Baseline(OOD_Classifier):
         """
         
         # load data from analyze
-        path_results_folder         = self.get_path2SaveResults(self, name_classifier, task_type_prog, name_ood_data)
-        name_result_file            = 'metrics_ood_{}.json'.format(name_ood_data)
+        path_results_folder         = self.get_path2SaveResults(self)
+        name_result_file            = 'metrics_ood_{}.json'.format(self.name_ood_data)
         path_result_save            = os.path.join(path_results_folder, name_result_file)   # full path to json file
         
         
@@ -666,11 +687,11 @@ class OOD_Baseline(OOD_Classifier):
         return pred
 
 # TODO
-class Baseline_ODIN(OOD_Classifier):
+class Baseline_ODIN(OOD_Classifier):        # No model training necessary (Empty model forlder)
     """
         OOD detection baseline using softmax probability + ODIN framework
     """
-    def __init__(self, classifier,  id_data_test = None, ood_data_test = None, id_data_train = None, ood_data_train = None, useGPU = True):
+    def __init__(self, classifier,  task_type_prog, name_ood_data = None, id_data_test = None, ood_data_test = None, id_data_train = None, ood_data_train = None, useGPU = True):
         """
         OOD_Baseline instantiation 
 
@@ -684,7 +705,8 @@ class Baseline_ODIN(OOD_Classifier):
                                            id_data_train = id_data_train, ood_data_train = id_data_train, useGPU = useGPU)
         # set the classifier
         self.classifier  = classifier
-        
+        self.task_type_prog = task_type_prog
+        self.name_ood_data  = name_ood_data
         # load the Pytorch dataset here
         try:
             self.dataset_test  = OOD_dataset(self.id_data_test, self.ood_data_test, balancing_mode = "max")
@@ -693,31 +715,61 @@ class Baseline_ODIN(OOD_Classifier):
         
         # name of the classifier
         self.name = "ODIN+baseline"
-
+        self.name_classifier = self.classifier.classifier_name
+        
 # TODO
-class Abnormality_module(OOD_Classifier):
+class Abnormality_module(OOD_Classifier):   # model training necessary 
     """ Custom implementation of the abnormality module using ResNet, look https://arxiv.org/abs/1610.02136 chapter 4"""
     
-    def __init__(self, classifier, scenario:str, useGPU = True, binary_dataset = True):
-        """ scenario (str): choose between: "content", "mix", "group" """
+    def __init__(self, classifier, scenario:str, model_type, useGPU = True, binary_dataset = True):
+        """ 
+        
+            scenario (str): choose between: "content", "mix", "group"
+            model_type (str): choose between avaialbe model for the abnrormality module: "basic"   
+            
+        """
         
         super(Abnormality_module, self).__init__(useGPU=useGPU)
         
-        # set the classifier
+        # set the classifier (module A)
         self.classifier  = classifier
         self.scenario = scenario
         self.binary_dataset = binary_dataset
-        if self.binary_dataset:
+        self.model_type = model_type
+        
+        self.name = "Abnormality_module"
+        self.name_classifier = self.classifier.classifier_name
+        
+        # abnormality module (module B)
+
+        # training parameters 
+        # batch size is defined in the superclass 
+        self.lr                     = 1e-4
+        self.n_epochs               = 100
+        self.weight_decay           = 1e-3                  # L2 regularization term 
+        
+        # load data ID/OOD
+        if self.binary_dataset:   # binary vs multi-class task
             self.dataset_class = CDDB_binary_Partial
         else:
             self.dataset_class = CDDB_Partial
-            
-        # manage data ID/OOD
         self._prepare_data(extended_ood = False, verbose = True)
         
+        # configuration variables
+        self.augment_data_train = False
+        self.loss_name          = "bce"
         
+    def _build_model(self):
+        if self.model_type == "basic":
+            self.model = None
+    
     def _prepare_data(self, extended_ood = False, verbose = False):
-        """ method used to prepare Dataset class used for both training and testing"""
+        """ method used to prepare Dataset class used for both training and testing
+        
+            ARGS:
+            - extended_ood (boolean, optional): select if extend the ood data using not only synthetic data
+            - verbose (boolean, optional): choose to print extra information while loading the data
+        """
         
         # synthesis of OOD data
         self.ood_data_train     = self.dataset_class(scenario = self.scenario, train = True,  ood = False, augment = False, label_vector= False, transform2ood = True)
@@ -746,13 +798,107 @@ class Abnormality_module(OOD_Classifier):
         self.dataset_test  = OOD_dataset(self.id_data_test , self.ood_data_test, balancing_mode="max")
         
         if verbose: print("length full dataset (train and test) with balancing -> ", len(self.dataset_train), len(self.dataset_test))
+    
+    def _hyperParams(self):
+        return {
+            "lr": self.lr,
+            "batch_size": self.batch_size,
+            "epochs_max": self.n_epochs,
+            "weight_decay": self.weight_decay
+            # "early_stopping_patience": self.patience,
+            # "early_stopping_trigger": self.early_stopping_trigger,
+            # "early_stopping_start_epoch": self.start_early_stopping
+                }
+    
+    def _dataConf(self):
+        
+        # load not fixed config specs with try-catch
+
+        try:
+            input_shape = str(self.model.input_shape)
+        except:
+            input_shape = "empty"
+        
+        return {
+            "date_training": date.today().strftime("%d-%m-%Y"),
+            "model": self.model_type,
+            "input_shape": input_shape,
+            "data_scenario": self.scenario,
+            "optimizer": self.optimizer.__class__.__name__,
+            "scheduler": self.scheduler.__class__.__name__,
+            "loss": self.loss_name,
+            "base_augmentation": self.augment_data_train,       
+            "grad_scaler": True,                # always true
+            }
+    
+    
+    def _forward_classifier(self, x):
+        logits, reconstruction, encoding = self.classifier.model.forward(x)
+        print("logits shape -> ", logits.shape)
+        print("encoding shape -> ",encoding.shape)
+        
+        # from reconstuction to residual
+        residual = T.square(reconstruction - x)
+        residual_flatten = T.flatten(residual, start_dim=1)
+        print("residual shape ->", reconstruction.shape)
+        print("residual (flatten) shape ->",residual_flatten.shape)
         
         
-    def train(self):
+        y = self.model.forward(logits, encoding, residual_flatten)
+        print(y.shape)
+        return y 
+        
+    def init_logger(self, path_model):
+        """
+            path_model -> specific path of the current model training
+        """
+        logger = ExpLogger(path_model=path_model)
+        
+        # logger for the classifier (module A)
+        logger.write_config(self.classifier._dataConf(), name_section="Configuration Classifier")
+        logger.write_hyper(self.classifier._hyperParams(), name_section="Hyperparameters Classifier")
+        try:
+            logger.write_model(self.classifier.model.getSummary(verbose=False), name_section="Model architecture Classifier")
+        except:
+            print("Impossible to retrieve the model structure for logging")
+        
+        # logger for the abnormality module  (module B)
+        logger.write_config(self._dataConf(), name_section="Configuration Classifier")
+        logger.write_hyper(self._hyperParams(), name_section="Hyperparameters classifier")
+        try:
+            logger.write_model(self.model.getSummary(verbose=False), name_section="Classifier model architecture")
+        except:
+            print("Impossible to retrieve the model structure for logging")
+        
+        return logger
+    
+    
+    def train(self, task_type_prog = None):
+        # """ requried the ood data name to recognize the task"""
+        
+        # 1) prepare meta-data
+        
+        # infer task type prog
+        if task_type_prog is None:
+            if self.binary_dataset:
+                task_type_prog = 0 # binary-class
+            else:
+                task_type_prog = 1  # multi-class
+                
+        self.task_type_prog = task_type_prog 
+        self.name_ood_data  = "CDDB_" + self.scenario + "_scenario"
+        
+        path_save_model     = self.get_path2SaveModels()
+        path_save_results   = self.get_path2SaveResults()
+        
+        
+
+        
+        
+        
+        
+    def test_classification(self):
         pass
-        
-        
-        
         
         
         
@@ -799,15 +945,15 @@ if __name__ == "__main__":
     # ________________________________ abnormality module  _____________________________
     
     def test_abn():
-        classifier_name = "faces_Unet5_Residual_Scorer+MSE_v4_27-11-2023"
-        classifier_type = "Unet5_Residual_Scorer"
-        classifier_epoch = 36
+        classifier_name = "faces_Unet4_Scorer112p_v4_03-12-2023"
+        classifier_type = "Unet4_Scorer"
+        classifier_epoch = 73
         
-        # classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
-        # classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
+        classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
+        classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
         
-        abnormer = Abnormality_module(None, scenario="content")
-        
+        abn = Abnormality_module(classifier, scenario="content")
+        abn.train()
         
     
     test_abn() 

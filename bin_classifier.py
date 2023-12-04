@@ -36,6 +36,7 @@ class BinaryClassifier(object):
         self.useGPU         = useGPU
         self.batch_size     = batch_size
         
+        
         # path 2 save
         self.path_models    = "./models/bin_class"
         self.path_results   = "./results/bin_class"
@@ -47,7 +48,8 @@ class BinaryClassifier(object):
         self.modelEpochs = 0        # variable used to store the actual number of epochs used to learn the model
         
         # initialize None variables
-        self.model = None
+        self.model              = None
+        self.classifier_name    = None # name initially None, this changes if trained or loaded
         
     def init_weights_normal(self):
         print("Initializing weights using Gaussian distribution")
@@ -109,12 +111,14 @@ class BinaryClassifier(object):
     
     def load(self, folder_model, epoch):
         try:
+            self.classifier_name    = folder_model
             self.path2model         = os.path.join(self.path_models,  folder_model, str(epoch) + ".ckpt")
             self.path2model_results = os.path.join(self.path_results, folder_model)
             self.modelEpochs         = epoch
             loadModel(self.model, self.path2model)
             self.model.eval()   # no train mode, fix dropout, batchnormalization, etc.
-        except:
+        except Exception as e:
+            print(e)
             print("No model: {} found for the epoch: {} in the folder: {}".format(folder_model, epoch, self.path_models))
     
     @duration    
@@ -240,7 +244,7 @@ class DFD_BinClassifier_v1(BinaryClassifier):
         """
         super(DFD_BinClassifier_v1, self).__init__(useGPU = useGPU, batch_size = batch_size, model_type = model_type)
         self.version = 1
-        
+         
         # load dataset & dataloader
         self.train_dataset = CDDB_binary(train = True)
         self.test_dataset = CDDB_binary(train = False)
@@ -272,6 +276,9 @@ class DFD_BinClassifier_v1(BinaryClassifier):
     
     @duration
     def train(self, name_train):
+        
+        # set the full current model name 
+        self.classifier_name = name_train
         
         # define train dataloader
         train_dataloader = DataLoader(self.train_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
@@ -505,6 +512,9 @@ class DFD_BinClassifier_v2(BinaryClassifier):
     @duration
     def train(self, name_train):
         """name_train (str) should include the scenario selected and the model name (i.e. ResNet50), keep this convention {scenario}_{model_name}"""
+        
+        # set the full current model name 
+        self.classifier_name = name_train
         
         # define train dataloader
         train_dataloader = DataLoader(self.train_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
@@ -825,6 +835,10 @@ class DFD_BinClassifier_v3(BinaryClassifier):
         Args:
             name_train (str) should include the scenario selected and the model name (i.e. ResNet50), keep this convention {scenario}_{model_name}
         """
+        
+        
+        # set the full current model name 
+        self.classifier_name = name_train
         
         # define the model dir path and create the directory
         current_date = date.today().strftime("%d-%m-%Y")    
@@ -1150,17 +1164,17 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         
         # learning hyperparameters (default)
         self.lr                     = 1e-4
-        self.n_epochs               = 50
-        self.start_early_stopping   = self.n_epochs/2   # epoch to start early stopping
-        self.weight_decay           = 0.001             # L2 regularization term 
-        self.patience               = 5                 # early stopping patience
-        self.early_stopping_trigger = "acc"             # values "acc" or "loss"
+        self.n_epochs               = 50 * 2
+        self.start_early_stopping   = int(self.n_epochs/2)  # epoch to start early stopping
+        self.weight_decay           = 0.001                 # L2 regularization term 
+        self.patience               = 5 * 2                 # early stopping patience
+        self.early_stopping_trigger = "acc"                 # values "acc" or "loss"
         
         # loss definition + interpolation values for the new loss
         self.loss_name = "bce + reconstruction loss"
         self.alpha_loss             = 0.9  # bce
         self.beta_loss              = 0.1  # reconstruction
-
+        self.use_MAE                = True
         self._check_parameters()
      
     def _check_parameters(self):
@@ -1208,6 +1222,7 @@ class DFD_BinClassifier_v4(BinaryClassifier):
             "optimizer": self.optimizer.__class__.__name__,
             "scheduler": self.scheduler.__class__.__name__,
             "loss": self.loss_name,
+            "use_MAE": self.use_MAE,
             "base_augmentation": self.augment_data_train,
             "cutmix": self.use_cutmix,            
             "grad_scaler": True,                # always true
@@ -1278,6 +1293,9 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         Args:
             name_train (str) should include the scenario selected and the model name (i.e. ResNet50), keep this convention {scenario}_{model_name}
         """
+        
+        # set the full current model name 
+        self.classifier_name = name_train
         
         # define the model dir path and create the directory
         current_date = date.today().strftime("%d-%m-%Y")    
@@ -1378,7 +1396,7 @@ class DFD_BinClassifier_v4(BinaryClassifier):
                     logits, reconstruction, _ = self.model.forward(x) 
 
                     class_loss  = self.bce(input=logits, target=y)   # logits bce version
-                    rec_loss    = self.reconstruction_loss(target = x, reconstruction = reconstruction, use_abs = True)
+                    rec_loss    = self.reconstruction_loss(target = x, reconstruction = reconstruction, use_abs = self.use_MAE)
                     loss = self.alpha_loss * class_loss + self.beta_loss * rec_loss 
                     
                 
@@ -1674,7 +1692,7 @@ if __name__ == "__main__":
     
     def train_test_v4_content_scenario(model_type, add_name =""):
         bin_classifier = DFD_BinClassifier_v4(scenario = "content", useGPU= True, model_type=model_type)
-        bin_classifier.train_and_test(name_train= "faces_" + model_type + add_name, test_loop = False)
+        bin_classifier.train_and_test(name_train= "faces_" + model_type + add_name)
     
     def showReconstruction_v4(name_model, epoch, scenario, model_type, save = False):
         
@@ -1692,8 +1710,6 @@ if __name__ == "__main__":
         print(logits)
         showImage(rec_img, save_image=save) 
      
-
-
 
     
     #                           [End test section] 
@@ -1735,7 +1751,12 @@ if __name__ == "__main__":
     test_v4_metrics("faces_Unet5_Residual_Scorer+MSE_v4_27-11-2023", 36, "content", "Unet5_Residual_Scorer")
     
     #                        change of dimension for the input from 224x224 to 112x112
-    
+    train_test_v4_content_scenario(model_type="Unet5_Scorer", add_name="112p")
+    train_test_v4_content_scenario(model_type="Unet5_Residual_Scorer", add_name="112p")
+    train_test_v4_content_scenario(model_type="Unet6_Scorer", add_name="112p")
+    train_test_v4_content_scenario(model_type="Unet6_Residual_Scorer", add_name="112p")
+    train_test_v4_content_scenario(model_type="Unet4_Scorer", add_name="112p")
+    train_test_v4_content_scenario(model_type="Unet4_Residual_Scorer", add_name="112p")
     
     
     

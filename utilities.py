@@ -1039,22 +1039,24 @@ class ExpLogger(object):
         self.train_lines    = []   # one line for each epoch
         self.open_logger()
         
-    def write_hyper(self, hyper_dict):
-        self.write_logger(self.delimiter_name("Hyperparameters"))
+    def write_hyper(self, hyper_dict, name_section = "Hyperparameters"):
+        self.write_logger(self.delimiter_name(name_section))
         text = "\n".join(["{:<40}: {:<40}".format(str(key),str(value)) for key, value in hyper_dict.items()])
         self.write_logger(text)
         self.write_logger(self.delimiter_line)
         self.flush()
         
-    def write_config(self, config_dict):
-        self.write_logger(self.delimiter_name("Configuration"))
+    def write_config(self, config_dict, name_section = "Configuration"):
+        self.write_logger(self.delimiter_name(name_section))
         text = "\n".join(["{:<40}: {:<40}".format(str(key),str(value)) for key, value in config_dict.items()])
         self.write_logger(text)
         self.write_logger(self.delimiter_line)
         self.flush()
-    
-    def write_model(self, model_summary: str):
-        self.write_logger(self.delimiter_name("Model architecture"))
+        
+    # def write_custom_section(self, custom_dict):
+        
+    def write_model(self, model_summary: str, name_section = "Model architecture"):
+        self.write_logger(self.delimiter_name(name_section))
         self.write_logger(model_summary)
         self.write_logger(self.delimiter_line)
         self.flush()

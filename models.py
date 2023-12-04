@@ -439,13 +439,7 @@ class Decoder_block(nn.Module):
         self.conv = Conv_block(out_c+out_c, out_c)
         
     def forward(self, inputs, skip):
-        
-        print(inputs.shape)
-        
         x = self.up(inputs)
-        
-        print(x.shape)
-        print(skip.shape)
         x = T.cat([x, skip], axis=1)
         x = self.conv(x)
         return x
@@ -553,7 +547,7 @@ class Unet5(Project_conv_model):
         self.flatten = nn.Flatten()
     
         # decoder 
-        self.d1 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1)
+        self.d1 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1) # 112x112 addition
         self.d2 = Decoder_block(self.feature_maps(4) , self.feature_maps(3))
         self.d3 = Decoder_block(self.feature_maps(3) , self.feature_maps(2))
         self.d4 = Decoder_block(self.feature_maps(2) , self.feature_maps(1))
@@ -629,7 +623,7 @@ class Unet6(Project_conv_model):
     
         # decoder 
         self.d1 = Decoder_block(self.feature_maps(6) , self.feature_maps(5), out_pad=1) # for odd spatial dimensions
-        self.d2 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1)
+        self.d2 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1) # 112x112 addition
         self.d3 = Decoder_block(self.feature_maps(4) , self.feature_maps(3))
         self.d4 = Decoder_block(self.feature_maps(3) , self.feature_maps(2))
         self.d5 = Decoder_block(self.feature_maps(2) , self.feature_maps(1))
@@ -1136,6 +1130,8 @@ class Unet4_Scorer(Project_conv_model):
         self._init_weights_normal_module(self.fc1)
         self._init_weights_normal_module(self.fc2)
         self._init_weights_normal_module(self.fc3)
+        self._init_weights_normal_module(self.fc4)
+        self._init_weights_normal_module(self.fc5)
     
     def _createNet(self):
         # encoder
@@ -1154,11 +1150,23 @@ class Unet4_Scorer(Project_conv_model):
         self.do     = nn.Dropout(p=0.3)
         self.relu   = nn.ReLU()
         
-        self.fc1 = nn.Linear(self.bottleneck_size, int(self.bottleneck_size/16))
-        self.bn1 = nn.BatchNorm1d(int(self.bottleneck_size/16))
-        self.fc2 = nn.Linear(int(self.bottleneck_size/16), int(self.bottleneck_size/64))
-        self.bn2 = nn.BatchNorm1d(int(self.bottleneck_size/64))
-        self.fc3 = nn.Linear(int(self.bottleneck_size/64), self.n_classes)
+        # self.fc1 = nn.Linear(self.bottleneck_size, int(self.bottleneck_size/16))
+        # self.bn1 = nn.BatchNorm1d(int(self.bottleneck_size/16))
+        # self.fc2 = nn.Linear(int(self.bottleneck_size/16), int(self.bottleneck_size/64))
+        # self.bn2 = nn.BatchNorm1d(int(self.bottleneck_size/64))
+        # self.fc3 = nn.Linear(int(self.bottleneck_size/64), self.n_classes)
+        
+        self.fc1 = nn.Linear(self.bottleneck_size, int(self.bottleneck_size/8))
+        self.bn1 = nn.BatchNorm1d(int(self.bottleneck_size/8))
+        self.fc2 = nn.Linear(int(self.bottleneck_size/8), int(self.bottleneck_size/32))
+        self.bn2 = nn.BatchNorm1d(int(self.bottleneck_size/32))
+        self.fc3 = nn.Linear(int(self.bottleneck_size/32), int(self.bottleneck_size/64))
+        self.bn3 = nn.BatchNorm1d(int(self.bottleneck_size/64))
+        self.fc4 = nn.Linear(int(self.bottleneck_size/64), int(self.bottleneck_size/128))
+        self.bn4 = nn.BatchNorm1d(int(self.bottleneck_size/128))
+        self.fc5 = nn.Linear(int(self.bottleneck_size/128), int(self.n_classes))
+        
+        
         
         # decoder 
         self.d1 = Decoder_block(self.feature_maps(4) , self.feature_maps(3))
@@ -1190,11 +1198,24 @@ class Unet4_Scorer(Project_conv_model):
         # print(enc.shape)
         
         # classification
-        f1          = self.relu(self.bn1(self.fc1(enc)))
-        f1_drop     = self.do(f1)
-        f2          = self.relu(self.bn2(self.fc2(f1_drop)))
-        f2_drop     = self.do(f2)
-        logits      = self.fc3(f2_drop)
+        # f1          = self.relu(self.bn1(self.fc1(enc)))
+        # f1_drop     = self.do(f1)
+        # f2          = self.relu(self.bn2(self.fc2(f1_drop)))
+        # f2_drop     = self.do(f2)
+        # logits      = self.fc3(f2_drop)
+        
+        out         = self.relu(self.bn1(self.fc1(enc)))
+        out         = self.do(out)
+        out         = self.relu(self.bn2(self.fc2(out)))
+        out         = self.do(out)
+        out         = self.relu(self.bn3(self.fc3(out)))
+        out         = self.do(out)
+        out         = self.relu(self.bn4(self.fc4(out)))
+        out         = self.do(out)
+        logits      = self.fc5(out)
+        
+        
+        
 
         # decoder 
         d1 = self.d1(bottleneck, s4)
@@ -1269,7 +1290,7 @@ class Unet5_Scorer(Project_conv_model):
         
         
         # decoder 
-        self.d1 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1)
+        self.d1 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1) # 112x112 addition
         self.d2 = Decoder_block(self.feature_maps(4) , self.feature_maps(3))
         self.d3 = Decoder_block(self.feature_maps(3) , self.feature_maps(2))
         self.d4 = Decoder_block(self.feature_maps(2) , self.feature_maps(1))
@@ -1297,9 +1318,6 @@ class Unet5_Scorer(Project_conv_model):
         bottleneck  = self.b(p5)
         enc         = self.flatten(bottleneck)
         
-        print(bottleneck.shape)
-        print(enc.shape)
-        print(self.bottleneck_size)
         # classification
         # f1          = self.relu(self.bn1(self.fc1(enc)))
         # f1_drop     = self.do(f1)
@@ -1356,7 +1374,6 @@ class Unet6_Scorer(Project_conv_model):
         self._init_weights_normal_module(self.fc3)
         self._init_weights_normal_module(self.fc4)
         self._init_weights_normal_module(self.fc5)
-        self._init_weights_normal_module(self.fc6)
     
     def _createNet(self):
         
@@ -1379,21 +1396,19 @@ class Unet6_Scorer(Project_conv_model):
         self.relu   = nn.ReLU()
         
         # series of FC layers
-        self.fc1 = nn.Linear(self.bottleneck_size, int(self.bottleneck_size/2))
-        self.bn1 = nn.BatchNorm1d(int(self.bottleneck_size/2))
-        self.fc2 = nn.Linear(int(self.bottleneck_size/2), int(self.bottleneck_size/8))
-        self.bn2 = nn.BatchNorm1d(int(self.bottleneck_size/8))
-        self.fc3 = nn.Linear(int(self.bottleneck_size/8), int(self.bottleneck_size/32))
-        self.bn3 = nn.BatchNorm1d(int(self.bottleneck_size/32))
-        self.fc4 = nn.Linear(int(self.bottleneck_size/32), int(self.bottleneck_size/128))
+        self.fc1 = nn.Linear(self.bottleneck_size, int(self.bottleneck_size/8))
+        self.bn1 = nn.BatchNorm1d(int(self.bottleneck_size/8))
+        self.fc2 = nn.Linear(int(self.bottleneck_size/8), int(self.bottleneck_size/32))
+        self.bn2 = nn.BatchNorm1d(int(self.bottleneck_size/32))
+        self.fc3 = nn.Linear(int(self.bottleneck_size/32), int(self.bottleneck_size/64))
+        self.bn3 = nn.BatchNorm1d(int(self.bottleneck_size/64))
+        self.fc4 = nn.Linear(int(self.bottleneck_size/64), int(self.bottleneck_size/128))
         self.bn4 = nn.BatchNorm1d(int(self.bottleneck_size/128))
-        self.fc5 = nn.Linear(int(self.bottleneck_size/128), int(self.bottleneck_size/512))
-        self.bn5 = nn.BatchNorm1d(int(self.bottleneck_size/512))
-        self.fc6 = nn.Linear(int(self.bottleneck_size/512), self.n_classes)
+        self.fc5 = nn.Linear(int(self.bottleneck_size/128), int(self.n_classes))
         
         # decoder 
         self.d1 = Decoder_block(self.feature_maps(6) , self.feature_maps(5), out_pad=1) # for odd spatial dimensions
-        self.d2 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1)
+        self.d2 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1) # 112x112 addition
         self.d3 = Decoder_block(self.feature_maps(4) , self.feature_maps(3))
         self.d4 = Decoder_block(self.feature_maps(3) , self.feature_maps(2))
         self.d5 = Decoder_block(self.feature_maps(2) , self.feature_maps(1))
@@ -1431,9 +1446,7 @@ class Unet6_Scorer(Project_conv_model):
         out         = self.do(out)
         out         = self.relu(self.bn4(self.fc4(out)))
         out         = self.do(out)
-        out         = self.relu(self.bn5(self.fc5(out)))
-        out         = self.do(out)
-        logits      = self.fc6(out)
+        logits      = self.fc5(out)
 
         
         d1 = self.d1(bottleneck, s6)
@@ -1473,7 +1486,6 @@ class Unet6L_Scorer(Project_conv_model):
         self._init_weights_normal_module(self.fc3)
         self._init_weights_normal_module(self.fc4)
         self._init_weights_normal_module(self.fc5)
-        self._init_weights_normal_module(self.fc6)
     
     def _createNet(self):
         
@@ -1496,21 +1508,19 @@ class Unet6L_Scorer(Project_conv_model):
         self.relu   = nn.ReLU()
         
         # series of FC layers
-        self.fc1 = nn.Linear(self.bottleneck_size, int(self.bottleneck_size/2))
-        self.bn1 = nn.BatchNorm1d(int(self.bottleneck_size/2))
-        self.fc2 = nn.Linear(int(self.bottleneck_size/2), int(self.bottleneck_size/8))
-        self.bn2 = nn.BatchNorm1d(int(self.bottleneck_size/8))
-        self.fc3 = nn.Linear(int(self.bottleneck_size/8), int(self.bottleneck_size/32))
-        self.bn3 = nn.BatchNorm1d(int(self.bottleneck_size/32))
-        self.fc4 = nn.Linear(int(self.bottleneck_size/32), int(self.bottleneck_size/128))
+        self.fc1 = nn.Linear(self.bottleneck_size, int(self.bottleneck_size/8))
+        self.bn1 = nn.BatchNorm1d(int(self.bottleneck_size/8))
+        self.fc2 = nn.Linear(int(self.bottleneck_size/8), int(self.bottleneck_size/32))
+        self.bn2 = nn.BatchNorm1d(int(self.bottleneck_size/32))
+        self.fc3 = nn.Linear(int(self.bottleneck_size/32), int(self.bottleneck_size/64))
+        self.bn3 = nn.BatchNorm1d(int(self.bottleneck_size/64))
+        self.fc4 = nn.Linear(int(self.bottleneck_size/64), int(self.bottleneck_size/128))
         self.bn4 = nn.BatchNorm1d(int(self.bottleneck_size/128))
-        self.fc5 = nn.Linear(int(self.bottleneck_size/128), int(self.bottleneck_size/512))
-        self.bn5 = nn.BatchNorm1d(int(self.bottleneck_size/512))
-        self.fc6 = nn.Linear(int(self.bottleneck_size/512), self.n_classes)
+        self.fc5 = nn.Linear(int(self.bottleneck_size/128), int(self.n_classes))
         
         # decoder 
         self.d1 = Decoder_block(self.feature_maps(6) , self.feature_maps(5), out_pad=1) # for odd spatial dimensions
-        self.d2 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1)
+        self.d2 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1) # 112x112 addition
         self.d3 = Decoder_block(self.feature_maps(4) , self.feature_maps(3))
         self.d4 = Decoder_block(self.feature_maps(3) , self.feature_maps(2))
         self.d5 = Decoder_block(self.feature_maps(2) , self.feature_maps(1))
@@ -1551,9 +1561,7 @@ class Unet6L_Scorer(Project_conv_model):
         out         = self.do(out)
         out         = self.relu(self.bn4(self.fc4(out)))
         out         = self.do(out)
-        out         = self.relu(self.bn5(self.fc5(out)))
-        out         = self.do(out)
-        logits      = self.fc6(out)
+        logits      = self.fc5(out)
         
         d1 = self.d1(bottleneck, s6)
         d2 = self.d2(d1, s5)
@@ -1591,6 +1599,8 @@ class Unet4_ResidualScorer(Project_conv_model):
         self._init_weights_normal_module(self.fc1)
         self._init_weights_normal_module(self.fc2)
         self._init_weights_normal_module(self.fc3)
+        self._init_weights_normal_module(self.fc4)
+        self._init_weights_normal_module(self.fc5)
     
     def _createNet(self):
         # encoder
@@ -1609,11 +1619,21 @@ class Unet4_ResidualScorer(Project_conv_model):
         self.do     = nn.Dropout(p=0.3)
         self.relu   = nn.ReLU()
         
-        self.fc1 = nn.Linear(self.bottleneck_size, int(self.bottleneck_size/16))
-        self.bn1 = nn.BatchNorm1d(int(self.bottleneck_size/16))
-        self.fc2 = nn.Linear(int(self.bottleneck_size/16), int(self.bottleneck_size/64))
-        self.bn2 = nn.BatchNorm1d(int(self.bottleneck_size/64))
-        self.fc3 = nn.Linear(int(self.bottleneck_size/64), self.n_classes)
+        # self.fc1 = nn.Linear(self.bottleneck_size, int(self.bottleneck_size/16))
+        # self.bn1 = nn.BatchNorm1d(int(self.bottleneck_size/16))
+        # self.fc2 = nn.Linear(int(self.bottleneck_size/16), int(self.bottleneck_size/64))
+        # self.bn2 = nn.BatchNorm1d(int(self.bottleneck_size/64))
+        # self.fc3 = nn.Linear(int(self.bottleneck_size/64), self.n_classes)
+        
+        self.fc1 = nn.Linear(self.bottleneck_size, int(self.bottleneck_size/8))
+        self.bn1 = nn.BatchNorm1d(int(self.bottleneck_size/8))
+        self.fc2 = nn.Linear(int(self.bottleneck_size/8), int(self.bottleneck_size/32))
+        self.bn2 = nn.BatchNorm1d(int(self.bottleneck_size/32))
+        self.fc3 = nn.Linear(int(self.bottleneck_size/32), int(self.bottleneck_size/64))
+        self.bn3 = nn.BatchNorm1d(int(self.bottleneck_size/64))
+        self.fc4 = nn.Linear(int(self.bottleneck_size/64), int(self.bottleneck_size/128))
+        self.bn4 = nn.BatchNorm1d(int(self.bottleneck_size/128))
+        self.fc5 = nn.Linear(int(self.bottleneck_size/128), int(self.n_classes))
         
         # decoder 
         self.d1 = Decoder_block(self.feature_maps(4) , self.feature_maps(3))
@@ -1643,11 +1663,21 @@ class Unet4_ResidualScorer(Project_conv_model):
         enc         = self.flatten(bottleneck)
         
         # classification
-        f1          = self.relu(self.bn1(self.fc1(enc)))
-        f1_drop     = self.do(f1)
-        f2          = self.relu(self.bn2(self.fc2(f1_drop)))
-        f2_drop     = self.do(f2)
-        logits      = self.fc3(f2_drop)
+        # f1          = self.relu(self.bn1(self.fc1(enc)))
+        # f1_drop     = self.do(f1)
+        # f2          = self.relu(self.bn2(self.fc2(f1_drop)))
+        # f2_drop     = self.do(f2)
+        # logits      = self.fc3(f2_drop)
+        
+        out         = self.relu(self.bn1(self.fc1(enc)))
+        out         = self.do(out)
+        out         = self.relu(self.bn2(self.fc2(out)))
+        out         = self.do(out)
+        out         = self.relu(self.bn3(self.fc3(out)))
+        out         = self.do(out)
+        out         = self.relu(self.bn4(self.fc4(out)))
+        out         = self.do(out)
+        logits      = self.fc5(out)
         
         # decoder 
         d1 = self.d1(bottleneck, s4)
@@ -1693,7 +1723,7 @@ class Unet5_ResidualScorer(Project_conv_model):
         self.e2 = Encoder_block_residual(self.feature_maps(0) , self.feature_maps(1), self.residual2conv)
         self.e3 = Encoder_block_residual(self.feature_maps(1) , self.feature_maps(2), self.residual2conv)
         self.e4 = Encoder_block_residual(self.feature_maps(2) , self.feature_maps(3), self.residual2conv)
-        self.e5 = Encoder_block_residual(self.feature_maps(3) , self.feature_maps(4), self.residual2conv, kernel_size=2)
+        self.e5 = Encoder_block_residual(self.feature_maps(3) , self.feature_maps(4), self.residual2conv, kernel_size=2) # 112x112 addition
         
         # bottlenech (encoding)
         self.b = Conv_block(self.feature_maps(4) , self.feature_maps(5))
@@ -1722,7 +1752,7 @@ class Unet5_ResidualScorer(Project_conv_model):
         
         
         # decoder 
-        self.d1 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1)
+        self.d1 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1) # 112x112 addition
         self.d2 = Decoder_block(self.feature_maps(4) , self.feature_maps(3))
         self.d3 = Decoder_block(self.feature_maps(3) , self.feature_maps(2))
         self.d4 = Decoder_block(self.feature_maps(2) , self.feature_maps(1))
@@ -1808,7 +1838,6 @@ class Unet6_ResidualScorer(Project_conv_model):
         self._init_weights_normal_module(self.fc3)
         self._init_weights_normal_module(self.fc4)
         self._init_weights_normal_module(self.fc5)
-        self._init_weights_normal_module(self.fc6)
     
     def _createNet(self):
         
@@ -1817,7 +1846,7 @@ class Unet6_ResidualScorer(Project_conv_model):
         self.e2 = Encoder_block_residual(self.feature_maps(0) , self.feature_maps(1), self.residual2conv)
         self.e3 = Encoder_block_residual(self.feature_maps(1) , self.feature_maps(2), self.residual2conv)
         self.e4 = Encoder_block_residual(self.feature_maps(2) , self.feature_maps(3), self.residual2conv)
-        self.e5 = Encoder_block_residual(self.feature_maps(3) , self.feature_maps(4), self.residual2conv, kernel_size=2)
+        self.e5 = Encoder_block_residual(self.feature_maps(3) , self.feature_maps(4), self.residual2conv, kernel_size=2) # 112x112 addition
         self.e6 = Encoder_block_residual(self.feature_maps(4) , self.feature_maps(5), self.residual2conv, kernel_size=2)
     
         # bottlenech (encoding)
@@ -1831,21 +1860,19 @@ class Unet6_ResidualScorer(Project_conv_model):
         self.relu   = nn.ReLU()
         
         # series of FC layers
-        self.fc1 = nn.Linear(self.bottleneck_size, int(self.bottleneck_size/2))
-        self.bn1 = nn.BatchNorm1d(int(self.bottleneck_size/2))
-        self.fc2 = nn.Linear(int(self.bottleneck_size/2), int(self.bottleneck_size/8))
-        self.bn2 = nn.BatchNorm1d(int(self.bottleneck_size/8))
-        self.fc3 = nn.Linear(int(self.bottleneck_size/8), int(self.bottleneck_size/32))
-        self.bn3 = nn.BatchNorm1d(int(self.bottleneck_size/32))
-        self.fc4 = nn.Linear(int(self.bottleneck_size/32), int(self.bottleneck_size/128))
+        self.fc1 = nn.Linear(self.bottleneck_size, int(self.bottleneck_size/8))
+        self.bn1 = nn.BatchNorm1d(int(self.bottleneck_size/8))
+        self.fc2 = nn.Linear(int(self.bottleneck_size/8), int(self.bottleneck_size/32))
+        self.bn2 = nn.BatchNorm1d(int(self.bottleneck_size/32))
+        self.fc3 = nn.Linear(int(self.bottleneck_size/32), int(self.bottleneck_size/64))
+        self.bn3 = nn.BatchNorm1d(int(self.bottleneck_size/64))
+        self.fc4 = nn.Linear(int(self.bottleneck_size/64), int(self.bottleneck_size/128))
         self.bn4 = nn.BatchNorm1d(int(self.bottleneck_size/128))
-        self.fc5 = nn.Linear(int(self.bottleneck_size/128), int(self.bottleneck_size/512))
-        self.bn5 = nn.BatchNorm1d(int(self.bottleneck_size/512))
-        self.fc6 = nn.Linear(int(self.bottleneck_size/512), self.n_classes)
+        self.fc5 = nn.Linear(int(self.bottleneck_size/128), int(self.n_classes))
         
         # decoder 
         self.d1 = Decoder_block(self.feature_maps(6) , self.feature_maps(5), out_pad=1) # for odd spatial dimensions
-        self.d2 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1)
+        self.d2 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1) # 112x112 addition
         self.d3 = Decoder_block(self.feature_maps(4) , self.feature_maps(3))
         self.d4 = Decoder_block(self.feature_maps(3) , self.feature_maps(2))
         self.d5 = Decoder_block(self.feature_maps(2) , self.feature_maps(1))
@@ -1881,9 +1908,7 @@ class Unet6_ResidualScorer(Project_conv_model):
         out         = self.do(out)
         out         = self.relu(self.bn4(self.fc4(out)))
         out         = self.do(out)
-        out         = self.relu(self.bn5(self.fc5(out)))
-        out         = self.do(out)
-        logits      = self.fc6(out)
+        logits      = self.fc5(out)
 
         d1 = self.d1(bottleneck, s6)
         d2 = self.d2(d1, s5)
@@ -1923,7 +1948,6 @@ class Unet6L_ResidualScorer(Project_conv_model):
         self._init_weights_normal_module(self.fc3)
         self._init_weights_normal_module(self.fc4)
         self._init_weights_normal_module(self.fc5)
-        self._init_weights_normal_module(self.fc6)
     
     def _createNet(self):
         
@@ -1932,7 +1956,7 @@ class Unet6L_ResidualScorer(Project_conv_model):
         self.e2 = LargeEncoder_block_residual(self.feature_maps(0) , self.feature_maps(1), self.residual2conv)
         self.e3 = LargeEncoder_block_residual(self.feature_maps(1) , self.feature_maps(2), self.residual2conv)
         self.e4 = LargeEncoder_block_residual(self.feature_maps(2) , self.feature_maps(3), self.residual2conv)
-        self.e5 = LargeEncoder_block_residual(self.feature_maps(3) , self.feature_maps(4), self.residual2conv, kernel_size=2)
+        self.e5 = LargeEncoder_block_residual(self.feature_maps(3) , self.feature_maps(4), self.residual2conv, kernel_size=2) # 112x112 addition
         self.e6 = LargeEncoder_block_residual(self.feature_maps(4) , self.feature_maps(5), self.residual2conv, kernel_size=2)
     
         # bottlenech (encoding)
@@ -1946,21 +1970,19 @@ class Unet6L_ResidualScorer(Project_conv_model):
         self.relu   = nn.ReLU()
         
         # series of FC layers
-        self.fc1 = nn.Linear(self.bottleneck_size, int(self.bottleneck_size/2))
-        self.bn1 = nn.BatchNorm1d(int(self.bottleneck_size/2))
-        self.fc2 = nn.Linear(int(self.bottleneck_size/2), int(self.bottleneck_size/8))
-        self.bn2 = nn.BatchNorm1d(int(self.bottleneck_size/8))
-        self.fc3 = nn.Linear(int(self.bottleneck_size/8), int(self.bottleneck_size/32))
-        self.bn3 = nn.BatchNorm1d(int(self.bottleneck_size/32))
-        self.fc4 = nn.Linear(int(self.bottleneck_size/32), int(self.bottleneck_size/128))
+        self.fc1 = nn.Linear(self.bottleneck_size, int(self.bottleneck_size/8))
+        self.bn1 = nn.BatchNorm1d(int(self.bottleneck_size/8))
+        self.fc2 = nn.Linear(int(self.bottleneck_size/8), int(self.bottleneck_size/32))
+        self.bn2 = nn.BatchNorm1d(int(self.bottleneck_size/32))
+        self.fc3 = nn.Linear(int(self.bottleneck_size/32), int(self.bottleneck_size/64))
+        self.bn3 = nn.BatchNorm1d(int(self.bottleneck_size/64))
+        self.fc4 = nn.Linear(int(self.bottleneck_size/64), int(self.bottleneck_size/128))
         self.bn4 = nn.BatchNorm1d(int(self.bottleneck_size/128))
-        self.fc5 = nn.Linear(int(self.bottleneck_size/128), int(self.bottleneck_size/512))
-        self.bn5 = nn.BatchNorm1d(int(self.bottleneck_size/512))
-        self.fc6 = nn.Linear(int(self.bottleneck_size/512), self.n_classes)
+        self.fc5 = nn.Linear(int(self.bottleneck_size/128), int(self.n_classes))
         
         # decoder 
         self.d1 = Decoder_block(self.feature_maps(6) , self.feature_maps(5), out_pad=1) # for odd spatial dimensions
-        self.d2 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1)
+        self.d2 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1) # 112x112 addition
         self.d3 = Decoder_block(self.feature_maps(4) , self.feature_maps(3))
         self.d4 = Decoder_block(self.feature_maps(3) , self.feature_maps(2))
         self.d5 = Decoder_block(self.feature_maps(2) , self.feature_maps(1))
@@ -1996,9 +2018,7 @@ class Unet6L_ResidualScorer(Project_conv_model):
         out         = self.do(out)
         out         = self.relu(self.bn4(self.fc4(out)))
         out         = self.do(out)
-        out         = self.relu(self.bn5(self.fc5(out)))
-        out         = self.do(out)
-        logits      = self.fc6(out)
+        logits      = self.fc5(out)
 
         d1 = self.d1(bottleneck, s6)
         d2 = self.d2(d1, s5)
@@ -2015,19 +2035,21 @@ class Unet6L_ResidualScorer(Project_conv_model):
 
 # 1st models superclass
 class Project_abnorm_model(nn.Module): 
-    def __init__(self, logits_shape, encoding_shape, residual_shape):
+    def __init__(self, logits_shape, encoding_shape, residual_flat_shape):
         super(Project_abnorm_model, self).__init__()
         print("Initializing {} ...".format(self.__class__.__name__))
         
         # all vectors with 2 axis, first batch, second features
         self.logits_shape   = logits_shape
         self.encoding_shape = encoding_shape
-        self.residual_shape = residual_shape
-        self.input_shape = (self.logits_shape[1] + self.encoding_shape[1] + self.residual_shape[1])   # input_shape doesn't consider the batch
+        self.residual_flat_shape = residual_flat_shape
+        self.input_shape = (self.logits_shape[1] + self.encoding_shape[1] + self.residual_flat_shape[1])   # input_shape doesn't consider the batch
+        self._check_shapes()
         
-        # same batch size
-        assert logits_shape[0] == encoding_shape[0] and encoding_shape[0] == residual_shape[0]
-        
+    def _check_shapes(self):
+        c1 = len(self.logits_shape) ==  len(self.encoding_shape) == len(self.residual_flat_shape)  # same number of dims
+        c2 = self.logits_shape[0] == self.encoding_shape[0] == self.residual_flat_shape[0]            # same n of elements for the batch     
+        assert  c1 and c2
 
     def _createNet(self):
         raise NotImplementedError
@@ -2041,15 +2063,31 @@ class Project_abnorm_model(nn.Module):
             if len(param.shape) > 1:
                 T.nn.init.normal_(param, mean=0, std=0.01) 
                 
-    def getSummary(self, verbose = True):
-        summary = ""
-        n_params = 0
-        for k,v in self.getLayers().items():
-            summary += "{:<30} -> {:<30}".format(k,str(tuple(v.shape))) + "\n"
-            n_params += T.numel(v)
-        summary += "Total number of parameters: {}\n".format(n_params)
-        if verbose: print(summary)
-        return summary
+    def getSummary(self, input_shape = None, verbose = True):
+        
+        """
+            input_shape -> tuple with simulated dimension used for the model summary
+            expected input of this type -> color,width,height
+        """
+        
+        
+        if input_shape is None:
+            input_shape = self.input_shape
+            
+        try:
+            model_stats = summary(self, input_shape, verbose = int(verbose))
+            return str(model_stats)
+        except Exception as e:
+            print(e)
+            
+            summ = ""
+            n_params = 0
+            for k,v in self.getLayers().items():
+                summ += "{:<30} -> {:<30}".format(k,str(tuple(v.shape))) + "\n"
+                n_params += T.numel(v)
+            summ += "Total number of parameters: {}\n".format(n_params)
+            if verbose: print(summ)
+            return summ
         
     def to_device(self, device):
         self.to(device)
@@ -2064,14 +2102,15 @@ class Project_abnorm_model(nn.Module):
 
 class Abnormality_module_Basic(Project_abnorm_model):
     
-    def __init__(self, logits_shape, encoding_shape, residual_shape):
-        super().__init__(logits_shape, encoding_shape, residual_shape)
+    def __init__(self, logits_shape, encoding_shape, residual_flat_shape):
+        super().__init__(logits_shape, encoding_shape, residual_flat_shape)
         self._createNet()
         self._init_weights_normal()
     
     def _createNet(self):
         
-        tot_features_0      = self.logits_shape[1] + self.encoding_shape[1] + self.residual_shape[1]
+        tot_features_0      = self.logits_shape[1] + self.encoding_shape[1] + self.residual_flat_shape[1]
+        
         if int(tot_features_0/1000) > 8192:
             tot_features_1      = int(tot_features_0/1000)
         else:
@@ -2102,7 +2141,11 @@ class Abnormality_module_Basic(Project_abnorm_model):
         self.fc_risk_final  = T.nn.Linear(tot_feaures_risk_2,tot_feaures_final)
         self.bn_risk_final  = T.nn.BatchNorm1d(tot_feaures_final)
         
-    def forward(self, x):
+    def forward(self, logits, encoding, flatten_residual):
+        
+        # build the vector input 
+        x = T.cat((logits, encoding, flatten_residual), dim = 1)
+        print("input module b shape -> ", x.shape)
         
         # preliminary layers
         x = self.gelu(self.bn1(self.fc1(x)))
@@ -2267,7 +2310,7 @@ if __name__ == "__main__":
         input("press something to exit ")
 
     def test_UnetScorer():
-        unet = Unet6L_Scorer(n_classes=2)
+        unet = Unet4_Scorer(n_classes=2)
         unet.to_device(device)
         print(unet.bottleneck_size)
         # unet.getSummary()
@@ -2275,7 +2318,7 @@ if __name__ == "__main__":
         x = T.rand((32, 3, INPUT_HEIGHT, INPUT_WIDTH)).to(device)
         # print(x.shape)
         logits, rec, enc = unet.forward(x)
-        input("press something to exit ")
+        input("press enter to exit ")
     
     def test_UnetResidualScorer():
         # test residual conv block
@@ -2287,7 +2330,7 @@ if __name__ == "__main__":
         
         x = T.rand((32, 3, INPUT_HEIGHT, INPUT_WIDTH)).to(device)
         # unet = Unet6L_ResidualScorer(n_channels=3, n_classes=2)
-        unet = Unet6L_ResidualScorer(n_classes=2)
+        unet = Unet4_ResidualScorer(n_classes=2)
         unet.to_device(device)
         # print(unet.bottleneck_size)
         unet.getSummary()
@@ -2299,34 +2342,33 @@ if __name__ == "__main__":
             
         print("rec shape: ", rec.shape)
         print("enc shape: ", enc.shape)
-        input("press something to exit ")
+        input("press enter to exit ")
         
     def test_abnorm_expanded():
         from bin_classifier import DFD_BinClassifier_v4
         
-        classifier = DFD_BinClassifier_v4(scenario="content", model_type="Unet5_Residual_Scorer")
-        classifier.load("faces_Unet5_Residual_Scorer+MSE_v4_27-11-2023", 36)
-        x_module_a = T.rand((32, 3, INPUT_HEIGHT, INPUT_WIDTH)).to(device)
+        classifier = DFD_BinClassifier_v4(scenario="content", model_type="Unet4_Scorer")
+        classifier.load("faces_Unet4_Scorer112p_v4_03-12-2023", 73)
+        x_module_a = T.rand((32, INPUT_CHANNELS, INPUT_HEIGHT, INPUT_WIDTH)).to(device)
         logits, reconstruction, encoding = classifier.model.forward(x_module_a)
+        # input("press enter for next step ")
         
-        print(logits.shape)
-        print(reconstruction.shape)
-        print(encoding.shape)
+        print("logits shape -> ", logits.shape)
+        print("encoding shape -> ",encoding.shape)
         
-        # reconstuction to residual
-        
+        # from reconstuction to residual
         residual = T.square(reconstruction - x_module_a)
         residual_flatten = T.flatten(residual, start_dim=1)
-        print(residual_flatten.shape)
+        print("residual shape ->", reconstruction.shape)
+        print("residual (flatten) shape ->",residual_flatten.shape)
         
-        x_module_b = T.cat((logits, encoding, residual_flatten), dim = 1)
-        
-        print(x_module_b.shape)
-        
-        abnorm_module = Abnormality_module_Basic(logits_shape = logits.shape, encoding_shape = logits.shape, residual_shape = logits.shape)
-        
-    test_UnetResidualScorer()
+        abnorm_module = Abnormality_module_Basic(logits_shape = logits.shape, encoding_shape = encoding.shape, residual_flat_shape = residual_flatten.shape).to(device)
+        abnorm_module.getSummary()
+        y = abnorm_module.forward(logits, encoding, residual_flatten)
+        print(y.shape)
+        input("press enter to exit ")
     
-    
+    test_abnorm_expanded()
+    pass
     #                           [End test section] 
     
