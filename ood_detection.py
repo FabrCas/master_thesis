@@ -10,8 +10,9 @@ from    sklearn.metrics     import precision_recall_curve, auc, roc_auc_score
 
 # local import
 from    dataset             import CDDB_binary, CDDB_binary_Partial, CDDB, CDDB_Partial, OOD_dataset, getCIFAR100_dataset, getMNIST_dataset, getFMNIST_dataset
-from    experiments         import MNISTClassifier, MNISTClassifier_keras
+from    experiments         import MNISTClassifier_keras
 from    bin_classifier      import DFD_BinClassifier_v1, DFD_BinClassifier_v4
+from    models              import Abnormality_module_Basic
 from    utilities           import saveJson, loadJson, metrics_binClass, metrics_OOD, print_dict, showImage, check_folder, sampleValidSet, \
                             mergeDatasets, ExpLogger
 
@@ -281,9 +282,9 @@ class OOD_Baseline(OOD_Classifier):         # No model training necessary (Empty
         # name of the classifier
         self.name = "baseline"
     
-    #                                     analysis and testing functions
-    def analyze(self, name_classifier, ):
-        """ analyze function, computing OOD metrics that are not threshold related
+    #                                       testing functions
+    def test_probabilties(self, name_classifier, ):
+        """ testing function using probabilty-based metrics, computing OOD metrics that are not threshold related
 
         Args:
             name_classifier (str): deepfake detection model used (name from models folder)
@@ -417,9 +418,9 @@ class OOD_Baseline(OOD_Classifier):         # No model training necessary (Empty
         }
         
         # save data (JSON)
-        if name_ood_data is not None:
-            path_results_folder         = self.get_path2SaveResults(self, name_classifier, task_type_prog, name_ood_data)
-            name_result_file            = 'metrics_ood_{}.json'.format(name_ood_data)
+        if self.name_ood_data is not None:
+            path_results_folder         = self.get_path2SaveResults(self, name_classifier, self.task_type_prog, self.name_ood_data)
+            name_result_file            = 'metrics_ood_{}.json'.format(self.name_ood_data)
             path_result_save            = os.path.join(path_results_folder, name_result_file)   # full path to json file
             
             print(path_result_save)
@@ -553,7 +554,7 @@ class OOD_Baseline(OOD_Classifier):         # No model training necessary (Empty
         name_file = "baseline_simulated_experiment.json"
         saveJson(path_file = os.path.join(path_model_test_results, name_file), data = data)
         
-    def testing_binary_class(self, thr_type = "fpr95"):
+    def test_threshold(self, thr_type = "fpr95"):
         """
             This function compute metrics (binary classification ID/OOD) that are threshold related (discriminator)
             
@@ -628,7 +629,7 @@ class OOD_Baseline(OOD_Classifier):         # No model training necessary (Empty
         target = test_labels[:,1]
         
         # compute and save metrics 
-        name_resultClass_file  = 'metrics_ood_classification_{}.json'.format(name_ood_data)
+        name_resultClass_file  = 'metrics_ood_classification_{}.json'.format(self.name_ood_data)
         metrics_class =  metrics_binClass(preds = pred, targets= target, pred_probs = None, path_save = path_results_folder, name_ood_file = name_resultClass_file)
         
         print(metrics_class)
@@ -728,7 +729,6 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             model_type (str): choose between avaialbe model for the abnrormality module: "basic"   
             
         """
-        
         super(Abnormality_module, self).__init__(useGPU=useGPU)
         
         # set the classifier (module A)
@@ -741,7 +741,8 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         self.name_classifier = self.classifier.classifier_name
         
         # abnormality module (module B)
-
+        self._build_model()
+            
         # training parameters 
         # batch size is defined in the superclass 
         self.lr                     = 1e-4
@@ -757,12 +758,24 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         
         # configuration variables
         self.augment_data_train = False
-        self.loss_name          = "bce"
+        self.loss_name          = "bce"   # binary cross entropy or sigmoid cross entropy
+        
+        # instantiation aux elements
+        self.bce     = F.binary_cross_entropy_with_logits
+        self.sigmoid = F.sigmoid
         
     def _build_model(self):
+        # compute shapes for the input
+        x_shape = (1, *self.classifier.model.input_shape)
+        x = T.rand(x_shape).to(self.device)
+        probs_softmax, encoding, residual_flatten = self._forward_A(x)
+        
         if self.model_type == "basic":
-            self.model = None
-    
+            self.model = Abnormality_module_Basic(probs_softmax_shape = probs_softmax.shape, encoding_shape = encoding.shape, residual_flat_shape = residual_flatten.shape)
+
+        self.model.to(self.device)
+        self.model.eval()
+        
     def _prepare_data(self, extended_ood = False, verbose = False):
         """ method used to prepare Dataset class used for both training and testing
         
@@ -832,22 +845,53 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             }
     
     
-    def _forward_classifier(self, x):
+    def _forward_A(self, x, verbose = False):
         logits, reconstruction, encoding = self.classifier.model.forward(x)
-        print("logits shape -> ", logits.shape)
-        print("encoding shape -> ",encoding.shape)
+        prob_softmax = T.nn.functional.softmax(logits, dim=1)
+        if verbose: 
+            print("prob shape -> ", prob_softmax.shape)
+            print("encoding shape -> ",encoding.shape)
         
         # from reconstuction to residual
         residual = T.square(reconstruction - x)
         residual_flatten = T.flatten(residual, start_dim=1)
-        print("residual shape ->", reconstruction.shape)
-        print("residual (flatten) shape ->",residual_flatten.shape)
         
+        if verbose: 
+            print("residual shape ->", reconstruction.shape)
+            print("residual (flatten) shape ->",residual_flatten.shape)
         
-        y = self.model.forward(logits, encoding, residual_flatten)
-        print(y.shape)
-        return y 
+        return prob_softmax, encoding, residual_flatten
+
+    def _forward_B(self, prob_softmax, encoding, residual_flatten, verbose = False):
+        y = self.model.forward(prob_softmax, encoding, residual_flatten)
+        if verbose: print("y shape", y.shape)
+        return y
         
+    def forward(self,x):
+        
+        if self.model is None: raise ValueError("No model has been defined, impossible forwarding the data")
+        
+        if not(isinstance(x, T.Tensor)):
+            x = T.tensor(x)
+        
+        # handle single image, increasing dimensions simulating a batch
+        if len(x.shape) == 3:
+            x = x.expand(1,-1,-1,-1)
+        elif len(x.shape) <= 2 or len(x.shape) >= 5:
+            raise ValueError("The input shape is not compatiple, expected a batch or a single image")
+        
+        # correct the dtype
+        if not (x.dtype is T.float32):
+            x = x.to(T.float32)
+         
+        x = x.to(self.device)
+        
+        prob_softmax, encoding, residual_flatten = self._forward_A(x)
+        
+        logit = self._forward_B(prob_softmax, encoding, residual_flatten)
+        
+        return self.sigmoid(logit)
+    
     def init_logger(self, path_model):
         """
             path_model -> specific path of the current model training
@@ -891,13 +935,9 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         path_save_model     = self.get_path2SaveModels()
         path_save_results   = self.get_path2SaveResults()
         
-        
+        self.model.train()
 
-        
-        
-        
-        
-    def test_classification(self):
+    def test_probabilities(self):
         pass
         
         
@@ -933,7 +973,7 @@ if __name__ == "__main__":
         if exe[0]: ood_detector.analyze(name_classifier=name_model, task_type_prog= 0, name_ood_data="cifar100")
         
         # [5] launch testing
-        if exe[1]: ood_detector.testing_binary_class(name_classifier=name_model, task_type_prog = 0, name_ood_data="cifar100", thr_type= "")
+        if exe[1]: ood_detector.test_threshold(name_classifier=name_model, task_type_prog = 0, name_ood_data="cifar100", thr_type= "")
     
     # TODO recompute the baseline data with cifar OOD
     
@@ -952,9 +992,12 @@ if __name__ == "__main__":
         classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
         classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
         
-        abn = Abnormality_module(classifier, scenario="content")
-        abn.train()
+        abn = Abnormality_module(classifier, scenario="content", model_type="basic")
+        # abn.train()
         
+        x = T.rand((1,3,112,112)).to(abn.device)
+        y = abn.forward(x)
+        print(y)
     
     test_abn() 
         

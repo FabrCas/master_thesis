@@ -1171,7 +1171,7 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         self.early_stopping_trigger = "acc"                 # values "acc" or "loss"
         
         # loss definition + interpolation values for the new loss
-        self.loss_name = "bce + reconstruction loss"
+        self.loss_name              = "bce + reconstruction loss"
         self.alpha_loss             = 0.9  # bce
         self.beta_loss              = 0.1  # reconstruction
         self.use_MAE                = True

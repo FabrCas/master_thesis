@@ -2033,22 +2033,22 @@ class Unet6L_ResidualScorer(Project_conv_model):
 
 #                                       custom abnormality module
 
-# 1st models superclass
+# 2nd models superclass
 class Project_abnorm_model(nn.Module): 
-    def __init__(self, logits_shape, encoding_shape, residual_flat_shape):
+    def __init__(self, probs_softmax_shape, encoding_shape, residual_flat_shape):
         super(Project_abnorm_model, self).__init__()
         print("Initializing {} ...".format(self.__class__.__name__))
         
         # all vectors with 2 axis, first batch, second features
-        self.logits_shape   = logits_shape
+        self.probs_softmax_shape   = probs_softmax_shape
         self.encoding_shape = encoding_shape
         self.residual_flat_shape = residual_flat_shape
-        self.input_shape = (self.logits_shape[1] + self.encoding_shape[1] + self.residual_flat_shape[1])   # input_shape doesn't consider the batch
+        self.input_shape = (self.probs_softmax_shape[1] + self.encoding_shape[1] + self.residual_flat_shape[1])   # input_shape doesn't consider the batch
         self._check_shapes()
         
     def _check_shapes(self):
-        c1 = len(self.logits_shape) ==  len(self.encoding_shape) == len(self.residual_flat_shape)  # same number of dims
-        c2 = self.logits_shape[0] == self.encoding_shape[0] == self.residual_flat_shape[0]            # same n of elements for the batch     
+        c1 = len(self.probs_softmax_shape) ==  len(self.encoding_shape) == len(self.residual_flat_shape)  # same number of dims
+        c2 = self.probs_softmax_shape[0] == self.encoding_shape[0] == self.residual_flat_shape[0]            # same n of elements for the batch     
         assert  c1 and c2
 
     def _createNet(self):
@@ -2102,14 +2102,14 @@ class Project_abnorm_model(nn.Module):
 
 class Abnormality_module_Basic(Project_abnorm_model):
     
-    def __init__(self, logits_shape, encoding_shape, residual_flat_shape):
-        super().__init__(logits_shape, encoding_shape, residual_flat_shape)
+    def __init__(self, probs_softmax_shape, encoding_shape, residual_flat_shape):
+        super().__init__(probs_softmax_shape, encoding_shape, residual_flat_shape)
         self._createNet()
         self._init_weights_normal()
     
     def _createNet(self):
         
-        tot_features_0      = self.logits_shape[1] + self.encoding_shape[1] + self.residual_flat_shape[1]
+        tot_features_0      = self.probs_softmax_shape[1] + self.encoding_shape[1] + self.residual_flat_shape[1]
         
         if int(tot_features_0/1000) > 8192:
             tot_features_1      = int(tot_features_0/1000)
@@ -2141,10 +2141,10 @@ class Abnormality_module_Basic(Project_abnorm_model):
         self.fc_risk_final  = T.nn.Linear(tot_feaures_risk_2,tot_feaures_final)
         self.bn_risk_final  = T.nn.BatchNorm1d(tot_feaures_final)
         
-    def forward(self, logits, encoding, flatten_residual):
+    def forward(self, probs_softmax_shape, encoding, flatten_residual):
         
         # build the vector input 
-        x = T.cat((logits, encoding, flatten_residual), dim = 1)
+        x = T.cat((probs_softmax_shape, encoding, flatten_residual), dim = 1)
         print("input module b shape -> ", x.shape)
         
         # preliminary layers
