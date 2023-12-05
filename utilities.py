@@ -1034,8 +1034,8 @@ class ExpLogger(object):
         self.path_model     = path_model
         self.path_save      = os.path.join(self.path_model, self.file_name)
         self.delimiter_len  = 33
-        self.delimiter_name = lambda x: "#"*self.delimiter_len +"{:^24}".format(x) + "#"*self.delimiter_len
-        self.delimiter_line = "#"*(self.delimiter_len*2 + 24)
+        self.delimiter_name = lambda x: "#"*self.delimiter_len +"{:^35}".format(x) + "#"*self.delimiter_len
+        self.delimiter_line = "#"*(self.delimiter_len*2 + 35)
         self.train_lines    = []   # one line for each epoch
         self.open_logger()
         

@@ -2077,9 +2077,7 @@ class Project_abnorm_model(nn.Module):
         try:
             model_stats = summary(self, input_shape, verbose = int(verbose))
             return str(model_stats)
-        except Exception as e:
-            print(e)
-            
+        except:            
             summ = ""
             n_params = 0
             for k,v in self.getLayers().items():
@@ -2102,6 +2100,11 @@ class Project_abnorm_model(nn.Module):
 
 class Abnormality_module_Basic(Project_abnorm_model):
     
+    """ problems withs model:
+        - high computational cost (no reduction from image elaborated data)
+        - high difference of values between softmax probabilites, encoding, and residual flatten vector    
+    """
+    
     def __init__(self, probs_softmax_shape, encoding_shape, residual_flat_shape):
         super().__init__(probs_softmax_shape, encoding_shape, residual_flat_shape)
         self._createNet()
@@ -2109,14 +2112,16 @@ class Abnormality_module_Basic(Project_abnorm_model):
     
     def _createNet(self):
         
-        tot_features_0      = self.probs_softmax_shape[1] + self.encoding_shape[1] + self.residual_flat_shape[1]
+        tot_features_0          = self.probs_softmax_shape[1] + self.encoding_shape[1] + self.residual_flat_shape[1]
+        first_reduction_coeff   = 1000
         
-        if int(tot_features_0/1000) > 8192:
-            tot_features_1      = int(tot_features_0/1000)
+        
+        if int(tot_features_0/first_reduction_coeff) > 4096:
+            tot_features_1      = int(tot_features_0/first_reduction_coeff)
         else:
-            tot_features_1      = 8192
+            tot_features_1      = 4096
             
-        tot_features_2      = 2046
+        tot_features_2      = 1024
         
         
         # taken from official work 
@@ -2141,11 +2146,11 @@ class Abnormality_module_Basic(Project_abnorm_model):
         self.fc_risk_final  = T.nn.Linear(tot_feaures_risk_2,tot_feaures_final)
         self.bn_risk_final  = T.nn.BatchNorm1d(tot_feaures_final)
         
-    def forward(self, probs_softmax_shape, encoding, flatten_residual):
+    def forward(self, probs_softmax, encoding, flatten_residual, verbose = False):
         
         # build the vector input 
-        x = T.cat((probs_softmax_shape, encoding, flatten_residual), dim = 1)
-        print("input module b shape -> ", x.shape)
+        x = T.cat((probs_softmax, encoding, flatten_residual), dim = 1)
+        if verbose: print("input module b shape -> ", x.shape)
         
         # preliminary layers
         x = self.gelu(self.bn1(self.fc1(x)))
@@ -2353,16 +2358,19 @@ if __name__ == "__main__":
         logits, reconstruction, encoding = classifier.model.forward(x_module_a)
         # input("press enter for next step ")
         
-        print("logits shape -> ", logits.shape)
+        softmax_prob = T.nn.functional.softmax(logits, dim=1)
+        print("logits shape -> ", softmax_prob.shape)
         print("encoding shape -> ",encoding.shape)
         
         # from reconstuction to residual
         residual = T.square(reconstruction - x_module_a)
         residual_flatten = T.flatten(residual, start_dim=1)
+        
+        
         print("residual shape ->", reconstruction.shape)
         print("residual (flatten) shape ->",residual_flatten.shape)
         
-        abnorm_module = Abnormality_module_Basic(logits_shape = logits.shape, encoding_shape = encoding.shape, residual_flat_shape = residual_flatten.shape).to(device)
+        abnorm_module = Abnormality_module_Basic(probs_softmax_shape = softmax_prob.shape, encoding_shape = encoding.shape, residual_flat_shape = residual_flatten.shape).to(device)
         abnorm_module.getSummary()
         y = abnorm_module.forward(logits, encoding, residual_flatten)
         print(y.shape)

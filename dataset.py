@@ -230,9 +230,11 @@ class CDDB_binary(Dataset):
             x  = np.array(x)
             # x  = np.rot90(x, k= times_rotation)
             x  = self.toTensor(x)
-            print(x.shape)
+            # print(x.shape)
             x = T.rot90(x, k=times_rotation, dims= (1,2))
             x_ = add_noise(x)
+        
+        x_ = x_.to(T.float32)
         
         return T.clamp(x_, 0 ,1)  # clamp float values btw 0 and 1
     
@@ -491,9 +493,11 @@ class CDDB_binary_Partial(Dataset):
             x  = np.array(x)
             # x  = np.rot90(x, k= times_rotation)
             x  = self.toTensor(x)
-            print(x.shape)
-            x = T.rot90(x, k=times_rotation, dims= (1,2))
-            x_ = add_noise(x)
+            # print(x.shape)
+            x_ = T.rot90(x, k=times_rotation, dims= (1,2))
+            x_ = add_noise(x_)
+        
+        x_ = x_.to(T.float32)
         
         return T.clamp(x_, 0 ,1)  # clamp float values btw 0 and 1
         
@@ -949,9 +953,11 @@ class CDDB(Dataset):
             x  = np.array(x)
             # x  = np.rot90(x, k= times_rotation)
             x  = self.toTensor(x)
-            print(x.shape)
+            # print(x.shape)
             x = T.rot90(x, k=times_rotation, dims= (1,2))
             x_ = add_noise(x)
+        
+        x_ = x_.to(T.float32)
         
         return T.clamp(x_, 0 ,1)  # clamp float values btw 0 and 1
     
@@ -1628,9 +1634,11 @@ class CDDB_Partial(Dataset):
             x  = np.array(x)
             # x  = np.rot90(x, k= times_rotation)
             x  = self.toTensor(x)
-            print(x.shape)
+            # print(x.shape)
             x = T.rot90(x, k=times_rotation, dims= (1,2))
             x_ = add_noise(x)
+        
+        x_ = x_.to(T.float32)
         
         return T.clamp(x_, 0 ,1)  # clamp float values btw 0 and 1
     

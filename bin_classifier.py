@@ -1176,6 +1176,10 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         self.beta_loss              = 0.1  # reconstruction
         self.use_MAE                = True
         self._check_parameters()
+        
+        # training components definintion
+        self.optimizer_name     = "Adam"
+        self.lr_scheduler_name  = "ReduceLROnPlateau"
      
     def _check_parameters(self):
         if not(self.early_stopping_trigger in ["loss", "acc"]):
@@ -1219,8 +1223,8 @@ class DFD_BinClassifier_v4(BinaryClassifier):
             "decoder_out_activation": d_out,
             "data_scenario": self.scenario,
             "version_train": self.version,
-            "optimizer": self.optimizer.__class__.__name__,
-            "scheduler": self.scheduler.__class__.__name__,
+            "optimizer": self.optimizer_name,
+            "scheduler": self.lr_scheduler_name,
             "loss": self.loss_name,
             "use_MAE": self.use_MAE,
             "base_augmentation": self.augment_data_train,
@@ -1333,6 +1337,9 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         n_steps = len(train_dataloader)
         print("Number of steps per epoch: {}".format(n_steps))
         
+        # model in training mode
+        self.model.train()
+        
         # define the optimization algorithm
         self.optimizer =  Adam(self.model.parameters(), lr = self.lr, weight_decay =  self.weight_decay)
         
@@ -1341,9 +1348,6 @@ class DFD_BinClassifier_v4(BinaryClassifier):
             self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor = 0.5, patience = 3, cooldown = 2, min_lr = self.lr*0.01, verbose = True) # reduce of a half the learning rate 
         elif self.early_stopping_trigger == "acc":
             self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='max', factor = 0.5, patience = 3, cooldown = 2, min_lr = self.lr*0.01, verbose = True) # reduce of a half the learning rate 
-        
-        # model in training mode
-        self.model.train()
         
         # define the gradient scaler to avoid weigths explosion
         scaler = GradScaler()

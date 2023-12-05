@@ -1,20 +1,22 @@
 import  os
 import  torch               as T
 import  numpy               as np
+import  math
 from    torch.nn            import functional as F
 from    torch.utils.data    import DataLoader
 from    torch.cuda.amp      import autocast
 from    tqdm                import tqdm
 from    datetime            import date
 from    sklearn.metrics     import precision_recall_curve, auc, roc_auc_score
-
+from    torch.optim         import Adam, lr_scheduler
+from    torch.cuda.amp      import GradScaler, autocast
 # local import
 from    dataset             import CDDB_binary, CDDB_binary_Partial, CDDB, CDDB_Partial, OOD_dataset, getCIFAR100_dataset, getMNIST_dataset, getFMNIST_dataset
 from    experiments         import MNISTClassifier_keras
 from    bin_classifier      import DFD_BinClassifier_v1, DFD_BinClassifier_v4
 from    models              import Abnormality_module_Basic
 from    utilities           import saveJson, loadJson, metrics_binClass, metrics_OOD, print_dict, showImage, check_folder, sampleValidSet, \
-                            mergeDatasets, ExpLogger
+                            mergeDatasets, ExpLogger, loadModel, saveModel, duration, plot_loss
 
 class OOD_Classifier(object):
     
@@ -41,7 +43,7 @@ class OOD_Classifier(object):
         if self.useGPU: self.device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
         else: self.device = "cpu"
         
-        self.batch_size   = 64
+        self.batch_size   = 32
         
     #                                       math/statistics aux functions
     
@@ -218,37 +220,52 @@ class OOD_Classifier(object):
     
     # path utilities
     
-    def get_path2SaveResults(self):
+    def get_path2SaveResults(self, train_name = None):
         """ Return the path to the folder to save results both for OOD metrics and ID/OOD bin classification"""
         
         name_task                   = self.types_classifier[self.task_type_prog]
         path_results_task           = os.path.join(self.path_results, name_task)
         path_results_method         = os.path.join(path_results_task, self.name)
         path_results_ood_data       = os.path.join(path_results_method, "ood_" + self.name_ood_data)
-        path_results_folder         = os.path.join(path_results_ood_data, self.name_classifier)    
+        path_results_classifier     = os.path.join(path_results_ood_data, self.name_classifier) 
+        
+        if train_name is not None:   
+            path_results_folder         = os.path.join(path_results_classifier,train_name)    
         
         # prepare file-system
         check_folder(path_results_task)
         check_folder(path_results_method)
         check_folder(path_results_ood_data)
-        check_folder(path_results_folder)
+        check_folder(path_results_classifier)
+        if train_name is not None:
+            check_folder(path_results_folder)
         
-        return path_results_folder
+        if train_name is not None:
+            return path_results_folder
+        else: 
+            return path_results_classifier
     
-    def get_path2SaveModels(self):
+    def get_path2SaveModels(self, train_name = None):
         name_task                   = self.types_classifier[self.task_type_prog]
         path_models_task            = os.path.join(self.path_models, name_task)
         path_models_method          = os.path.join(path_models_task, self.name)
         path_models_ood_data        = os.path.join(path_models_method, "ood_"+self.name_ood_data)
-        path_models_folder          = os.path.join(path_models_ood_data, self.name_classifier)
+        path_models_classifier      = os.path.join(path_models_ood_data, self.name_classifier)    
+        if train_name is not None:   
+            path_models_folder          = os.path.join(path_models_classifier, train_name)
         
         # prepare file-system
         check_folder(path_models_task)
         check_folder(path_models_method)
         check_folder(path_models_ood_data)
-        check_folder(path_models_folder)
+        check_folder(path_models_classifier)
+        if train_name is not None:
+            check_folder(path_models_folder)
         
-        return path_models_folder
+        if train_name is not None:
+            return path_models_folder
+        else:
+            return path_models_classifier
     
 class OOD_Baseline(OOD_Classifier):         # No model training necessary (Empty model forlder)
     """
@@ -722,7 +739,7 @@ class Baseline_ODIN(OOD_Classifier):        # No model training necessary (Empty
 class Abnormality_module(OOD_Classifier):   # model training necessary 
     """ Custom implementation of the abnormality module using ResNet, look https://arxiv.org/abs/1610.02136 chapter 4"""
     
-    def __init__(self, classifier, scenario:str, model_type, useGPU = True, binary_dataset = True):
+    def __init__(self, classifier, scenario:str, model_type, useGPU = True, binary_dataset = True, batch_size = "dafault"):
         """ 
         
             scenario (str): choose between: "content", "mix", "group"
@@ -743,10 +760,12 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         # abnormality module (module B)
         self._build_model()
             
-        # training parameters 
-        # batch size is defined in the superclass 
+        # training parameters  
+        if not batch_size == "dafault":   # default batch size is defined in the superclass 
+            self.batch_size             = int(batch_size)
+            
         self.lr                     = 1e-4
-        self.n_epochs               = 100
+        self.n_epochs               = 30
         self.weight_decay           = 1e-3                  # L2 regularization term 
         
         # load data ID/OOD
@@ -761,7 +780,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         self.loss_name          = "bce"   # binary cross entropy or sigmoid cross entropy
         
         # instantiation aux elements
-        self.bce     = F.binary_cross_entropy_with_logits
+        self.bce     = F.binary_cross_entropy_with_logits   # performs sigmoid internally
         self.sigmoid = F.sigmoid
         
     def _build_model(self):
@@ -796,6 +815,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
                 
         if verbose: print("length OOD dataset (train and test) synthetized -> ", len(self.ood_data_train), len(self.ood_data_test))
         if verbose: print("length ID dataset (train and test) -> ",  len(self.id_data_train), len(self.id_data_test))
+        
         # x,_ = self.ood_data_train.__getitem__(30000)
         # showImage(x)
         
@@ -844,7 +864,6 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             "grad_scaler": True,                # always true
             }
     
-    
     def _forward_A(self, x, verbose = False):
         logits, reconstruction, encoding = self.classifier.model.forward(x)
         prob_softmax = T.nn.functional.softmax(logits, dim=1)
@@ -890,7 +909,9 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         
         logit = self._forward_B(prob_softmax, encoding, residual_flatten)
         
-        return self.sigmoid(logit)
+        out   = self.sigmoid(logit)
+        
+        return  out
     
     def init_logger(self, path_model):
         """
@@ -907,41 +928,202 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             print("Impossible to retrieve the model structure for logging")
         
         # logger for the abnormality module  (module B)
-        logger.write_config(self._dataConf(), name_section="Configuration Classifier")
-        logger.write_hyper(self._hyperParams(), name_section="Hyperparameters classifier")
+        logger.write_config(self._dataConf())
+        logger.write_hyper(self._hyperParams())
         try:
-            logger.write_model(self.model.getSummary(verbose=False), name_section="Classifier model architecture")
+            logger.write_model(self.model.getSummary(verbose=False))
         except:
             print("Impossible to retrieve the model structure for logging")
         
         return logger
     
+    def load(self, epoch, additional_name = "", task_type_prog = None):
+        
+        models_path = self.get_path2SaveModels()
+        try:
+            # self.classifier_name    = folder_model
+            # self.path2model         = os.path.join(self.path_models,  folder_model, str(epoch) + ".ckpt")
+            # self.path2model_results = os.path.join(self.path_results, folder_model)
+            # self.modelEpochs         = epoch
+            if task_type_prog is None:
+                if self.binary_dataset:
+                    task_type_prog = 0 # binary-class
+                else:
+                    task_type_prog = 1  # multi-class 
+                self.task_type_prog = task_type_prog 
+        
+            if self.scenario == "content":
+                self.name_ood_data  = "CDDB_" + self.scenario + "_faces_" + "_scenario"
+            else:
+                self.name_ood_data  = "CDDB_" + self.scenario + "_scenario"
+            
+            current_date            = date.today().strftime("%d-%m-%Y")   
+            train_name              = self.name + "_" + self.model_type + "_"+ additional_name + "_" + current_date
+            path2model              = os.path.join(models_path,  train_name, str(epoch) + ".ckpt")
+            self.modelEpochs        = epoch
+            loadModel(self.model, train_name)
+            self.model.eval()   # no train mode, fix dropout, batchnormalization, etc.
+        except Exception as e:
+            print(e)
+            print("No model: {} found for the epoch: {} in the folder: {}".format(train_name, epoch, ))
     
-    def train(self, task_type_prog = None):
+    @duration
+    def train(self, additional_name = "", task_type_prog = None, test_loop = False):
         # """ requried the ood data name to recognize the task"""
         
         # 1) prepare meta-data
-        
-        # infer task type prog
         if task_type_prog is None:
             if self.binary_dataset:
                 task_type_prog = 0 # binary-class
             else:
-                task_type_prog = 1  # multi-class
-                
+                task_type_prog = 1  # multi-class 
         self.task_type_prog = task_type_prog 
-        self.name_ood_data  = "CDDB_" + self.scenario + "_scenario"
+        if self.scenario == "content":
+            self.name_ood_data  = "CDDB_" + self.scenario + "_faces_scenario"
+        else:
+            self.name_ood_data  = "CDDB_" + self.scenario + "_scenario"
         
-        path_save_model     = self.get_path2SaveModels()
-        path_save_results   = self.get_path2SaveResults()
+        
+        current_date        = date.today().strftime("%d-%m-%Y")   
+        train_name     = self.name + "_" + self.model_type + "_"+ additional_name + "_" + current_date
+        path_save_model     = self.get_path2SaveModels(train_name=train_name)   # specify train_name for an additional depth layer in the models file system
+        path_save_results   = self.get_path2SaveResults(train_name=train_name)
+
+        # 2) prepare the training components
         
         self.model.train()
+        
+        train_dl = DataLoader(self.dataset_train, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
+        
+        # compute number of steps for epoch
+        n_steps = len(train_dl)
+        print("Number of steps per epoch: {}".format(n_steps))
+        
+        self.optimizer =  Adam(self.model.parameters(), lr = self.lr, weight_decay =  self.weight_decay)
+        self.scheduler = lr_scheduler.OneCycleLR(self.optimizer, max_lr=self.lr, steps_per_epoch=n_steps, epochs=self.n_epochs, pct_start=0.3)
+        scaler = GradScaler()
+        
+        # initialize logger
+        logger  = self.init_logger(path_model= path_save_model)
+        
+        # intialize data structure to keep track of training performance
+        loss_epochs = []
+        
+        # learned epochs by the model initialization
+        self.modelEpochs = 0
+        
+        # 3) learning loop
+        
+        for epoch_idx in range(self.n_epochs):
+            print(f"\n             [Epoch {epoch_idx+1}]             \n")
+            
+            # define cumulative loss for the current epoch and max/min loss
+            loss_epoch = 0; max_loss_epoch = 0; min_loss_epoch = math.inf
+            
+            # update the last epoch for training the model
+            last_epoch = epoch_idx +1
+            
+            # loop over steps
+            for step_idx,(x,y) in tqdm(enumerate(train_dl), total= n_steps):
+                
+                # test steps loop for debug
+                if test_loop and step_idx+1 == 5: break
+                
+                # adjust labels if cutmix has been not applied (from indices to one-hot encoding)
+                
+                # prepare samples/targets batches 
+                x = x.to(self.device)
+                x.requires_grad_(True)
+                y = y.to(self.device)               # binary int encoding for each sample
+                y = y.to(T.float)
+                
+                # take only label for the positive class (fake)
+                y = y[:,1]
 
+                # print(x.shape)
+                # print(y.shape)
+                
+                # zeroing the gradient
+                self.optimizer.zero_grad()
+                
+                # model forward and loss computation
+                with autocast():
+                    
+                    
+                    prob_softmax, encoding, residual_flatten = self._forward_A(x)
+                                        
+                    # if not basic Abnromality model, do recuction here
+                    
+                    logit = self._forward_B(prob_softmax, encoding, residual_flatten)
+                    logit = T.squeeze(logit)
+                    # print(logit.shape)
+                    
+
+                    loss = self.bce(input=logit, target= y)
+                    # print(loss)
+                    
+                
+                if loss_epoch>max_loss_epoch    : max_loss_epoch = round(loss_epoch,4)
+                if loss_epoch<min_loss_epoch    : min_loss_epoch = round(loss_epoch,4)
+                
+                # update total loss    
+                loss_epoch += loss.item()   # from tensor with single value to int and accumulation
+                
+                # loss backpropagation
+                scaler.scale(loss).backward()
+                
+                # compute updates using optimizer
+                scaler.step(self.optimizer)
+
+                # update weights through scaler
+                scaler.update()
+                
+                # lr scheduler step 
+                self.scheduler.step()
+                
+            # compute average loss for the epoch
+            avg_loss = round(loss_epoch/n_steps,4)
+            loss_epochs.append(avg_loss)
+            print("Average loss: {}".format(avg_loss))
+            
+            # create dictionary with info frome epoch: loss + valid, and log it
+            epoch_data = {"epoch": last_epoch, "avg_loss": avg_loss, "max_loss": max_loss_epoch, \
+                          "min_loss": min_loss_epoch}
+            logger.log(epoch_data)
+            
+            # test epochs loop for debug   
+            if test_loop and last_epoch == 5: break
+        
+        
+        # log GPU memory statistics during training
+        logger.log_mem(T.cuda.memory_summary(device=self.device))
+        
+        
+        # 4) Save section
+        
+        # save loss 
+        name_loss_file          = 'loss_'+ str(last_epoch) +'.png'
+        if test_loop:
+            plot_loss(loss_epochs, title_plot= train_name, path_save = None)
+        else: 
+            plot_loss(loss_epochs, title_plot= train_name, path_save = os.path.join(path_save_results, name_loss_file))
+            plot_loss(loss_epochs, title_plot= train_name, path_save = os.path.join(path_save_model  ,name_loss_file), show=False)
+
+        
+        # save model
+        name_model_file         = str(last_epoch) +'.ckpt'
+        path_model_save         = os.path.join(path_save_model, name_model_file)  # path folder + name file
+        saveModel(self.model, path_model_save)
+    
+        # terminate the logger
+        logger.end_log()
+        
     def test_probabilities(self):
-        pass
+        self.model.eval()
         
-        
-        
+    def test_threshold(self):
+        self.model.eval()
+    
         
 if __name__ == "__main__":
     #                           [Start test section] 
@@ -993,11 +1175,11 @@ if __name__ == "__main__":
         classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
         
         abn = Abnormality_module(classifier, scenario="content", model_type="basic")
-        # abn.train()
+        abn.train(additional_name="112p")
         
-        x = T.rand((1,3,112,112)).to(abn.device)
-        y = abn.forward(x)
-        print(y)
+        # x = T.rand((1,3,112,112)).to(abn.device)
+        # y = abn.forward(x)
+        # print(y)
     
     test_abn() 
         
