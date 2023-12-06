@@ -1,13 +1,14 @@
 import time
 
-import  torch                          as T
+import  torch                           as T
 import  torch.nn.functional             as F
+import  numpy                           as np
 import  math
-import  torch.nn                       as nn
-from    torchsummary                   import summary
-from    torchvision                    import models
-from    torchvision.models             import ResNet50_Weights
-from    utilities                      import print_dict, print_list, expand_encoding, convTranspose2d_shapes, get_inputConfig
+import  torch.nn                        as nn
+from    torchsummary                    import summary
+from    torchvision                     import models
+from    torchvision.models              import ResNet50_Weights
+from    utilities                       import print_dict, print_list, expand_encoding, convTranspose2d_shapes, get_inputConfig
 
 
 # input settigs:
@@ -2164,6 +2165,75 @@ class Abnormality_module_Basic(Project_abnorm_model):
         return x
     
 
+class Abnormality_module_PCA(Project_abnorm_model):
+    
+    """ problems withs model:
+        - high computational cost (no reduction from image elaborated data)
+        - high difference of values between softmax probabilites, encoding, and residual flatten vector    
+    """
+    
+    def __init__(self, softmax_classes):
+        
+        self.encoding_components = 500
+        self.residual_components = 5000
+        super().__init__((-1,softmax_classes), (-1,self.encoding_components), (-1,self.residual_components))
+        self._createNet()
+        self._init_weights_normal()
+    
+    def _createNet(self):
+        
+        tot_features_0          = self.probs_softmax_shape[1] + self.encoding_shape[1] + self.residual_flat_shape[1]
+        first_reduction_coeff   = 1000
+        
+        
+        # if int(tot_features_0/first_reduction_coeff) > 2048:
+        #     tot_features_1      = int(tot_features_0/first_reduction_coeff)
+        # else:
+        tot_features_1      = 2048
+            
+        tot_features_2      = 1024
+        
+        
+        # taken from official work 
+        tot_feaures_risk_1  = 512
+        tot_feaures_risk_2  = 128
+        tot_feaures_final   = 1
+        
+        self.gelu = T.nn.GELU()
+        self.sigmoid = T.nn.Sigmoid()
+        
+        # preliminary layers
+        self.fc1 = T.nn.Linear(tot_features_0,tot_features_1)
+        self.bn1 = T.nn.BatchNorm1d(tot_features_1)
+        self.fc2 = T.nn.Linear(tot_features_1,tot_features_2)
+        self.bn2 = T.nn.BatchNorm1d(tot_features_2)
+        
+        # risk section
+        self.fc_risk_1      = T.nn.Linear(tot_features_2,tot_feaures_risk_1)
+        self.bn_risk_1      = T.nn.BatchNorm1d(tot_feaures_risk_1)
+        self.fc_risk_2      = T.nn.Linear(tot_feaures_risk_1,tot_feaures_risk_2)
+        self.bn_risk_2      = T.nn.BatchNorm1d(tot_feaures_risk_2)
+        self.fc_risk_final  = T.nn.Linear(tot_feaures_risk_2,tot_feaures_final)
+        self.bn_risk_final  = T.nn.BatchNorm1d(tot_feaures_final)
+        
+    def forward(self, probs_softmax, encoding, flatten_residual, verbose = False):
+        
+        # build the vector input 
+        x = T.cat((probs_softmax, encoding, flatten_residual), dim = 1)
+        if verbose: print("input module b shape -> ", x.shape)
+        
+        # preliminary layers
+        x = self.gelu(self.bn1(self.fc1(x)))
+        x = self.gelu(self.bn2(self.fc2(x)))
+        
+        # risk section
+        x = self.gelu(self.bn_risk_1(self.fc_risk_1(x)))
+        x = self.gelu(self.bn_risk_2(self.fc_risk_2(x)))
+        x = self.gelu(self.bn_risk_final(self.fc_risk_final(x)))
+        
+        return x
+
+
        
 #_____________________________________Vision Transformer (ViT)_____________________________________        
 
@@ -2349,7 +2419,7 @@ if __name__ == "__main__":
         print("enc shape: ", enc.shape)
         input("press enter to exit ")
         
-    def test_abnorm_expanded():
+    def test_abnorm_basic():
         from bin_classifier import DFD_BinClassifier_v4
         
         classifier = DFD_BinClassifier_v4(scenario="content", model_type="Unet4_Scorer")
@@ -2376,7 +2446,72 @@ if __name__ == "__main__":
         print(y.shape)
         input("press enter to exit ")
     
-    test_abnorm_expanded()
+    
+    def test_abnorm_pca():
+        from bin_classifier import DFD_BinClassifier_v4
+        from sklearn.decomposition import PCA
+        from sklearn.preprocessing import StandardScaler
+
+        classifier = DFD_BinClassifier_v4(scenario="content", model_type="Unet4_Scorer")
+        classifier.load("faces_Unet4_Scorer112p_v4_03-12-2023", 73)
+        x_module_a = T.rand((32, INPUT_CHANNELS, INPUT_HEIGHT, INPUT_WIDTH)).to(device)
+        logits, reconstruction, encoding = classifier.model.forward(x_module_a)
+        # input("press enter for next step ")
+        
+        softmax_prob = T.nn.functional.softmax(logits, dim=1)
+        print("logits shape -> ", softmax_prob.shape)
+        print("encoding shape -> ",encoding.shape)
+        
+        # from reconstuction to residual
+        residual = T.square(reconstruction - x_module_a)
+        residual_flatten = T.flatten(residual, start_dim=1)
+        
+        
+        print("residual shape ->", reconstruction.shape)
+        print("residual (flatten) shape ->",residual_flatten.shape)
+        
+        abnorm_module = Abnormality_module_PCA(softmax_classes= logits.shape[1]).to(device)
+        abnorm_module.getSummary()
+        
+        # PCAs
+        
+        pca_encoding        = PCA(n_components = abnorm_module.encoding_components)
+        # pca_redidual        = PCA(n_components = abnorm_module.residual_components)
+        
+        encoding = encoding.detach().cpu().numpy()
+        
+        print(np.mean(encoding))
+        print(np.std(encoding))
+        
+        
+        encoding = StandardScaler().fit_transform(encoding)
+        
+        print(np.mean(encoding))
+        print(np.std(encoding))
+        
+        pca_encoding_vector = np.zeros(encoding.shape)  # new vector
+        
+        print(pca_encoding_vector.shape)
+        
+        n_batch = logits.shape[0]
+        return
+        print(n_batch)
+        for i in range(n_batch):
+            
+            elem_batch = encoding[i,:]
+            # Reshape the 1D vector to 2D array
+            elem_batch_2d = elem_batch.reshape(1, -1)
+            
+            pca_encoding_vector[i] = pca_encoding.fit_transform(elem_batch_2d)
+
+        print(pca_encoding_vector.shape)
+        
+        
+        # y = abnorm_module.forward(logits, encoding, residual_flatten)
+        # print(y.shape)
+        input("press enter to exit ")
+    
+    test_abnorm_pca()
     pass
     #                           [End test section] 
     
