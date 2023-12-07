@@ -1047,16 +1047,21 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         
         # synthesis of OOD data
         self.ood_data_train     = self.dataset_class(scenario = self.scenario, train = True,  ood = False, augment = False, label_vector= False, transform2ood = True)
-        # test_dataset            = self.dataset_class(scenario = self.scenario, train = False, ood = False, augment = False, label_vector= False, transform2ood = True)
-        # _ , self.ood_data_test  = sampleValidSet(trainset= self.ood_data_train, testset= test_dataset, useOnlyTest = True, verbose = True)
+        test_dataset_ood            = self.dataset_class(scenario = self.scenario, train = False, ood = False, augment = False, label_vector= False, transform2ood = True)
+        ood_data_valid , self.ood_data_test  = sampleValidSet(trainset= self.ood_data_train, testset= test_dataset_ood, useOnlyTest = True, verbose = True)
         
         # fetch ID data
         self.id_data_train      = self.dataset_class(scenario = self.scenario, train = True,  ood = False, augment = False, label_vector= False, transform2ood = False)
-        test_dataset            = self.dataset_class(scenario = self.scenario, train = False, ood = False, augment = False, label_vector= False, transform2ood = False)
-        _ , self.id_data_test   = sampleValidSet(trainset= self.id_data_train, testset= test_dataset, useOnlyTest = True, verbose = True)
-                
+        test_dataset_id            = self.dataset_class(scenario = self.scenario, train = False, ood = False, augment = False, label_vector= False, transform2ood = False)
+        id_data_valid , self.id_data_test   = sampleValidSet(trainset= self.id_data_train, testset= test_dataset_id, useOnlyTest = True, verbose = True)
+        
+        
+        
+        if verbose: print("length ID dataset  (train and test) -> ",  len(self.id_data_train), len(self.id_data_test))
+        if verbose: print("length ID dataset  (valid) -> ",  len(id_data_valid))
         if verbose: print("length OOD dataset (train) synthetized -> ", len(self.ood_data_train))
-        if verbose: print("length ID dataset (train and test) -> ",  len(self.id_data_train), len(self.id_data_test))
+        if verbose: print("length OOD dataset (valid) synthetized -> ", len(ood_data_valid))
+
         
         # x,_ = self.ood_data_train.__getitem__(30000)
         # showImage(x)
@@ -1065,17 +1070,19 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             ood_train_expansion = self.dataset_class(scenario = self.scenario, train = True,   ood = True, augment = False, label_vector= False)            
             self.ood_data_train = mergeDatasets(self.ood_data_train, ood_train_expansion) 
            
-            if verbose: print("length OOD dataset after extension (just for train) -> ", len(self.ood_data_train))
+            if verbose: print("length OOD dataset after extension (train) -> ", len(self.ood_data_train))
         
         self.ood_data_test  = self.dataset_class(scenario = self.scenario, train = False,  ood = True, augment = False, label_vector= False)
         if verbose: print("length OOD dataset (test) -> ", len(self.ood_data_test))
         
         # train set: id data train + id data train transformed in ood (optional, + ood data train) 
         self.dataset_train = OOD_dataset(self.id_data_train, self.ood_data_train, balancing_mode="max")
+        # valid set: id data valid + id data valid transformed in ood (optional, + ood data valid) 
+        self.dataset_valid = OOD_dataset(id_data_valid, ood_data_valid, balancing_mode="max")
         # test set: id data test + ood data test
         self.dataset_test  = OOD_dataset(self.id_data_test , self.ood_data_test,  balancing_mode="max")
         
-        if verbose: print("length full dataset (train and test) with balancing -> ", len(self.dataset_train), len(self.dataset_test))
+        if verbose: print("length full dataset (train/valid/test) with balancing -> ", len(self.dataset_train), len(self.dataset_valid), len(self.dataset_test))
     
     def _hyperParams(self):
         return {
