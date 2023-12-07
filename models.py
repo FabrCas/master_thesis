@@ -456,11 +456,12 @@ class Unet4(Project_conv_model):
         print("Initializing {} ...".format(self.__class__.__name__))
         self.features_order = UNET_EXP_FMS   # orders greater and equal than 5 saturates the GPU!
         self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
-        
+        self.n_levels = 4
         
         # create net and initialize
         self._createNet()
         self._init_weights_kaimingNormal()
+        
 
         
     def _createNet(self):
@@ -525,7 +526,7 @@ class Unet5(Project_conv_model):
 
         self.features_order = UNET_EXP_FMS   # orders greater and equal than 5 saturates the GPU!
         self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
-        
+        self.n_levels = 5
         
         # create net and initialize
         self._createNet()
@@ -548,7 +549,14 @@ class Unet5(Project_conv_model):
         self.flatten = nn.Flatten()
     
         # decoder 
-        self.d1 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1) # 112x112 addition
+        
+        # define conditions for padding 
+        c = INPUT_WIDTH/(math.pow(2,self.n_levels))
+        
+        if c%1!=0:
+            self.d1 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1) # 112x112 addition
+        else:
+            self.d1 = Decoder_block(self.feature_maps(5) , self.feature_maps(4))
         self.d2 = Decoder_block(self.feature_maps(4) , self.feature_maps(3))
         self.d3 = Decoder_block(self.feature_maps(3) , self.feature_maps(2))
         self.d4 = Decoder_block(self.feature_maps(2) , self.feature_maps(1))
@@ -576,6 +584,15 @@ class Unet5(Project_conv_model):
         bottleneck = self.b(p5)
         enc = self.flatten(bottleneck)
         
+        print(p1.shape)
+        print(p2.shape)
+        print(p3.shape)
+        print(p4.shape)
+        print(p5.shape)
+        print(bottleneck.shape)
+        
+        
+        
         # decoder 
         d1 = self.d1(bottleneck, s5)
         d2 = self.d2(d1, s4)
@@ -599,11 +616,12 @@ class Unet6(Project_conv_model):
         
         self.features_order = UNET_EXP_FMS   # orders greater and equal than 5 saturates the GPU!
         self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
-        
+        self.n_levels = 6
         
         # create net and initialize
         self._createNet()
         self._init_weights_kaimingNormal()
+        
 
         
     def _createNet(self):
@@ -623,8 +641,19 @@ class Unet6(Project_conv_model):
         self.flatten = nn.Flatten()
     
         # decoder 
-        self.d1 = Decoder_block(self.feature_maps(6) , self.feature_maps(5), out_pad=1) # for odd spatial dimensions
-        self.d2 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1) # 112x112 addition
+        
+        # define conditions for padding 
+        c1 = INPUT_WIDTH/(math.pow(2,self.n_levels))
+        c2 = INPUT_WIDTH/(math.pow(2,self.n_levels-1))
+        
+        if c1%1!=0:
+            self.d1 = Decoder_block(self.feature_maps(6) , self.feature_maps(5), out_pad=1) # for odd spatial dimensions
+        else:
+            self.d1 = Decoder_block(self.feature_maps(6) , self.feature_maps(5)) # for odd spatial dimensions
+        if c2%1!=0:
+            self.d2 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1) # 112x112 addition
+        else:
+            self.d2 = Decoder_block(self.feature_maps(5) , self.feature_maps(4)) # 112x112 addition
         self.d3 = Decoder_block(self.feature_maps(4) , self.feature_maps(3))
         self.d4 = Decoder_block(self.feature_maps(3) , self.feature_maps(2))
         self.d5 = Decoder_block(self.feature_maps(2) , self.feature_maps(1))
@@ -976,49 +1005,7 @@ class ResNet_EDS(Project_conv_model):
 
 #                                       custom Unet
 
-# TODO test other version of large conv since results fail to increase with this
-class LargeConv_block(nn.Module):
-    """ larger version of the Conv_block class"""
-    def __init__(self, in_c, out_c):
-        super().__init__()
-        
-        self.conv1 = nn.Conv2d(in_c, in_c, kernel_size=1, padding=0)
-        self.bn1 = nn.BatchNorm2d(in_c)
-        self.conv2 = nn.Conv2d(in_c, out_c, kernel_size=3, padding=1)
-        self.bn2 = nn.BatchNorm2d(out_c)
-        self.conv3 = nn.Conv2d(out_c, out_c, kernel_size=1, padding=0)
-        self.bn3 = nn.BatchNorm2d(out_c)
-        
-        
-        self.relu = nn.ReLU()
-        
-    def forward(self, inputs):
-        x = self.conv1(inputs)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.conv2(x)
-        x = self.bn2(x)
-        x = self.relu(x)
-        x = self.conv3(x)
-        x = self.bn3(x)
-        x = self.relu(x)
-        return x 
-
-class LargeEncoder_block(nn.Module):
-    def __init__(self, in_c, out_c):
-        super().__init__()
-        self.conv_1 = LargeConv_block(in_c, in_c)
-        self.conv_2 = LargeConv_block(in_c, out_c)
-        self.conv_3 = LargeConv_block(out_c, out_c)
-        self.pool = nn.MaxPool2d((2, 2))
-        
-    def forward(self, inputs):
-        x = self.conv_1(inputs)
-        x = self.conv_2(x)
-        x = self.conv_3(x)
-        p = self.pool(x)
-        return x, p
-
+# -- residual block definition
 class Encoder_block_residual(nn.Module):
     def __init__(self, in_c, out_c, after_conv = False, kernel_size = 1):
         super().__init__()
@@ -1061,6 +1048,51 @@ class Encoder_block_residual(nn.Module):
             
             p += inputs_downsampled
         
+        return x, p
+
+# -- large blocks definition
+class LargeConv_block(nn.Module):
+    # TODO test other version of large conv since results fail to increase with this
+
+    """ larger version of the Conv_block class"""
+    def __init__(self, in_c, out_c):
+        super().__init__()
+        
+        self.conv1 = nn.Conv2d(in_c, in_c, kernel_size=1, padding=0)
+        self.bn1 = nn.BatchNorm2d(in_c)
+        self.conv2 = nn.Conv2d(in_c, out_c, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(out_c)
+        self.conv3 = nn.Conv2d(out_c, out_c, kernel_size=1, padding=0)
+        self.bn3 = nn.BatchNorm2d(out_c)
+        
+        
+        self.relu = nn.ReLU()
+        
+    def forward(self, inputs):
+        x = self.conv1(inputs)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.conv2(x)
+        x = self.bn2(x)
+        x = self.relu(x)
+        x = self.conv3(x)
+        x = self.bn3(x)
+        x = self.relu(x)
+        return x 
+
+class LargeEncoder_block(nn.Module):
+    def __init__(self, in_c, out_c):
+        super().__init__()
+        self.conv_1 = LargeConv_block(in_c, in_c)
+        self.conv_2 = LargeConv_block(in_c, out_c)
+        self.conv_3 = LargeConv_block(out_c, out_c)
+        self.pool = nn.MaxPool2d((2, 2))
+        
+    def forward(self, inputs):
+        x = self.conv_1(inputs)
+        x = self.conv_2(x)
+        x = self.conv_3(x)
+        p = self.pool(x)
         return x, p
 
 class LargeEncoder_block_residual(nn.Module):
@@ -1107,6 +1139,7 @@ class LargeEncoder_block_residual(nn.Module):
         
         return x, p
 
+# -- Unet models 
 class Unet4_Scorer(Project_conv_model):
     """
         U-net 4 + Scorer, 4 encoders and 4 decoders
@@ -1120,7 +1153,7 @@ class Unet4_Scorer(Project_conv_model):
         self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
         # self.bottleneck_size = int(self.feature_maps(4)*(self.width/16)*(self.width/16))
         self.bottleneck_size = int(self.feature_maps(4)*math.floor(self.width/16)**2) 
-        
+        self.n_levels = 4
         # create net and initialize
         self._createNet()
         
@@ -1240,6 +1273,7 @@ class Unet5_Scorer(Project_conv_model):
         self.features_order = UNET_EXP_FMS   # orders greater and equal than 5 saturates the GPU!
         self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
         self.bottleneck_size = int(self.feature_maps(5)*math.floor(self.width/32)**2)  
+        self.n_levels = 5     
         
         # create net and initialize
         self._createNet()
@@ -1291,7 +1325,14 @@ class Unet5_Scorer(Project_conv_model):
         
         
         # decoder 
-        self.d1 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1) # 112x112 addition
+        
+        # define conditions for padding 
+        c = INPUT_WIDTH/(math.pow(2,self.n_levels))
+        
+        if c%1!=0:
+            self.d1 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1) # 112x112 addition
+        else:
+            self.d1 = Decoder_block(self.feature_maps(5) , self.feature_maps(4))
         self.d2 = Decoder_block(self.feature_maps(4) , self.feature_maps(3))
         self.d3 = Decoder_block(self.feature_maps(3) , self.feature_maps(2))
         self.d4 = Decoder_block(self.feature_maps(2) , self.feature_maps(1))
@@ -1359,7 +1400,8 @@ class Unet6_Scorer(Project_conv_model):
 
         self.features_order = UNET_EXP_FMS   # orders greater and equal than 5 saturates the GPU!
         self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
-
+        self.n_levels = 6
+        
         # self.bottleneck_size = int(self.feature_maps(6)*3**2)  # 3 comes from the computation on spatial dimensionality, kernel applied on odd tensor (if image different from 244 check again this value)
         self.bottleneck_size = int(self.feature_maps(6)*math.floor(self.width/64)**2)  # if 224x224 the width is divided by 32
         
@@ -1408,8 +1450,19 @@ class Unet6_Scorer(Project_conv_model):
         self.fc5 = nn.Linear(int(self.bottleneck_size/128), int(self.n_classes))
         
         # decoder 
-        self.d1 = Decoder_block(self.feature_maps(6) , self.feature_maps(5), out_pad=1) # for odd spatial dimensions
-        self.d2 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1) # 112x112 addition
+        
+        # define conditions for padding 
+        c1 = INPUT_WIDTH/(math.pow(2,self.n_levels))
+        c2 = INPUT_WIDTH/(math.pow(2,self.n_levels-1))
+        
+        if c1%1!=0:
+            self.d1 = Decoder_block(self.feature_maps(6) , self.feature_maps(5), out_pad=1) # for odd spatial dimensions
+        else:
+            self.d1 = Decoder_block(self.feature_maps(6) , self.feature_maps(5)) # for odd spatial dimensions
+        if c2%1!=0:
+            self.d2 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1) # 112x112 addition
+        else:
+            self.d2 = Decoder_block(self.feature_maps(5) , self.feature_maps(4)) # 112x112 addition
         self.d3 = Decoder_block(self.feature_maps(4) , self.feature_maps(3))
         self.d4 = Decoder_block(self.feature_maps(3) , self.feature_maps(2))
         self.d5 = Decoder_block(self.feature_maps(2) , self.feature_maps(1))
@@ -1474,6 +1527,7 @@ class Unet6L_Scorer(Project_conv_model):
         self.features_order = UNET_EXP_FMS   # orders greater and equal than 5 saturates the GPU!
         self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
         self.bottleneck_size = int(self.feature_maps(6)*math.floor(self.width/64)**2)
+        self.n_levels = 6
         
         # create net and initialize
         self._createNet()
@@ -1520,8 +1574,19 @@ class Unet6L_Scorer(Project_conv_model):
         self.fc5 = nn.Linear(int(self.bottleneck_size/128), int(self.n_classes))
         
         # decoder 
-        self.d1 = Decoder_block(self.feature_maps(6) , self.feature_maps(5), out_pad=1) # for odd spatial dimensions
-        self.d2 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1) # 112x112 addition
+        
+        # define conditions for padding 
+        c1 = INPUT_WIDTH/(math.pow(2,self.n_levels))
+        c2 = INPUT_WIDTH/(math.pow(2,self.n_levels-1))
+        
+        if c1%1!=0:
+            self.d1 = Decoder_block(self.feature_maps(6) , self.feature_maps(5), out_pad=1) # for odd spatial dimensions
+        else:
+            self.d1 = Decoder_block(self.feature_maps(6) , self.feature_maps(5)) # for odd spatial dimensions
+        if c2%1!=0:
+            self.d2 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1) # 112x112 addition
+        else:
+            self.d2 = Decoder_block(self.feature_maps(5) , self.feature_maps(4)) # 112x112 addition
         self.d3 = Decoder_block(self.feature_maps(4) , self.feature_maps(3))
         self.d4 = Decoder_block(self.feature_maps(3) , self.feature_maps(2))
         self.d5 = Decoder_block(self.feature_maps(2) , self.feature_maps(1))
@@ -1589,6 +1654,7 @@ class Unet4_ResidualScorer(Project_conv_model):
         # self.bottleneck_size = int(self.feature_maps(4)*(self.width/8)*(self.width/8))  (224x224 case)
         self.bottleneck_size = int(self.feature_maps(4)*math.floor(self.width/16)**2) 
         self.residual2conv = False  # if False identity shortcuts are connected after the pooling layer
+        self.n_levels = 4
         
         # create net and initialize
         self._createNet()
@@ -1703,6 +1769,7 @@ class Unet5_ResidualScorer(Project_conv_model):
         self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
         self.bottleneck_size = int(self.feature_maps(5)*math.floor(self.width/32)**2) 
         self.residual2conv = False  # if False identity shortcuts are connected after the pooling layer
+        self.n_levels = 5
         
         # create net and initialize
         self._createNet()
@@ -1753,7 +1820,14 @@ class Unet5_ResidualScorer(Project_conv_model):
         
         
         # decoder 
-        self.d1 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1) # 112x112 addition
+        
+        # define conditions for padding 
+        c = INPUT_WIDTH/(math.pow(2,self.n_levels))
+        
+        if c%1!=0:
+            self.d1 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1) # 112x112 addition
+        else:
+            self.d1 = Decoder_block(self.feature_maps(5) , self.feature_maps(4))
         self.d2 = Decoder_block(self.feature_maps(4) , self.feature_maps(3))
         self.d3 = Decoder_block(self.feature_maps(3) , self.feature_maps(2))
         self.d4 = Decoder_block(self.feature_maps(2) , self.feature_maps(1))
@@ -1825,8 +1899,9 @@ class Unet6_ResidualScorer(Project_conv_model):
         self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
         # self.bottleneck_size = int(self.feature_maps(6)*(w/64)*(w/64))
         self.bottleneck_size = int(self.feature_maps(6)*math.floor(self.width/64)**2)  # if 224x224 the width is divided by 32
-        
         self.residual2conv = False  # if False identity shortcuts are connected after the pooling layer
+        self.n_levels = 6
+        
         # create net and initialize
         self._createNet()
         
@@ -1872,8 +1947,19 @@ class Unet6_ResidualScorer(Project_conv_model):
         self.fc5 = nn.Linear(int(self.bottleneck_size/128), int(self.n_classes))
         
         # decoder 
-        self.d1 = Decoder_block(self.feature_maps(6) , self.feature_maps(5), out_pad=1) # for odd spatial dimensions
-        self.d2 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1) # 112x112 addition
+        
+        # define conditions for padding 
+        c1 = INPUT_WIDTH/(math.pow(2,self.n_levels))
+        c2 = INPUT_WIDTH/(math.pow(2,self.n_levels-1))
+        
+        if c1%1!=0:
+            self.d1 = Decoder_block(self.feature_maps(6) , self.feature_maps(5), out_pad=1) # for odd spatial dimensions
+        else:
+            self.d1 = Decoder_block(self.feature_maps(6) , self.feature_maps(5)) # for odd spatial dimensions
+        if c2%1!=0:
+            self.d2 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1) # 112x112 addition
+        else:
+            self.d2 = Decoder_block(self.feature_maps(5) , self.feature_maps(4)) # 112x112 addition
         self.d3 = Decoder_block(self.feature_maps(4) , self.feature_maps(3))
         self.d4 = Decoder_block(self.feature_maps(3) , self.feature_maps(2))
         self.d5 = Decoder_block(self.feature_maps(2) , self.feature_maps(1))
@@ -1937,6 +2023,8 @@ class Unet6L_ResidualScorer(Project_conv_model):
         # self.bottleneck_size = int(self.feature_maps(6)*(w/64)*(w/64))
         self.bottleneck_size = int(self.feature_maps(6)*math.floor(self.width/64)**2)  # if 224x224 the width is divided by 32
         self.residual2conv = False  # if False identity shortcuts are connected after the pooling layer
+        self.n_levels = 6
+        
         # create net and initialize
         self._createNet()
         
@@ -1982,8 +2070,19 @@ class Unet6L_ResidualScorer(Project_conv_model):
         self.fc5 = nn.Linear(int(self.bottleneck_size/128), int(self.n_classes))
         
         # decoder 
-        self.d1 = Decoder_block(self.feature_maps(6) , self.feature_maps(5), out_pad=1) # for odd spatial dimensions
-        self.d2 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1) # 112x112 addition
+        
+        # define conditions for padding 
+        c1 = INPUT_WIDTH/(math.pow(2,self.n_levels))
+        c2 = INPUT_WIDTH/(math.pow(2,self.n_levels-1))
+        
+        if c1%1!=0:
+            self.d1 = Decoder_block(self.feature_maps(6) , self.feature_maps(5), out_pad=1) # for odd spatial dimensions
+        else:
+            self.d1 = Decoder_block(self.feature_maps(6) , self.feature_maps(5)) # for odd spatial dimensions
+        if c2%1!=0:
+            self.d2 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1) # 112x112 addition
+        else:
+            self.d2 = Decoder_block(self.feature_maps(5) , self.feature_maps(4)) # 112x112 addition
         self.d3 = Decoder_block(self.feature_maps(4) , self.feature_maps(3))
         self.d4 = Decoder_block(self.feature_maps(3) , self.feature_maps(2))
         self.d5 = Decoder_block(self.feature_maps(2) , self.feature_maps(1))
@@ -2382,7 +2481,7 @@ if __name__ == "__main__":
         print(x.shape)
         r,e = unet.forward(x)
         print(r.shape, e.shape)
-        input("press something to exit ")
+        input("press enter to exit ")
 
     def test_UnetScorer():
         unet = Unet4_Scorer(n_classes=2)
@@ -2393,7 +2492,7 @@ if __name__ == "__main__":
         x = T.rand((32, 3, INPUT_HEIGHT, INPUT_WIDTH)).to(device)
         # print(x.shape)
         logits, rec, enc = unet.forward(x)
-        input("press enter to exit ")
+        # input("press enter to exit ")
     
     def test_UnetResidualScorer():
         # test residual conv block
@@ -2405,7 +2504,7 @@ if __name__ == "__main__":
         
         x = T.rand((32, 3, INPUT_HEIGHT, INPUT_WIDTH)).to(device)
         # unet = Unet6L_ResidualScorer(n_channels=3, n_classes=2)
-        unet = Unet4_ResidualScorer(n_classes=2)
+        unet = Unet6L_ResidualScorer(n_classes=2)
         unet.to_device(device)
         # print(unet.bottleneck_size)
         unet.getSummary()
@@ -2417,7 +2516,7 @@ if __name__ == "__main__":
             
         print("rec shape: ", rec.shape)
         print("enc shape: ", enc.shape)
-        input("press enter to exit ")
+        # input("press enter to exit ")
         
     def test_abnorm_basic():
         from bin_classifier import DFD_BinClassifier_v4
@@ -2445,7 +2544,6 @@ if __name__ == "__main__":
         y = abnorm_module.forward(logits, encoding, residual_flatten)
         print(y.shape)
         input("press enter to exit ")
-    
     
     def test_abnorm_pca():
         from bin_classifier import DFD_BinClassifier_v4
@@ -2511,7 +2609,6 @@ if __name__ == "__main__":
         # print(y.shape)
         input("press enter to exit ")
     
-    test_abnorm_pca()
     pass
     #                           [End test section] 
     

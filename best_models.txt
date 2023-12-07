@@ -1,0 +1,11 @@
+scenario: content (faces)
+	images 224x224:
+		U-net based:
+			faces_Unet5_Residual_Scorer+MSE_v4_27-11-2023
+		
+
+	images 112x112:
+		U-net based:
+			faces_Unet4_Scorer112p_v4_03-12-2023
+		
+

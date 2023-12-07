@@ -1327,10 +1327,10 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         # save loss 
         name_loss_file          = 'loss_'+ str(last_epoch) +'.png'
         if test_loop:
-            plot_loss(loss_epochs, title_plot= train_name, path_save = None)
+            plot_loss(loss_epochs, title_plot= self.name + "_" + self.model_type, path_save = None)
         else: 
-            plot_loss(loss_epochs, title_plot= train_name, path_save = os.path.join(path_save_results, name_loss_file))
-            plot_loss(loss_epochs, title_plot= train_name, path_save = os.path.join(path_save_model  ,name_loss_file), show=False)
+            plot_loss(loss_epochs, title_plot= self.name + "_" + self.model_type, path_save = os.path.join(path_save_results, name_loss_file))
+            plot_loss(loss_epochs, title_plot= self.name + "_" + self.model_type, path_save = os.path.join(path_save_model  ,name_loss_file), show=False)
 
         
         # save model

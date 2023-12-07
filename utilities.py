@@ -27,10 +27,11 @@ from    sklearn.metrics     import  auc, roc_curve, average_precision_score, pre
 
 ################################################## Settings ###########################################################################
 
-def get_inputConfig():
+def get_inputConfig(spatial_dim = 112):
+    # choose between images of spatial dimensions 224p of 112p, always squared resolution
     return {
-        "width"     : 112,
-        "height"    : 112,
+        "width"     : spatial_dim,
+        "height"    : spatial_dim,
         "channels"  : 3
     }
 
