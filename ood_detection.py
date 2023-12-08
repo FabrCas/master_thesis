@@ -16,7 +16,7 @@ from    experiments         import MNISTClassifier_keras
 from    bin_classifier      import DFD_BinClassifier_v1, DFD_BinClassifier_v4
 from    models              import Abnormality_module_Basic
 from    utilities           import saveJson, loadJson, metrics_binClass, metrics_OOD, print_dict, showImage, check_folder, sampleValidSet, \
-                            mergeDatasets, ExpLogger, loadModel, saveModel, duration, plot_loss
+                            mergeDatasets, ExpLogger, loadModel, saveModel, duration, plot_loss, plot_valid
 
 class OOD_Classifier(object):
     
@@ -984,7 +984,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         self.name_train         = None
         self._meta_data()
         
-        # abnormality module (module B)
+        # abnormality module (module B) definition
         self._build_model()
             
         # training parameters  
@@ -1046,21 +1046,23 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         """
         
         # synthesis of OOD data
-        self.ood_data_train     = self.dataset_class(scenario = self.scenario, train = True,  ood = False, augment = False, label_vector= False, transform2ood = True)
-        test_dataset_ood            = self.dataset_class(scenario = self.scenario, train = False, ood = False, augment = False, label_vector= False, transform2ood = True)
-        ood_data_valid , self.ood_data_test  = sampleValidSet(trainset= self.ood_data_train, testset= test_dataset_ood, useOnlyTest = True, verbose = True)
+        ood_data_train     = self.dataset_class(scenario = self.scenario, train = True,  ood = False, augment = False, label_vector= False, transform2ood = True)
+        tmp        = self.dataset_class(scenario = self.scenario, train = False, ood = False, augment = False, label_vector= False, transform2ood = True)
+        ood_data_valid , _      = sampleValidSet(trainset = ood_data_train, testset= tmp, useOnlyTest = True, verbose = True)
         
         # fetch ID data
-        self.id_data_train      = self.dataset_class(scenario = self.scenario, train = True,  ood = False, augment = False, label_vector= False, transform2ood = False)
-        test_dataset_id            = self.dataset_class(scenario = self.scenario, train = False, ood = False, augment = False, label_vector= False, transform2ood = False)
-        id_data_valid , self.id_data_test   = sampleValidSet(trainset= self.id_data_train, testset= test_dataset_id, useOnlyTest = True, verbose = True)
+        id_data_train      = self.dataset_class(scenario = self.scenario, train = True,  ood = False, augment = False, label_vector= False, transform2ood = False)
+        tmp            = self.dataset_class(scenario = self.scenario, train = False, ood = False, augment = False, label_vector= False, transform2ood = False)
+        id_data_valid , id_data_test   = sampleValidSet(trainset = id_data_train, testset= tmp, useOnlyTest = True, verbose = True)
         
         
         
-        if verbose: print("length ID dataset  (train and test) -> ",  len(self.id_data_train), len(self.id_data_test))
-        if verbose: print("length ID dataset  (valid) -> ",  len(id_data_valid))
-        if verbose: print("length OOD dataset (train) synthetized -> ", len(self.ood_data_train))
-        if verbose: print("length OOD dataset (valid) synthetized -> ", len(ood_data_valid))
+        if verbose:
+            print("length ID dataset  (train) -> ",  len(id_data_train))
+            print("length ID dataset  (valid) -> ",  len(id_data_valid))
+            print("length ID dataset  (test) -> ", len(id_data_test))
+            print("length OOD dataset (train) synthetized -> ", len(ood_data_train))
+            print("length OOD dataset (valid) synthetized -> ", len(ood_data_valid))
 
         
         # x,_ = self.ood_data_train.__getitem__(30000)
@@ -1068,19 +1070,21 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         
         if extended_ood:
             ood_train_expansion = self.dataset_class(scenario = self.scenario, train = True,   ood = True, augment = False, label_vector= False)            
-            self.ood_data_train = mergeDatasets(self.ood_data_train, ood_train_expansion) 
+            ood_data_train = mergeDatasets(ood_data_train, ood_train_expansion) 
            
-            if verbose: print("length OOD dataset after extension (train) -> ", len(self.ood_data_train))
+            if verbose: print("length OOD dataset after extension (train) -> ", len(ood_data_train))
+            
+            # can be extended also the ood_data_valid , reducing the ood_data_test below
         
-        self.ood_data_test  = self.dataset_class(scenario = self.scenario, train = False,  ood = True, augment = False, label_vector= False)
-        if verbose: print("length OOD dataset (test) -> ", len(self.ood_data_test))
+        ood_data_test  = self.dataset_class(scenario = self.scenario, train = False,  ood = True, augment = False, label_vector= False)
+        if verbose: print("length OOD dataset (test) -> ", len(ood_data_test))
         
-        # train set: id data train + id data train transformed in ood (optional, + ood data train) 
-        self.dataset_train = OOD_dataset(self.id_data_train, self.ood_data_train, balancing_mode="max")
-        # valid set: id data valid + id data valid transformed in ood (optional, + ood data valid) 
+        # train set: id data train + synthetic ood (id data train transformed in ood, optionally + ood data train)
+        self.dataset_train = OOD_dataset(id_data_train, ood_data_train, balancing_mode="max")
+        # valid set: id data valid + synthetic ood (id data train transformed in ood)
         self.dataset_valid = OOD_dataset(id_data_valid, ood_data_valid, balancing_mode="max")
         # test set: id data test + ood data test
-        self.dataset_test  = OOD_dataset(self.id_data_test , self.ood_data_test,  balancing_mode="max")
+        self.dataset_test  = OOD_dataset(id_data_test , ood_data_test,  balancing_mode="max")
         
         if verbose: print("length full dataset (train/valid/test) with balancing -> ", len(self.dataset_train), len(self.dataset_valid), len(self.dataset_test))
     
@@ -1205,6 +1209,55 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             print(e)
             print("No model: {} found for the epoch: {} in the folder: {}".format(name_folder, epoch, path2model))
     
+    def valid(self, epoch, valid_dl):
+        """
+            validation method used mainly for the Early stopping training
+        """
+        print (f"Validation for the epoch: {epoch} ...")
+        
+        # set temporary evaluation mode and empty cuda cache
+        self.model.eval()
+        T.cuda.empty_cache()
+        
+        # list of losses
+        losses = []
+
+        
+        for (x,y) in tqdm(valid_dl):
+            
+            x = x.to(self.device)
+            # y = y.to(self.device).to(T.float32)
+            y = y.to(self.device).to(T.float32)
+            # take only label for the positive class (fake)
+            y = y[:,1]
+            
+            with T.no_grad():
+                with autocast():
+                    
+                    prob_softmax, encoding, residual_flatten = self._forward_A(x)
+                    
+                    if self.model_type == "basic":
+                        logit = self._forward_B(prob_softmax, encoding, residual_flatten)
+                        logit = T.squeeze(logit)
+                    else:
+                        raise ValueError("Forward not defined in valid function for model: {}".format(self.model_type))
+                    
+
+                    loss = self.bce(input=logit, target=y)   # logits bce version
+                    losses.append(loss.item())
+
+                        
+        # go back to train mode 
+        self.model.train()
+        
+
+        # return the average loss
+        loss_valid = sum(losses)/len(losses)
+        print(f"Loss from validation: {loss_valid}")
+        return loss_valid
+
+    
+    
     @duration
     def train(self, additional_name = "", task_type_prog = None, test_loop = False):
         # """ requried the ood data name to recognize the task"""
@@ -1224,6 +1277,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         self.model.train()
         
         train_dl = DataLoader(self.dataset_train, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
+        valid_dl = DataLoader(self.dataset_valid, batch_size=self.batch_size,  num_workers= 8, shuffle= True, pin_memory= True) 
         
         # compute number of steps for epoch
         n_steps = len(train_dl)
@@ -1237,7 +1291,8 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         logger  = self.init_logger(path_model= path_save_model)
         
         # intialize data structure to keep track of training performance
-        loss_epochs = []
+        loss_epochs     = []
+        valid_history   = []
         
         # learned epochs by the model initialization
         self.modelEpochs = 0
@@ -1284,8 +1339,12 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
                                         
                     # if not basic Abnromality model, do recuction here
                     
-                    logit = self._forward_B(prob_softmax, encoding, residual_flatten)
-                    logit = T.squeeze(logit)
+
+                    if self.model_type == "basic":
+                        logit = self._forward_B(prob_softmax, encoding, residual_flatten)
+                        logit = T.squeeze(logit)
+                    else:
+                        raise ValueError("Forward not defined in train function for model: {}".format(self.model_type))
                     # print(logit.shape)
                     
 
@@ -1316,9 +1375,14 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             loss_epochs.append(avg_loss)
             print("Average loss: {}".format(avg_loss))
             
+            # include validation here if needed
+            criterion = self.valid(epoch=epoch_idx+1, valid_dl = valid_dl)
+            valid_history.append(criterion)  
+
+                        
             # create dictionary with info frome epoch: loss + valid, and log it
             epoch_data = {"epoch": last_epoch, "avg_loss": avg_loss, "max_loss": max_loss_epoch, \
-                          "min_loss": min_loss_epoch}
+                          "min_loss": min_loss_epoch, "valid_loss": criterion}
             logger.log(epoch_data)
             
             # test epochs loop for debug   
@@ -1328,18 +1392,21 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         # log GPU memory statistics during training
         logger.log_mem(T.cuda.memory_summary(device=self.device))
         
-        
         # 4) Save section
         
         # save loss 
         name_loss_file          = 'loss_'+ str(last_epoch) +'.png'
+        name_valid_file         = "valid_" + str(last_epoch) + '.png' 
         if test_loop:
-            plot_loss(loss_epochs, title_plot= self.name + "_" + self.model_type, path_save = None)
+            plot_loss(loss_epochs, title_plot = self.name + "_" + self.model_type, path_save = None)
+            plot_valid(valid_history, title_plot = self.name + "_" + self.model_type, path_save= None )
         else: 
             plot_loss(loss_epochs, title_plot= self.name + "_" + self.model_type, path_save = os.path.join(path_save_results, name_loss_file))
-            plot_loss(loss_epochs, title_plot= self.name + "_" + self.model_type, path_save = os.path.join(path_save_model  ,name_loss_file), show=False)
+            plot_loss(loss_epochs, title_plot= self.name + "_" + self.model_type, path_save = os.path.join(path_save_model  ,name_loss_file), show=False)  # just save, not show
+            plot_valid(valid_history, title_plot= self.name + "_" + self.model_type, path_save = os.path.join(path_save_results, name_valid_file))
+            plot_valid(valid_history, title_plot= self.name + "_" + self.model_type, path_save = os.path.join(path_save_model  ,name_valid_file), show=False)  # just save, not show
 
-        
+
         # save model
         name_model_file         = str(last_epoch) +'.ckpt'
         path_model_save         = os.path.join(path_save_model, name_model_file)  # path folder + name file
@@ -1594,7 +1661,7 @@ if __name__ == "__main__":
         classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
         
         abn = Abnormality_module(classifier, scenario="content", model_type="basic")
-        abn.train(additional_name="112p")
+        abn.train(additional_name="112p", test_loop=True)
         
         # x = T.rand((1,3,112,112)).to(abn.device)
         # y = abn.forward(x)
@@ -1612,7 +1679,7 @@ if __name__ == "__main__":
         abn.test_risk()
     
     # test_baseline_content_faces()
-    test_baselineOdin_content_faces()
+    train_abn_basic()
 
     pass
 

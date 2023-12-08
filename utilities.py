@@ -542,6 +542,52 @@ def plot_loss(loss_array, title_plot = None, path_save = None, duration_timer = 
         timer.start()
     if show:
         plt.show()
+        
+def plot_valid(valid_history, title_plot = None, path_save = None, duration_timer = 2500, show = True):
+    """ save and plot the loss by epochs
+
+    Args:
+        valid_history (list): list of valid criterion by epochs 
+        title_plot (str, optional): _title to exhibit on the plot
+        path_save (str, optional): relative path for the location of the save folder
+        duration_timer (int, optional): milliseconds used to show the plot 
+    """
+    def close_event():
+        plt.close()
+    
+    # define x axis values
+    x_values = list(range(1,len(valid_history)+1))
+    
+    color = "blue"
+
+    # Plot the array with a continuous line color
+    for i in range(len(valid_history) -1):
+        plt.plot([x_values[i], x_values[i + 1]], [valid_history[i], valid_history[i + 1]], color= color , linewidth=2)
+        
+    # text on the plot
+    # if path_save is None:       
+    #     plt.xlabel('steps', fontsize=18)
+    # else:
+    
+    plt.xlabel('epochs', fontsize=18)
+    plt.ylabel('Loss', fontsize=18)
+    if title_plot is not None:
+        plt.title("Valid history {}".format(title_plot), fontsize=18)
+    else:
+        plt.title('Valid history', fontsize=18)
+    
+    # save if you define the path
+    if path_save is not None:
+        plt.savefig(path_save)
+    
+    fig = plt.gcf()
+    
+    if duration_timer is not None:
+        timer = fig.canvas.new_timer(interval=duration_timer)
+        timer.add_callback(close_event)
+        timer.start()
+    if show:
+        plt.show()
 
 def plot_cm(cm, labels, title_plot = None, path_save = None, duration_timer = 2500):
     """ sava and plot the confusion matrix
