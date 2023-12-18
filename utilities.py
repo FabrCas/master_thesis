@@ -689,7 +689,7 @@ def plot_PR_curve(recalls, precisions, path_save = None, duration_timer = 2500):
 
 ##################################################  Metrics functions #################################################################
 
-def metrics_binClass(preds, targets, pred_probs, epoch_model="unknown", path_save = None, average = "macro", name_ood_file  = None, save = True):
+def metrics_binClass(preds, targets, pred_probs, epoch_model="unknown", path_save = None, average = "macro",  save = True, name_ood_file  = None, ood_labels_reversed = False):
     """ 
         Computation of metrics for binary classification tasks.
         use name_ood_file parameter to save for OOD binary classification, otherwise is saved for classic binary classification
@@ -743,7 +743,13 @@ def metrics_binClass(preds, targets, pred_probs, epoch_model="unknown", path_sav
     
     
     # plot and save (if path specified) confusion matrix
-    plot_cm(cm = metrics_results['confusion_matrix'], labels = ["real", "fake"], title_plot = None, path_save = path_save)
+    if name_ood_file is None:
+        plot_cm(cm = metrics_results['confusion_matrix'], labels = ["real", "fake"], title_plot = None, path_save = path_save)
+    else:
+        if ood_labels_reversed:
+            plot_cm(cm = metrics_results['confusion_matrix'], labels = ["ID", "OOD"], title_plot = None, path_save = path_save)
+        else:
+            plot_cm(cm = metrics_results['confusion_matrix'], labels = ["OOD", "ID"], title_plot = None, path_save = path_save)
     
     print(path_save)
     

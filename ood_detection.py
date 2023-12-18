@@ -7,14 +7,15 @@ from    torch.utils.data    import DataLoader
 from    torch.cuda.amp      import autocast
 from    tqdm                import tqdm
 from    datetime            import date
+from    time                import time
 from    sklearn.metrics     import precision_recall_curve, auc, roc_auc_score
 from    torch.optim         import Adam, lr_scheduler
 from    torch.cuda.amp      import GradScaler, autocast
 # local import
 from    dataset             import CDDB_binary, CDDB_binary_Partial, CDDB, CDDB_Partial, OOD_dataset, getCIFAR100_dataset, getMNIST_dataset, getFMNIST_dataset
 from    experiments         import MNISTClassifier_keras
-from    bin_classifier      import DFD_BinClassifier_v1, DFD_BinClassifier_v4
-from    models              import Abnormality_module_Basic
+from    bin_classifier      import DFD_BinClassifier_v4
+from    models              import Abnormality_module_Basic, Abnormality_module_Encoder_v1, TestModel
 from    utilities           import saveJson, loadJson, metrics_binClass, metrics_OOD, print_dict, showImage, check_folder, sampleValidSet, \
                             mergeDatasets, ExpLogger, loadModel, saveModel, duration, plot_loss, plot_valid
 
@@ -43,7 +44,7 @@ class OOD_Classifier(object):
         if self.useGPU: self.device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
         else: self.device = "cpu"
         
-        self.batch_size   = 32
+        self.batch_size   =  128  # 32 -> basic, 64/128 -> encoder
         
     #                                       math/statistics aux functions
     
@@ -131,7 +132,7 @@ class OOD_Classifier(object):
         else:
             return prob
         
-    def odin_perturbations(self,x, classifier, is_batch = True, loss_function = F.cross_entropy, epsilon = 12e-4, t = 1000):
+    def odin_perturbations(self,x, classifier, is_batch = True, loss_function = F.cross_entropy, epsilon = 12e-4, t = 1000):  # original hyperparms: epislon = 12e-4, t = 1000
         """ Perturbation from ODIN framework
 
         Args:
@@ -177,16 +178,26 @@ class OOD_Classifier(object):
         # Apply temperature scaling to logits
         logits /= t
         
-        # Calculate softmax probabilities
-        # probabilities = F.softmax(logits, dim=1)
+        if False:
+            # Calculate softmax probabilities
+            # probabilities = F.softmax(logits, dim=1)
+            
+            # Calculate the derivative of the cross-entropy loss with respect to the input
+            gradients = T.autograd.grad(outputs=logits, inputs=x,
+                                            grad_outputs=T.ones_like(logits),
+                                            retain_graph=False, create_graph=False)[0]
+            
+            # Calculate the perturbed input
+            perturbed_x = x - epsilon * gradients.sign()
+    
+        if is_batch:
+            loss = loss_function(logits, T.argmax(logits, dim=-1))
+        else:
+            loss = loss_function(logits, T.argmax(logits))  # Assuming cross-entropy loss for illustration
         
-        # Calculate the derivative of the cross-entropy loss with respect to the input
-        gradients = T.autograd.grad(outputs=logits, inputs=x,
-                                        grad_outputs=T.ones_like(logits),
-                                        retain_graph=False, create_graph=False)[0]
+        loss.backward()
         
-        # Calculate the perturbed input
-        perturbed_x = x - epsilon * gradients.sign()
+        perturbed_x = x + epsilon * x.grad.detach().sign()
         
         
         return perturbed_x
@@ -243,7 +254,7 @@ class OOD_Classifier(object):
         # print(target)
         
         predictions = np.squeeze(np.vstack((id_data, ood_data)))
-        metrics_ood = metrics_OOD(targets=target, pred_probs= predictions)
+        metrics_ood = metrics_OOD(targets=target, pred_probs= predictions, pos_label= 1)
         return metrics_ood 
     
     # path utilities
@@ -295,7 +306,7 @@ class OOD_Classifier(object):
         else:
             return path_models_classifier
     
-class Baseline(OOD_Classifier):         # No model training necessary (Empty model forlder)
+class Baseline(OOD_Classifier):             # No model training necessary (Empty model forlder)
     """
         OOD detection baseline using softmax probability
     """
@@ -332,9 +343,8 @@ class Baseline(OOD_Classifier):         # No model training necessary (Empty mod
     
     #                                       testing functions
     def test_probabilties(self):
-        """ testing function using probabilty-based metrics, computing OOD metrics that are not threshold related
-
-
+        """
+            testing function using probabilty-based metrics, computing OOD metrics that are not threshold related
         """
         
         # define the dataloader 
@@ -394,7 +404,7 @@ class Baseline(OOD_Classifier):         # No model training necessary (Empty mod
         print("Out-Of-Distribution Entropy      [mean,std]                  -> ", mean_e_ood, std_e_ood)
         
         # normality detection
-        print("Normality detection:")
+        print("Normality detection:")   # positive label -> ID data
         norm_base_rate = round(100*(prob_id.shape[0]/(prob_id.shape[0] + prob_ood.shape[0])),2)
         print("\tbase rate(%): {}".format(norm_base_rate))
         print("\tKL divergence (entropy)")
@@ -404,14 +414,14 @@ class Baseline(OOD_Classifier):         # No model training necessary (Empty mod
 
         
         # abnormality detection
-        print("Abnormality detection:")
+        print("Abnormality detection:")   # positive label -> OOD data
         abnorm_base_rate = round(100*(prob_ood.shape[0]/(prob_id.shape[0] + prob_ood.shape[0])),2)
         print("\tbase rate(%): {}".format(abnorm_base_rate))
         print("\tKL divergence (entropy)")
-        kl_abnorm_aupr, kl_abnorm_auroc = self.compute_curves(-entropy_id, -entropy_ood, positive_reversed= True)
+        kl_abnorm_aupr, kl_abnorm_auroc = self.compute_curves(1-entropy_id, 1-entropy_ood, positive_reversed= True)
         # kl_abnorm_aupr, kl_abnorm_auroc = self.compute_curves(1-entropy_id, 1-entropy_ood, positive_reversed= True)
         print("\tPrediction probability")
-        p_abnorm_aupr, p_abnorm_auroc = self.compute_curves(-maximum_prob_id, -maximum_prob_ood, positive_reversed= True)
+        p_abnorm_aupr, p_abnorm_auroc = self.compute_curves(1-maximum_prob_id, 1-maximum_prob_ood, positive_reversed= True)
         # p_abnorm_aupr, p_abnorm_auroc = self.compute_curves(1-maximum_prob_id, 1-maximum_prob_ood, positive_reversed= True)
 
         # compute fpr95, detection_error and threshold_error 
@@ -454,10 +464,14 @@ class Baseline(OOD_Classifier):         # No model training necessary (Empty mod
                 "Prob_AUROC":       float(p_abnorm_auroc),
 
             },
-            "avg_confidence":   float(conf_all),
-            "fpr95":            float(metrics_norm['fpr95']),
-            "detection_error":  float(metrics_norm['detection_error']),
-            "threshold":        float(metrics_norm['thr_de'])
+            "avg_confidence":               float(conf_all),
+            "fpr95_normality":              float(metrics_norm['fpr95']),
+            "detection_error_normality":    float(metrics_norm['detection_error']),
+            "threshold_normality":          float(metrics_norm['thr_de']),
+            "fpr95_abnormality":            float(metrics_abnorm['fpr95']),
+            "detection_error_abnormality":  float(metrics_abnorm['detection_error']),
+            "threshold_abnormality":        float(metrics_abnorm['thr_de'])
+            
             
         }
         
@@ -598,7 +612,7 @@ class Baseline(OOD_Classifier):         # No model training necessary (Empty mod
         name_file = "baseline_simulated_experiment.json"
         saveJson(path_file = os.path.join(path_model_test_results, name_file), data = data)
         
-    def test_threshold(self, thr_type = "fpr95"):
+    def test_threshold(self, thr_type = "fpr95_normality", normality_setting = True):
         """
             This function compute metrics (binary classification ID/OOD) that are threshold related (discriminator)
             
@@ -608,7 +622,9 @@ class Baseline(OOD_Classifier):         # No model training necessary (Empty mod
             name_classifier (str): deepfake detection model used (name from models folder)
             task_type_prog (int): 3 possible values: 0 for binary classification, 1 for multi-class classificaiton, 2 multi-label classification
             name_ood_data (str): name of the dataset used as ood data, is is a partition of CDDB specify the scenario: "content","group","mix", Default is None. 
-            thr_type (str): choose which kind of threhsold use between "fpr95" (fpr at tpr 95%) or "avg_confidence", or "thr_de",  Default is "fpr95".
+            thr_type (str): choose which kind of threhsold use between "fpr95_normality" or "fpr95_abnormality" (fpr at tpr 95%) or "avg_confidence",
+            "threshold_normality" or "threshold_abnormality",  Default is "fpr95_normality".
+            normality setting" (str, optional): used to define positive label, in normality is ID data, in abnormality is OOD data. Default is True
             
         """
         
@@ -625,12 +641,18 @@ class Baseline(OOD_Classifier):         # No model training necessary (Empty mod
             print("No data found at path {}".format(path_result_save))
         
         # choose the threshold to use for the discrimination ID/OOD
-        if thr_type == "fpr95":
-            threshold = data['fpr95']
-        elif thr_type == "thr_de":
-            threshold = data['threshold']
-        else:                                       # use avg max prob confidence as thr (proven to be misleading)
-            threshold = data['avg_confidence']
+        if thr_type == "fpr95_normality":
+            threshold = data['fpr95_normality']         # normality, positive label ID 
+        elif thr_type == "threshold_normality":
+            threshold = data['threshold_normality']
+            
+        elif thr_type == "fpr95_abnormality":
+            threshold = data['fpr95_abnormality']       # abnormality, positive label OOD 
+        elif thr_type == "threshold_abnormality":
+            threshold = data['threshold_abnormality']
+            
+        else:   # for the normality setting                                      
+            threshold = data['avg_confidence']          # normality, use avg max prob confidence as thr (proven to be misleading)
         
         id_ood_dataloader   = DataLoader(self.dataset_test,  batch_size= self.batch_size, num_workers= 8, shuffle= False, pin_memory= True)
         
@@ -665,20 +687,23 @@ class Baseline(OOD_Classifier):         # No model training necessary (Empty mod
         
         pred = []
         for prob in maximum_prob:
-            if prob < threshold: pred.append(1)  # OOD
-            else: pred.append(0)                 # ID
+            if prob < threshold: pred.append(0)     
+            else: pred.append(1)                   
         
         # get the list with the binary labels
         pred = np.array(pred)
-        target = test_labels[:,1]
         
+        if normality_setting:
+            target = test_labels[:,0]   # if normal_setting, positive label is ID
+        else:
+            target = test_labels[:,1]    # if normal_setting, positive label is OOD 
         # compute and save metrics 
         name_resultClass_file  = 'metrics_ood_classification_{}.json'.format(self.name_ood_data)
         metrics_class =  metrics_binClass(preds = pred, targets= target, pred_probs = None, path_save = path_results_folder, name_ood_file = name_resultClass_file)
         
         print(metrics_class)
 
-    def forward(self, x, thr_type = "fpr95"):
+    def forward(self, x, thr_type = "fpr95_normality", normality_setting = True):
         """ discriminator forward
 
         Args:
@@ -687,8 +712,9 @@ class Baseline(OOD_Classifier):         # No model training necessary (Empty mod
             name_classifier (str): deepfake detection model used (name from models folder)
             task_type_prog (int): 3 possible values: 0 for binary classification, 1 for multi-class classificaiton, 2 multi-label classification
             name_ood_data (str): name of the dataset/CDDB scenario used as ood data, if is a partition of CDDB specify the scenario: "content","group","mix", Default is None. 
-            thr_type (str): choose which kind of threhsold use between "fpr95" (fpr at tpr 95%) or "avg_confidence", or "thr_de",  Default is "fpr95".
-            
+            thr_type (str): choose which kind of threhsold use between "fpr95_normality" (fpr at tpr 95%) or "avg_confidence",
+            "threshold_normality",  Default is "fpr95_normality".
+            normality setting" (str, optional): used to define positive label, in normality is ID data, in abnormality is OOD data. Default is True
         """        
         if not(isinstance(x, T.Tensor)):
             x = T.tensor(x)
@@ -709,12 +735,18 @@ class Baseline(OOD_Classifier):         # No model training necessary (Empty mod
             print(e)
             print("No data found at path {}".format(path_result_save))
             
-        if thr_type == "fpr95":
-            threshold = data['fpr95']
-        elif thr_type == "thr_de":
-            threshold = data['threshold']
-        else:                                      
-            threshold = data['avg_confidence']
+        if thr_type == "fpr95_normality":
+            threshold = data['fpr95_normality']         # normality, positive label ID 
+        elif thr_type == "threshold_normality":
+            threshold = data['threshold_normality']
+            
+        # elif thr_type == "fpr95_abnormality":
+        #     threshold = data['fpr95_abnormality']       # abnormality, positive label OOD 
+        # elif thr_type == "threshold_abnormality":
+        #     threshold = data['threshold_abnormality']
+            
+        else:   # for the normality setting                                      
+            threshold = data['avg_confidence']          # normality, use avg max prob confidence as thr (proven to be misleading)
         
         # compute mx prob 
         x = x.to(self.device)
@@ -728,7 +760,10 @@ class Baseline(OOD_Classifier):         # No model training necessary (Empty mod
         maximum_prob = np.max(probs, axis=1)
         
         # apply binary threshold
-        pred = np.where(condition= maximum_prob < threshold, x=1, y=0)  # if true set x otherwise set y
+        if normality_setting:
+            pred = np.where(condition= maximum_prob < threshold, x=0, y=1)  # if true set x otherwise set y
+        else:
+            pred = np.where(condition= maximum_prob < threshold, x=1, y=0)  # if true set x otherwise set y
         return pred
 
 # TODO check odin correctness
@@ -736,7 +771,7 @@ class Baseline_ODIN(OOD_Classifier):        # No model training necessary (Empty
     """
         OOD detection baseline using softmax probability + ODIN framework
     """
-    def __init__(self, classifier, name_ood_data,  task_type_prog, id_data_test , ood_data_test , id_data_train = None, ood_data_train = None, useGPU = True):
+    def __init__(self, classifier, task_type_prog, name_ood_data, id_data_test , ood_data_test , id_data_train = None, ood_data_train = None, useGPU = True):
         """
         OOD_Baseline instantiation 
 
@@ -748,27 +783,28 @@ class Baseline_ODIN(OOD_Classifier):        # No model training necessary (Empty
         """
         super(Baseline_ODIN, self).__init__(id_data_test = id_data_test, ood_data_test = ood_data_test,                  \
                                            id_data_train = id_data_train, ood_data_train = ood_data_train, useGPU = useGPU)
+        # name of the OOD detection technique
+        self.name = "ODIN+baseline"
+        
         # set the classifier
-        self.classifier  = classifier
-        self.task_type_prog = task_type_prog
-        self.name_ood_data  = name_ood_data
+        self.classifier         = classifier
+        self.name_classifier    = self.classifier.classifier_name
+        self.task_type_prog     = task_type_prog
+        self.name_ood_data      = name_ood_data
         # load the Pytorch dataset here
         try:
             self.dataset_test  = OOD_dataset(self.id_data_test, self.ood_data_test, balancing_mode = "max")
         except:
             print("Dataset data is not valid, please use instances of class torch.Dataset")
         
-        # name of the classifier
-        self.name = "ODIN+baseline"
-        self.name_classifier = self.classifier.classifier_name
-        
+
         
     def test_probabilties(self):
         """ testing function using probabilty-based metrics, computing OOD metrics that are not threshold related
         """
         
         # define the dataloader 
-        id_ood_dataloader   = DataLoader(self.dataset_test,  batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
+        id_ood_dataloader = DataLoader(self.dataset_test,  batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
         
         # use model on selected device
         self.classifier.model.to(self.device)
@@ -783,7 +819,7 @@ class Baseline_ODIN(OOD_Classifier):        # No model training necessary (Empty
             # if idx >= 5: break
             
             x = x.to(self.device)
-            x = self.odin_perturbations(x,self.classifier, is_batch=True)
+            x = self.odin_perturbations(x,self.classifier, is_batch=True)  # ODIN step 1
             
             with T.no_grad():
                 with autocast():
@@ -797,7 +833,8 @@ class Baseline_ODIN(OOD_Classifier):        # No model training necessary (Empty
             dl_labels = np.append(dl_labels, y, axis= 0)
             
         # to softmax probabilities
-        probs = self.softmax_temperature(pred_logits)
+        probs = self.softmax_temperature(pred_logits)     # ODIN step 2
+        # probs = self._softmax(pred_logits)
    
         # separation of id/ood labels and probabilities
         id_labels  =  dl_labels[:,0]                # filter by label column
@@ -839,10 +876,10 @@ class Baseline_ODIN(OOD_Classifier):        # No model training necessary (Empty
         abnorm_base_rate = round(100*(prob_ood.shape[0]/(prob_id.shape[0] + prob_ood.shape[0])),2)
         print("\tbase rate(%): {}".format(abnorm_base_rate))
         print("\tKL divergence (entropy)")
-        kl_abnorm_aupr, kl_abnorm_auroc = self.compute_curves(-entropy_id, -entropy_ood, positive_reversed= True)
+        kl_abnorm_aupr, kl_abnorm_auroc = self.compute_curves(1-entropy_id, 1-entropy_ood, positive_reversed= True)
         # kl_abnorm_aupr, kl_abnorm_auroc = self.compute_curves(1-entropy_id, 1-entropy_ood, positive_reversed= True)
         print("\tPrediction probability")
-        p_abnorm_aupr, p_abnorm_auroc = self.compute_curves(-maximum_prob_id, -maximum_prob_ood, positive_reversed= True)
+        p_abnorm_aupr, p_abnorm_auroc = self.compute_curves(1-maximum_prob_id, 1-maximum_prob_ood, positive_reversed= True)
         # p_abnorm_aupr, p_abnorm_auroc = self.compute_curves(1-maximum_prob_id, 1-maximum_prob_ood, positive_reversed= True)
 
         # compute fpr95, detection_error and threshold_error 
@@ -886,9 +923,12 @@ class Baseline_ODIN(OOD_Classifier):        # No model training necessary (Empty
 
             },
             "avg_confidence":   float(conf_all),
-            "fpr95":            float(metrics_norm['fpr95']),
-            "detection_error":  float(metrics_norm['detection_error']),
-            "threshold":        float(metrics_norm['thr_de'])
+            "fpr95_normality":              float(metrics_norm['fpr95']),
+            "detection_error_normality":    float(metrics_norm['detection_error']),
+            "threshold_normality":          float(metrics_norm['thr_de']),
+            "fpr95_abnormality":            float(metrics_abnorm['fpr95']),
+            "detection_error_abnormality":  float(metrics_abnorm['detection_error']),
+            "threshold_abnormality":        float(metrics_abnorm['thr_de'])
             
         }
         
@@ -902,7 +942,7 @@ class Baseline_ODIN(OOD_Classifier):        # No model training necessary (Empty
                   
             saveJson(path_file = path_result_save, data = data)
         
-    def forward(self, x, thr_type = "fpr95"):
+    def forward(self, x, thr_type = "fpr95_normality", normality_setting = True):
         """ discriminator forward
 
         Args:
@@ -912,7 +952,9 @@ class Baseline_ODIN(OOD_Classifier):        # No model training necessary (Empty
             task_type_prog (int): 3 possible values: 0 for binary classification, 1 for multi-class classificaiton, 2 multi-label classification
             name_ood_data (str): name of the dataset/CDDB scenario used as ood data, if is a partition of CDDB specify the scenario: "content","group","mix", Default is None. 
             thr_type (str): choose which kind of threhsold use between "fpr95" (fpr at tpr 95%) or "avg_confidence", or "thr_de",  Default is "fpr95".
-            
+            thr_type (str): choose which kind of threhsold use between "fpr95_normality" (fpr at tpr 95%) or "avg_confidence",
+                            "threshold_normality",  Default is "fpr95_normality".
+            normality setting" (str, optional): used to define positive label, in normality is ID data, in abnormality is OOD data. Default is True
         """        
         if not(isinstance(x, T.Tensor)):
             x = T.tensor(x)
@@ -933,12 +975,13 @@ class Baseline_ODIN(OOD_Classifier):        # No model training necessary (Empty
             print(e)
             print("No data found at path {}".format(path_result_save))
             
-        if thr_type == "fpr95":
-            threshold = data['fpr95']
-        elif thr_type == "thr_de":
-            threshold = data['threshold']
-        else:                                      
-            threshold = data['avg_confidence']
+        if thr_type == "fpr95_normality":
+            threshold = data['fpr95_normality']         # normality, positive label ID 
+        elif thr_type == "threshold_normality":
+            threshold = data['threshold_normality']
+            
+        else:   # for the normality setting                                      
+            threshold = data['avg_confidence']          # normality, use avg max prob confidence as thr (proven to be misleading)
         
         # compute mx prob 
         x = x.to(self.device)
@@ -954,7 +997,10 @@ class Baseline_ODIN(OOD_Classifier):        # No model training necessary (Empty
         maximum_prob = np.max(probs, axis=1)
         
         # apply binary threshold
-        pred = np.where(condition= maximum_prob < threshold, x=1, y=0)  # if true set x otherwise set y
+        if normality_setting:
+            pred = np.where(condition= maximum_prob < threshold, x=0, y=1)  # if true set x otherwise set y
+        else:
+            pred = np.where(condition= maximum_prob < threshold, x=1, y=0)  # if true set x otherwise set y
         return pred
         
 class Abnormality_module(OOD_Classifier):   # model training necessary 
@@ -968,7 +1014,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         """ 
         
             scenario (str): choose between: "content", "mix", "group"
-            model_type (str): choose between avaialbe model for the abnrormality module: "basic"   
+            model_type (str): choose between avaialbe model for the abnrormality module: "basic","encoder"   
             
         """
         super(Abnormality_module, self).__init__(useGPU=useGPU)
@@ -991,7 +1037,8 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         if not batch_size == "dafault":   # default batch size is defined in the superclass 
             self.batch_size             = int(batch_size)
             
-        self.lr                     = 1e-4
+        # self.lr                     = 1e-4
+        self.lr                     = 1e-3
         self.n_epochs               = 30
         self.weight_decay           = 1e-3                  # L2 regularization term 
         
@@ -1018,8 +1065,11 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         probs_softmax, encoding, residual_flatten = self._forward_A(x)
         
         if self.model_type == "basic":
-            self.model = Abnormality_module_Basic(probs_softmax_shape = probs_softmax.shape, encoding_shape = encoding.shape, residual_flat_shape = residual_flatten.shape)
-
+            self.model = Abnormality_module_Basic(probs_softmax.shape, encoding.shape, residual_flatten.shape)
+        if self.model_type == "encoder":
+            self.model = Abnormality_module_Encoder_v1(probs_softmax.shape, encoding.shape, residual_flatten.shape)
+            # self.model = TestModel(residual_flatten.shape)
+        
         self.model.to(self.device)
         self.model.eval()
     
@@ -1145,24 +1195,25 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         return logger
     
     def _forward_A(self, x, verbose = False):
+
         logits, reconstruction, encoding = self.classifier.model.forward(x)
         prob_softmax = T.nn.functional.softmax(logits, dim=1)
+        
         if verbose: 
             print("prob shape -> ", prob_softmax.shape)
             print("encoding shape -> ",encoding.shape)
         
         # from reconstuction to residual
         residual = T.square(reconstruction - x)
-        residual_flatten = T.flatten(residual, start_dim=1)
+        # residual_flatten = T.flatten(residual, start_dim=1)
         
         if verbose: 
             print("residual shape ->", reconstruction.shape)
-            print("residual (flatten) shape ->",residual_flatten.shape)
         
-        return prob_softmax, encoding, residual_flatten
+        return prob_softmax, encoding, residual
 
-    def _forward_B(self, prob_softmax, encoding, residual_flatten, verbose = False):
-        y = self.model.forward(prob_softmax, encoding, residual_flatten)
+    def _forward_B(self, prob_softmax, encoding, residual, verbose = False):
+        y = self.model.forward(prob_softmax, encoding, residual)
         if verbose: print("y shape", y.shape)
         return y
         
@@ -1185,9 +1236,9 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
          
         x = x.to(self.device)
         
-        prob_softmax, encoding, residual_flatten = self._forward_A(x)
+        prob_softmax, encoding, residual = self._forward_A(x)
         
-        logit = self._forward_B(prob_softmax, encoding, residual_flatten)
+        logit = self._forward_B(prob_softmax, encoding, residual)
         
         out   = self.sigmoid(logit)
         
@@ -1227,18 +1278,21 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             
             x = x.to(self.device)
             # y = y.to(self.device).to(T.float32)
-            y = y.to(self.device).to(T.float32)
+            
             # take only label for the positive class (fake)
             y = y[:,1]
+            y = y.to(self.device).to(T.float32)
+
             
             with T.no_grad():
                 with autocast():
                     
-                    prob_softmax, encoding, residual_flatten = self._forward_A(x)
+                    prob_softmax, encoding, residual = self._forward_A(x)
                     
-                    if self.model_type == "basic":
-                        logit = self._forward_B(prob_softmax, encoding, residual_flatten)
-                        logit = T.squeeze(logit)
+                    if self.model_type in ["basic", "encoder"]:
+                        # logit = self._forward_B(prob_softmax, encoding, residual)
+                        # logit = T.squeeze(logit)
+                        logit = T.squeeze(self.model.forward(prob_softmax, encoding, residual))
                     else:
                         raise ValueError("Forward not defined in valid function for model: {}".format(self.model_type))
                     
@@ -1256,11 +1310,9 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         print(f"Loss from validation: {loss_valid}")
         return loss_valid
 
-    
-    
     @duration
     def train(self, additional_name = "", task_type_prog = None, test_loop = False):
-        # """ requried the ood data name to recognize the task"""
+        # """ requried the ood data name to recognize the task """
         
         # 1) prepare meta-data
         self._meta_data(task_type_prog= task_type_prog)
@@ -1268,23 +1320,26 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         
         current_date        = date.today().strftime("%d-%m-%Y")   
         train_name          = self.name + "_" + self.model_type + "_"+ additional_name + "_" + current_date
-        path_save_model     = self.get_path2SaveModels(train_name=train_name)   # specify train_name for an additional depth layer in the models file system
-        path_save_results   = self.get_path2SaveResults(train_name=train_name)
+        path_save_model     = self.get_path2SaveModels(train_name  =train_name)   # specify train_name for an additional depth layer in the models file system
+        path_save_results   = self.get_path2SaveResults(train_name =train_name)
         self.train_name     = train_name
         
         # 2) prepare the training components
         
         self.model.train()
         
-        train_dl = DataLoader(self.dataset_train, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
-        valid_dl = DataLoader(self.dataset_valid, batch_size=self.batch_size,  num_workers= 8, shuffle= True, pin_memory= True) 
+        train_dl = DataLoader(self.dataset_train, batch_size= self.batch_size,  num_workers = 8,  shuffle= True,   pin_memory= False)
+        valid_dl = DataLoader(self.dataset_valid, batch_size= self.batch_size,  num_workers = 8, shuffle = False,  pin_memory= False) 
         
         # compute number of steps for epoch
         n_steps = len(train_dl)
         print("Number of steps per epoch: {}".format(n_steps))
         
+        # self.optimizer =  Adam(self.model.parameters(), lr = self.lr, weight_decay =  self.weight_decay)
         self.optimizer =  Adam(self.model.parameters(), lr = self.lr, weight_decay =  self.weight_decay)
+        
         self.scheduler = lr_scheduler.OneCycleLR(self.optimizer, max_lr=self.lr, steps_per_epoch=n_steps, epochs=self.n_epochs, pct_start=0.3)
+        # self.scheduler = None
         scaler = GradScaler()
         
         # initialize logger
@@ -1308,49 +1363,64 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             # update the last epoch for training the model
             last_epoch = epoch_idx +1
             
+            time1 = []
+            time2 = []
+            
             # loop over steps
             for step_idx,(x,y) in tqdm(enumerate(train_dl), total= n_steps):
+                
+                # if step_idx >= 50: break
                 
                 # test steps loop for debug
                 if test_loop and step_idx+1 == 5: break
                 
-                # adjust labels if cutmix has been not applied (from indices to one-hot encoding)
+                # if step_idx == 20: break
+                # zeroing the gradient
+                self.optimizer.zero_grad()
+                
                 
                 # prepare samples/targets batches 
                 x = x.to(self.device)
                 x.requires_grad_(True)
-                y = y.to(self.device)               # binary int encoding for each sample
-                y = y.to(T.float)
+                      
+                y = y[:,1]                           # take only label for the positive class (fake)
+                y = y.to(self.device).to(T.float32)               # binary int encoding for each sample
                 
-                # take only label for the positive class (fake)
-                y = y[:,1]
-
                 # print(x.shape)
                 # print(y.shape)
                 
-                # zeroing the gradient
-                self.optimizer.zero_grad()
-                
                 # model forward and loss computation
+                
+                s_1 = time()
+                with T.no_grad():  # avoid storage gradient for the classifier
+                        prob_softmax, encoding, residual = self._forward_A(x)
+                
+                time1.append(time()- s_1) 
+                
                 with autocast():
+                    s_2 = time()
+                                       
+                    prob_softmax.requires_grad_(True)
+                    encoding.requires_grad_(True)
+                    residual.requires_grad_(True)
                     
-                    
-                    prob_softmax, encoding, residual_flatten = self._forward_A(x)
-                                        
-                    # if not basic Abnromality model, do recuction here
-                    
-
-                    if self.model_type == "basic":
-                        logit = self._forward_B(prob_softmax, encoding, residual_flatten)
-                        logit = T.squeeze(logit)
+                   
+                    if self.model_type in ["basic", "encoder"]:
+                        pass
+                        # logit = self._forward_B(prob_softmax, encoding, residual)
+                        # logit = T.squeeze(self.model.forward(residual))
+                        logit = T.squeeze(self.model.forward(prob_softmax, encoding, residual))
                     else:
                         raise ValueError("Forward not defined in train function for model: {}".format(self.model_type))
                     # print(logit.shape)
-                    
+                    time2.append(time()- s_2)
 
                     loss = self.bce(input=logit, target= y)
                     # print(loss)
-                    
+                 
+
+                # Exit the autocast() context manager
+                autocast(enabled=False)
                 
                 if loss_epoch>max_loss_epoch    : max_loss_epoch = round(loss_epoch,4)
                 if loss_epoch<min_loss_epoch    : min_loss_epoch = round(loss_epoch,4)
@@ -1360,16 +1430,27 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
                 
                 # loss backpropagation
                 scaler.scale(loss).backward()
+                # loss.backward()
                 
+                # (Optional) Clip gradients to prevent exploding gradients
+                T.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                                
                 # compute updates using optimizer
                 scaler.step(self.optimizer)
+                # self.optimizer.step()
 
                 # update weights through scaler
                 scaler.update()
                 
                 # lr scheduler step 
                 self.scheduler.step()
-                
+            
+            # T.cuda.empty_cache()
+            
+            print("Time (avg) for forward module A -> ",round(sum(time1)/len(time1),5))   
+            print("Time (avg) for forward module B -> ",round(sum(time2)/len(time2),5))
+            
+            
             # compute average loss for the epoch
             avg_loss = round(loss_epoch/n_steps,4)
             loss_epochs.append(avg_loss)
@@ -1377,6 +1458,8 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             
             # include validation here if needed
             criterion = self.valid(epoch=epoch_idx+1, valid_dl = valid_dl)
+            # criterion = 0
+            
             valid_history.append(criterion)  
 
                         
@@ -1418,9 +1501,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
     def test_risk(self, task_type_prog = None):
         # 1) prepare meta-data
         self._meta_data(task_type_prog= task_type_prog)
-        
         self.model.eval()
-        
         
         # 2) prepare test
         test_dl = DataLoader(self.dataset_test, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
@@ -1442,11 +1523,11 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             with T.no_grad():
                 with autocast():
                     
-                    prob_softmax, encoding, residual_flatten = self._forward_A(x)
+                    prob_softmax, encoding, residual = self._forward_A(x)
                                         
                     # if not basic Abnromality model, do recuction here
                     
-                    logit = self._forward_B(prob_softmax, encoding, residual_flatten)
+                    logit = self._forward_B(prob_softmax, encoding, residual)
                     # risk = T.squeeze(risk)
                     risk =self.sigmoid(logit)
                     
@@ -1555,9 +1636,9 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
 
             },
             "avg_confidence":   float(conf_all),
-            "fpr95":            float(metrics_norm['fpr95']),
-            "detection_error":  float(metrics_norm['detection_error']),
-            "threshold":        float(metrics_norm['thr_de'])
+            "fpr95_normality":            float(metrics_norm['fpr95']),
+            "detection_error_normality":  float(metrics_norm['detection_error']),
+            "threshold_normality":        float(metrics_norm['thr_de'])
             
         }
         
@@ -1591,18 +1672,21 @@ if __name__ == "__main__":
         ood_detector = Baseline(classifier= None, id_data_test = None, ood_data_test = None, useGPU= True)
         ood_detector.verify_implementation()
      
-    def test_baseline_resnet50_CDDB_CIFAR(name_model, epoch):
+    def test_baseline_facesCDDB_CIFAR():
         # select executions
-        exe = [1,1]
+        exe = [1,0]
         
         # [1] load deep fake classifier
-        bin_classifier = DFD_BinClassifier_v1(model_type="resnet_pretrained")
-        bin_classifier.load(name_model, epoch)
+        bin_classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
+        bin_classifier.load(classifier_name, classifier_epoch)
         
         # [2] define the id/ood data
         
         # id_data_train    = CDDB_binary(train = True, augment = False
-        id_data_test     = CDDB_binary(train = False, augment = False)
+        # laod id data test
+        id_data_train      = CDDB_binary_Partial(scenario = "content", train = True,  ood = False, augment = False, label_vector= True)
+        id_data_test       = CDDB_binary_Partial(scenario = "content", train = False, ood = False, augment = False, label_vector= True)
+        _ , id_data_test   = sampleValidSet(trainset = id_data_train, testset= id_data_test, useOnlyTest = True, verbose = True)
         # ood_data_train   = getCIFAR100_dataset(train = True)
         ood_data_test    = getCIFAR100_dataset(train = False)
         
@@ -1613,10 +1697,10 @@ if __name__ == "__main__":
         if exe[0]: ood_detector.test_probabilties()
         
         # [5] launch testing
-        if exe[1]: ood_detector.test_threshold()
-    
-    # TODO recompute the baseline data with cifar OOD
-    
+        if exe[1]:
+            # ood_detector.test_threshold(thr_type="fpr95_abnormality",   normality_setting=False)
+            ood_detector.test_threshold(thr_type="fpr95_normality",     normality_setting=True)
+      
     def test_baseline_content_faces():
         classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
         classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
@@ -1633,10 +1717,28 @@ if __name__ == "__main__":
         
         ood_detector.test_probabilties()
         
-    
     # ________________________________ baseline + ODIN  ________________________________
     
-    
+    def test_baselineODIN_facesCDDB_CIFAR():
+                # [1] load deep fake classifier
+        bin_classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
+        bin_classifier.load(classifier_name, classifier_epoch)
+        
+        # [2] define the id/ood data
+        
+        # id_data_train    = CDDB_binary(train = True, augment = False
+        # laod id data test
+        id_data_train      = CDDB_binary_Partial(scenario = "content", train = True,  ood = False, augment = False, label_vector= True)
+        id_data_test       = CDDB_binary_Partial(scenario = "content", train = False, ood = False, augment = False, label_vector= True)
+        _ , id_data_test   = sampleValidSet(trainset = id_data_train, testset= id_data_test, useOnlyTest = True, verbose = True)
+        # ood_data_train   = getCIFAR100_dataset(train = True)
+        ood_data_test    = getCIFAR100_dataset(train = False)
+        
+        # [3] define the detector
+        ood_detector = Baseline_ODIN(classifier=bin_classifier, task_type_prog= 0, name_ood_data="cifar100", id_data_test = id_data_test, ood_data_test = ood_data_test, useGPU= True)
+        
+        # [4] launch analyzer/training
+        ood_detector.test_probabilties()
     
     def test_baselineOdin_content_faces():
         classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
@@ -1654,6 +1756,7 @@ if __name__ == "__main__":
         
         ood_detector.test_probabilties()
     
+
     # ________________________________ abnormality module  _____________________________
     
     def train_abn_basic():
@@ -1667,7 +1770,12 @@ if __name__ == "__main__":
         # y = abn.forward(x)
         # print(y)
     
-    def train_abn_():pass
+    def train_abn_encoder():
+        classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
+        classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
+        
+        abn = Abnormality_module(classifier, scenario="content", model_type="encoder")
+        abn.train(additional_name="112p", test_loop=False)
     
     def test_abn_content_faces(name_model, epoch):
         classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
@@ -1679,9 +1787,11 @@ if __name__ == "__main__":
         abn.test_risk()
     
     # test_baseline_content_faces()
-    train_abn_basic()
-
-    pass
+    train_abn_encoder()
+    
+    
+    # test_baseline_facesCDDB_CIFAR()
+    # test_baselineODIN_facesCDDB_CIFAR()
 
     #                           [End test section] 
    
@@ -1689,10 +1799,8 @@ if __name__ == "__main__":
             Past test/train launched: 
             
     test_baseline_implementation()
-    test_baseline_resnet50_CDDB_CIFAR("resnet50_ImageNet_13-10-2023", 20)
-    test_baseline_resnet50_CDDB_CIFAR("faces_resnet50_ImageNet_04-11-2023", 24)
-    test_baseline_resnet50_CDDB_CIFAR("group_resnet50_ImageNet_05-11-2023", 26)
-    test_baseline_resnet50_CDDB_CIFAR("mix_resnet50_ImageNet_05-11-2023", 21)
+    test_baseline_CDDB_CIFAR()
+    test_baseline_content_faces()
     
     
     
