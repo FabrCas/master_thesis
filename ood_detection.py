@@ -15,7 +15,7 @@ from    torch.cuda.amp      import GradScaler, autocast
 from    dataset             import CDDB_binary, CDDB_binary_Partial, CDDB, CDDB_Partial, OOD_dataset, getCIFAR100_dataset, getMNIST_dataset, getFMNIST_dataset
 from    experiments         import MNISTClassifier_keras
 from    bin_classifier      import DFD_BinClassifier_v4
-from    models              import Abnormality_module_Basic, Abnormality_module_Encoder_v1, TestModel
+from    models              import Abnormality_module_Basic, Abnormality_module_Encoder_v1, Abnormality_module_Encoder_v2,Abnormality_module_Encoder_v3
 from    utilities           import saveJson, loadJson, metrics_binClass, metrics_OOD, print_dict, showImage, check_folder, sampleValidSet, \
                             mergeDatasets, ExpLogger, loadModel, saveModel, duration, plot_loss, plot_valid
 
@@ -44,7 +44,7 @@ class OOD_Classifier(object):
         if self.useGPU: self.device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
         else: self.device = "cpu"
         
-        self.batch_size   =  128  # 32 -> basic, 64/128 -> encoder
+        self.batch_size   =  256  # 32 -> basic, 64/128 -> encoder
         
     #                                       math/statistics aux functions
     
@@ -1027,7 +1027,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         
         self.name               = "Abnormality_module"
         self.name_classifier    = self.classifier.classifier_name
-        self.name_train         = None
+        self.train_name         = None
         self._meta_data()
         
         # abnormality module (module B) definition
@@ -1039,7 +1039,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             
         # self.lr                     = 1e-4
         self.lr                     = 1e-3
-        self.n_epochs               = 30
+        self.n_epochs               = 50
         self.weight_decay           = 1e-3                  # L2 regularization term 
         
         # load data ID/OOD
@@ -1055,6 +1055,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         
         # instantiation aux elements
         self.bce     = F.binary_cross_entropy_with_logits   # performs sigmoid internally
+        # self.ce      = F.cross_entropy()
         self.sigmoid = F.sigmoid
         self.softmax = F.softmax
         
@@ -1066,9 +1067,17 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         
         if self.model_type == "basic":
             self.model = Abnormality_module_Basic(probs_softmax.shape, encoding.shape, residual_flatten.shape)
+            self.classifier.model.large_encoding = True
         if self.model_type == "encoder":
             self.model = Abnormality_module_Encoder_v1(probs_softmax.shape, encoding.shape, residual_flatten.shape)
-            # self.model = TestModel(residual_flatten.shape)
+            self.classifier.model.large_encoding = True
+        if self.model_type == "encoder_v2":
+            self.model = Abnormality_module_Encoder_v2(probs_softmax.shape, encoding.shape, residual_flatten.shape)
+            self.classifier.model.large_encoding = True
+        if self.model_type == "encoder_v3":
+            self.model = Abnormality_module_Encoder_v3(probs_softmax.shape, encoding.shape, residual_flatten.shape)
+            self.classifier.model.large_encoding = False
+
         
         self.model.to(self.device)
         self.model.eval()
@@ -1157,10 +1166,16 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             input_shape = str(self.model.input_shape)
         except:
             input_shape = "empty"
+            
+        try:
+            large_encoding_classifier  = self.classifier.model.large_encoding
+        except:
+            large_encoding_classifier = True
         
         return {
             "date_training": date.today().strftime("%d-%m-%Y"),
             "model": self.model_type,
+            "large_encoding_classifier": large_encoding_classifier,
             "input_shape": input_shape,
             "data_scenario": self.scenario,
             "optimizer": self.optimizer.__class__.__name__,
@@ -1289,7 +1304,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
                     
                     prob_softmax, encoding, residual = self._forward_A(x)
                     
-                    if self.model_type in ["basic", "encoder"]:
+                    if self.model_type == "basic" or "encoder" in self.model_type:
                         # logit = self._forward_B(prob_softmax, encoding, residual)
                         # logit = T.squeeze(logit)
                         logit = T.squeeze(self.model.forward(prob_softmax, encoding, residual))
@@ -1297,7 +1312,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
                         raise ValueError("Forward not defined in valid function for model: {}".format(self.model_type))
                     
 
-                    loss = self.bce(input=logit, target=y)   # logits bce version
+                    loss = self.bce(input=logit, target=y)   # logits bce version, peforms first sigmoid and binary cross entropy on the output
                     losses.append(loss.item())
 
                         
@@ -1405,7 +1420,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
                     residual.requires_grad_(True)
                     
                    
-                    if self.model_type in ["basic", "encoder"]:
+                    if self.model_type == "basic" or "encoder" in self.model_type:
                         pass
                         # logit = self._forward_B(prob_softmax, encoding, residual)
                         # logit = T.squeeze(self.model.forward(residual))
@@ -1433,7 +1448,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
                 # loss.backward()
                 
                 # (Optional) Clip gradients to prevent exploding gradients
-                T.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                # T.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                                 
                 # compute updates using optimizer
                 scaler.step(self.optimizer)
@@ -1774,7 +1789,7 @@ if __name__ == "__main__":
         classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
         classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
         
-        abn = Abnormality_module(classifier, scenario="content", model_type="encoder")
+        abn = Abnormality_module(classifier, scenario="content", model_type="encoder_v3")
         abn.train(additional_name="112p", test_loop=False)
     
     def test_abn_content_faces(name_model, epoch):

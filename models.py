@@ -1144,8 +1144,8 @@ class Unet4_Scorer(Project_conv_model):
         U-net 4 + Scorer, 4 encoders and 4 decoders
     """
 
-    def __init__(self, n_classes= 10):
-        super(Unet4_Scorer,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = n_classes)
+    def __init__(self, n_classes= 10,  large_encoding = False):
+        super(Unet4_Scorer,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = n_classes,)
         print("Initializing {} ...".format(self.__class__.__name__))
 
         self.features_order = UNET_EXP_FMS   # orders greater and equal than 5 saturates the GPU!
@@ -1153,6 +1153,7 @@ class Unet4_Scorer(Project_conv_model):
         # self.bottleneck_size = int(self.feature_maps(4)*(self.width/16)*(self.width/16))
         self.bottleneck_size = int(self.feature_maps(4)*math.floor(self.width/16)**2) 
         self.n_levels = 4
+        self.large_encoding = large_encoding
         # create net and initialize
         self._createNet()
         
@@ -1214,7 +1215,7 @@ class Unet4_Scorer(Project_conv_model):
         # self.model = nn.Sequential(self.encoder, self.decoder)
 
 
-    def forward(self, x):
+    def forward(self, x, verbose = False):
         """
             Returns: logits, reconstruction, encoding
         """
@@ -1228,26 +1229,34 @@ class Unet4_Scorer(Project_conv_model):
         # bottleneck (encoding)
         bottleneck = self.b(p4)
         enc         = self.flatten(bottleneck)
-        # print(enc.shape)
+        
+        if verbose: print ("enc shape ", enc.shape)
+
         
         # classification
-        # f1          = self.relu(self.bn1(self.fc1(enc)))
-        # f1_drop     = self.do(f1)
-        # f2          = self.relu(self.bn2(self.fc2(f1_drop)))
-        # f2_drop     = self.do(f2)
-        # logits      = self.fc3(f2_drop)
         
-        out         = self.relu(self.bn1(self.fc1(enc)))
-        out         = self.do(out)
-        out         = self.relu(self.bn2(self.fc2(out)))
-        out         = self.do(out)
-        out         = self.relu(self.bn3(self.fc3(out)))
-        out         = self.do(out)
-        out         = self.relu(self.bn4(self.fc4(out)))
-        out         = self.do(out)
-        logits      = self.fc5(out)
+        c1          = self.relu(self.bn1(self.fc1(enc)))
+        c1d         = self.do(c1)
         
+        c2          = self.relu(self.bn2(self.fc2(c1d)))
+        c2d         = self.do(c2)
         
+        c3          = self.relu(self.bn3(self.fc3(c2d)))
+        c3d         = self.do(c3)
+        
+        c4          = self.relu(self.bn4(self.fc4(c3d)))
+        c4d         = self.do(c4)
+        
+        logits      = self.fc5(c4d)
+        
+        if verbose:
+            print("c1 shape ", c1.shape, "\n", "c2 shape ", c2.shape, "\n", "c3 shape ", c3.shape, "\n","c4 shape ", c4.shape, "\n")
+        
+        # select large or small encoding for the forward 
+        if self.large_encoding:
+            encoding = enc
+        else:
+            encoding = c1
         
 
         # decoder 
@@ -1258,7 +1267,7 @@ class Unet4_Scorer(Project_conv_model):
         
         # reconstuction
         rec = self.decoder_out_fn(self.out(d4))  # check sigmoid vs tanh
-        return logits, rec, enc
+        return logits, rec, encoding
 
 class Unet5_Scorer(Project_conv_model):
     """
@@ -2352,26 +2361,35 @@ class Encoder_block_v2(nn.Module):
     """ it reduces the spatial dimensionality of half """ 
     def __init__(self, in_c, out_c):
         super().__init__()
-        self.conv1 = nn.Conv2d(in_c, out_c, kernel_size=3, stride = 2, padding=1)
+        self.conv1 = nn.Conv2d(in_c, out_c, kernel_size=3, stride = 1, padding=1)
         self.bn1 = nn.BatchNorm2d(out_c)
         self.conv2 = nn.Conv2d(out_c, out_c, kernel_size=3, stride = 2, padding=1)
         self.bn2 = nn.BatchNorm2d(out_c)
-        self.relu = nn.ReLU()
+        self.conv3 = nn.Conv2d(out_c, out_c, kernel_size=3, stride = 1, padding=1)
+        self.bn3 = nn.BatchNorm2d(out_c)
+        # self.relu = nn.ReLU()
+        self.gelu = T.nn.GELU()
         
     def forward(self, inputs):
         x = self.conv1(inputs)
         x = self.bn1(x)
-        x = self.relu(x)
+        x = self.gelu(x)
         x = self.conv2(x)
         x = self.bn2(x)
-        x = self.relu(x)
+        x = self.gelu(x)
+        x = self.conv3(x)
+        x = self.bn3(x)
+        x = self.gelu(x)
         return x
 
 
 class Abnormality_module_Encoder_v2(Project_abnorm_model):
     
-    """
-    
+    """ 
+        based on Abnormality_module_Encoder_v1:
+        - it substitue the Encoder_block (conv + pooling) with Encoder_block_v2 (just conv)
+        - it increases the number of neurons in the net
+        - add one fc layer 
     """
     
     def __init__(self, shape_softmax_probs, shape_encoding, shape_residual):
@@ -2392,13 +2410,15 @@ class Abnormality_module_Encoder_v2(Project_abnorm_model):
 
         # conv section
         
-        self.e1 = Encoder_block(in_c =  self.residual_shape[1] , out_c = 16)
-        self.e2 = Encoder_block(in_c =  16, out_c = 32)
-        self.e3 = Encoder_block(in_c =  32, out_c = 64)
+        self.e1 = Encoder_block_v2(in_c =  self.residual_shape[1] , out_c = 16)
+        self.e2 = Encoder_block_v2(in_c =  16, out_c = 32)
+        self.e3 = Encoder_block_v2(in_c =  32, out_c = 64)
         # e2 = Encoder_block(in_c =  64, out_c = 128)
         
-        tot_features_1      = 2048
-        tot_features_2      = 1024
+        tot_features_1      = 4096
+        tot_features_2      = 2048
+        tot_features_3      = 1024
+        
         
         # # taken from official work 
         tot_feaures_risk_1  = 512
@@ -2413,9 +2433,11 @@ class Abnormality_module_Encoder_v2(Project_abnorm_model):
         self.bn1 = T.nn.BatchNorm1d(tot_features_1)
         self.fc2 = T.nn.Linear(tot_features_1,tot_features_2)
         self.bn2 = T.nn.BatchNorm1d(tot_features_2)
+        self.fc3 = T.nn.Linear(tot_features_2,tot_features_3)
+        self.bn3 = T.nn.BatchNorm1d(tot_features_3)
         
         # risk section
-        self.fc_risk_1      = T.nn.Linear(tot_features_2,tot_feaures_risk_1)
+        self.fc_risk_1      = T.nn.Linear(tot_features_3,tot_feaures_risk_1)
         self.bn_risk_1      = T.nn.BatchNorm1d(tot_feaures_risk_1)
         self.fc_risk_2      = T.nn.Linear(tot_feaures_risk_1,tot_feaures_risk_2)
         self.bn_risk_2      = T.nn.BatchNorm1d(tot_feaures_risk_2)
@@ -2424,12 +2446,11 @@ class Abnormality_module_Encoder_v2(Project_abnorm_model):
         
     def forward(self, probs_softmax, encoding, residual, verbose = False):
         
-        
         # conv forward for the 
-        _, residual_out = self.e1(residual)
-        _, residual_out = self.e2(residual_out)
-        _, residual_out = self.e3(residual_out)
-        
+        residual_out = self.e1(residual)
+        residual_out = self.e2(residual_out)
+        residual_out = self.e3(residual_out)
+
         # flat the residual
         flatten_residual = T.flatten(residual_out, start_dim=1)
         
@@ -2440,6 +2461,7 @@ class Abnormality_module_Encoder_v2(Project_abnorm_model):
         # preliminary layers
         x = self.gelu(self.bn1(self.fc1(x)))
         x = self.gelu(self.bn2(self.fc2(x)))
+        x = self.gelu(self.bn3(self.fc3(x)))
         
         # risk section
         x = self.gelu(self.bn_risk_1(self.fc_risk_1(x)))
@@ -2448,42 +2470,41 @@ class Abnormality_module_Encoder_v2(Project_abnorm_model):
         
         return x
 
-class TestModel(Project_abnorm_model):
+class Abnormality_module_Encoder_v3(Project_abnorm_model):
     
-    def __init__(self, shape_residual):
+    """ 
+        based on Abnormality_module_Encoder_v3:
+        - use a smaleller encoding as input (from fc layes of the scorer)
+        - higher reduction for the residual before the fc layers (more encoding blocks)
+        - consequent reduced n. params for the final fc risk section.
         
-        # self.encoding_components = 500
-        # self.residual_components = 5000
-        # self.shape_softmax_probs = shape_softmax_probs
-        # self.shape_encoding      = shape_encoding
-        # self.shape_residual      = shape_residual
-         
-        # super().__init__((-1,*shape_softmax_probs[1:]), (-1,*shape_encoding[1:]), (-1,*shape_residual[1:]))
+        **requires** output from a classifier with: classifier_name.large_encoding = False
+    """
+    
+    def __init__(self, shape_softmax_probs, shape_encoding, shape_residual):
         super().__init__()
+        
+        self.probs_softmax_shape   = shape_softmax_probs
+        self.encoding_shape = shape_encoding
         self.residual_shape = shape_residual
-        self.input_shape = shape_residual   # input_shape doesn't consider the batch
+        self.input_shape = (shape_softmax_probs, shape_encoding, shape_residual)   # input_shape doesn't consider the batch
         self._createNet()
         self._init_weights_normal()
     
     def _createNet(self):
-        # residual_length  = self.encoding_shape[1]  # flatten residual should have same dim of the encoding
-        residual_length = 12544
-        # tot_features_0          = self.shape_softmax_probs[1] + self.shape_encoding[1] + self.shape_residual[1]
-        # tot_features_0          = self.probs_softmax_shape[1] +  self.encoding_shape[1] + residual_length
-
+        
+        residual_length  = self.encoding_shape[1]  # flatten residual (after encoding) should have same dim of the encoding
+        tot_features_0          = self.probs_softmax_shape[1] +  self.encoding_shape[1] + residual_length
 
         # conv section
-        self.e1 = Encoder_block(in_c =  self.residual_shape[1] , out_c = 16)
-        self.e2 = Encoder_block(in_c =  16, out_c = 32)
-        self.e3 = Encoder_block(in_c =  32, out_c = 64)
-        # e2 = Encoder_block(in_c =  64, out_c = 128)
         
+        self.e1 = Encoder_block_v2(in_c =  self.residual_shape[1] , out_c = 4)
+        self.e2 = Encoder_block_v2(in_c =  4, out_c = 8)
+        self.e3 = Encoder_block_v2(in_c =  8, out_c = 16)
+        self.e4 = Encoder_block_v2(in_c =  16, out_c = 32)
 
-
-        tot_features_1      = 2048
-        tot_features_2      = 1024
-        
-        
+        tot_features_1      = 1024       
+         
         # # taken from official work 
         tot_feaures_risk_1  = 512
         tot_feaures_risk_2  = 128
@@ -2493,37 +2514,34 @@ class TestModel(Project_abnorm_model):
         self.sigmoid = T.nn.Sigmoid()
         
         # preliminary layers
-        self.fc1 = T.nn.Linear(residual_length,tot_features_1)
+        self.fc1 = T.nn.Linear(tot_features_0,tot_features_1)
         self.bn1 = T.nn.BatchNorm1d(tot_features_1)
-        self.fc2 = T.nn.Linear(tot_features_1,tot_features_2)
-        self.bn2 = T.nn.BatchNorm1d(tot_features_2)
         
         # risk section
-        self.fc_risk_1      = T.nn.Linear(tot_features_2,tot_feaures_risk_1)
+        self.fc_risk_1      = T.nn.Linear(tot_features_1,tot_feaures_risk_1)
         self.bn_risk_1      = T.nn.BatchNorm1d(tot_feaures_risk_1)
         self.fc_risk_2      = T.nn.Linear(tot_feaures_risk_1,tot_feaures_risk_2)
         self.bn_risk_2      = T.nn.BatchNorm1d(tot_feaures_risk_2)
         self.fc_risk_final  = T.nn.Linear(tot_feaures_risk_2,tot_feaures_final)
         self.bn_risk_final  = T.nn.BatchNorm1d(tot_feaures_final)
         
-    def forward(self, residual, verbose = False):
-        
+    def forward(self, probs_softmax, encoding, residual, verbose = False):
         
         # conv forward for the 
-        _, residual_out = self.e1(residual)
-        _, residual_out = self.e2(residual_out)
-        _, residual_out = self.e3(residual_out)
+        residual_out = self.e1(residual)
+        residual_out = self.e2(residual_out)
+        residual_out = self.e3(residual_out)
+        residual_out = self.e4(residual_out)
         
         # flat the residual
         flatten_residual = T.flatten(residual_out, start_dim=1)
         
         # build the vector input 
-        # x = T.cat((probs_softmax, encoding, flatten_residual), dim = 1)
-        # if verbose: print("input module b shape -> ", x.shape)
+        x = T.cat((probs_softmax, encoding, flatten_residual), dim = 1)
+        if verbose: print("input module b shape -> ", x.shape)
         
         # preliminary layers
-        x = self.gelu(self.bn1(self.fc1(flatten_residual)))
-        x = self.gelu(self.bn2(self.fc2(x)))
+        x = self.gelu(self.bn1(self.fc1(x)))
         
         # risk section
         x = self.gelu(self.bn_risk_1(self.fc_risk_1(x)))
@@ -2531,7 +2549,6 @@ class TestModel(Project_abnorm_model):
         x = self.gelu(self.bn_risk_final(self.fc_risk_final(x)))
         
         return x
-
        
 #_____________________________________Vision Transformer (ViT)_____________________________________        
 
@@ -2632,6 +2649,91 @@ def get_fc_classifier_Keras(input_shape = (28,28)):
     ])
 
     return model
+
+class TestModel(Project_abnorm_model):
+    
+    def __init__(self, shape_residual):
+        
+        # self.encoding_components = 500
+        # self.residual_components = 5000
+        # self.shape_softmax_probs = shape_softmax_probs
+        # self.shape_encoding      = shape_encoding
+        # self.shape_residual      = shape_residual
+         
+        # super().__init__((-1,*shape_softmax_probs[1:]), (-1,*shape_encoding[1:]), (-1,*shape_residual[1:]))
+        super().__init__()
+        self.residual_shape = shape_residual
+        self.input_shape = shape_residual   # input_shape doesn't consider the batch
+        self._createNet()
+        self._init_weights_normal()
+    
+    def _createNet(self):
+        # residual_length  = self.encoding_shape[1]  # flatten residual should have same dim of the encoding
+        residual_length = 12544
+        # tot_features_0          = self.shape_softmax_probs[1] + self.shape_encoding[1] + self.shape_residual[1]
+        # tot_features_0          = self.probs_softmax_shape[1] +  self.encoding_shape[1] + residual_length
+
+
+        # conv section
+        self.e1 = Encoder_block(in_c =  self.residual_shape[1] , out_c = 16)
+        self.e2 = Encoder_block(in_c =  16, out_c = 32)
+        self.e3 = Encoder_block(in_c =  32, out_c = 64)
+        # e2 = Encoder_block(in_c =  64, out_c = 128)
+        
+
+
+        tot_features_1      = 2048
+        tot_features_2      = 1024
+        
+        
+        # # taken from official work 
+        tot_feaures_risk_1  = 512
+        tot_feaures_risk_2  = 128
+        tot_feaures_final   = 1
+        
+        self.gelu = T.nn.GELU()
+        self.sigmoid = T.nn.Sigmoid()
+        
+        # preliminary layers
+        self.fc1 = T.nn.Linear(residual_length,tot_features_1)
+        self.bn1 = T.nn.BatchNorm1d(tot_features_1)
+        self.fc2 = T.nn.Linear(tot_features_1,tot_features_2)
+        self.bn2 = T.nn.BatchNorm1d(tot_features_2)
+        
+        # risk section
+        self.fc_risk_1      = T.nn.Linear(tot_features_2,tot_feaures_risk_1)
+        self.bn_risk_1      = T.nn.BatchNorm1d(tot_feaures_risk_1)
+        self.fc_risk_2      = T.nn.Linear(tot_feaures_risk_1,tot_feaures_risk_2)
+        self.bn_risk_2      = T.nn.BatchNorm1d(tot_feaures_risk_2)
+        self.fc_risk_final  = T.nn.Linear(tot_feaures_risk_2,tot_feaures_final)
+        self.bn_risk_final  = T.nn.BatchNorm1d(tot_feaures_final)
+        
+    def forward(self, residual, verbose = False):
+        
+        
+        # conv forward for the 
+        _, residual_out = self.e1(residual)
+        _, residual_out = self.e2(residual_out)
+        _, residual_out = self.e3(residual_out)
+        
+        # flat the residual
+        flatten_residual = T.flatten(residual_out, start_dim=1)
+        
+        # build the vector input 
+        # x = T.cat((probs_softmax, encoding, flatten_residual), dim = 1)
+        # if verbose: print("input module b shape -> ", x.shape)
+        
+        # preliminary layers
+        x = self.gelu(self.bn1(self.fc1(flatten_residual)))
+        x = self.gelu(self.bn2(self.fc2(x)))
+        
+        # risk section
+        x = self.gelu(self.bn_risk_1(self.fc_risk_1(x)))
+        x = self.gelu(self.bn_risk_2(self.fc_risk_2(x)))
+        x = self.gelu(self.bn_risk_final(self.fc_risk_final(x)))
+        
+        return x
+
 
 if __name__ == "__main__":
     #                           [Start test section] 
@@ -2761,11 +2863,13 @@ if __name__ == "__main__":
         print("residual shape ->", residual.shape)
         # print("residual (flatten) shape ->",residual_flatten.shape)
         
-        # abnorm_module = Abnormality_module_Encoder(shape_softmax_probs = softmax_prob.shape, shape_encoding=encoding.shape, shape_residual=residual.shape).to(device)
+        # abnorm_module = Abnormality_module_Encoder_v2(shape_softmax_probs = softmax_prob.shape, shape_encoding=encoding.shape, shape_residual=residual.shape).to(device)
         # abnorm_module.getSummary()
+        # abnorm_module.forward(probs_softmax=softmax_prob, residual=residual, encoding=encoding)
         
-        model = TestModel(residual.shape)
-        model.getSummary()
+        abnorm_module = Abnormality_module_Encoder_v3(shape_softmax_probs = softmax_prob.shape, shape_encoding=encoding.shape, shape_residual=residual.shape).to(device)
+        # abnorm_module.getSummary()
+        abnorm_module.forward(probs_softmax=softmax_prob, residual=residual, encoding=encoding)
         
         # input("press enter to exit ")
     
