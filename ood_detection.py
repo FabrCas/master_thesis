@@ -15,7 +15,8 @@ from    torch.cuda.amp      import GradScaler, autocast
 from    dataset             import CDDB_binary, CDDB_binary_Partial, CDDB, CDDB_Partial, OOD_dataset, getCIFAR100_dataset, getMNIST_dataset, getFMNIST_dataset
 from    experiments         import MNISTClassifier_keras
 from    bin_classifier      import DFD_BinClassifier_v4
-from    models              import Abnormality_module_Basic, Abnormality_module_Encoder_v1, Abnormality_module_Encoder_v2,Abnormality_module_Encoder_v3
+from    models              import Abnormality_module_Basic, Abnormality_module_Encoder_v1, Abnormality_module_Encoder_v2,\
+                            Abnormality_module_Encoder_v3, Abnormality_module_Encoder_v4
 from    utilities           import saveJson, loadJson, metrics_binClass, metrics_OOD, print_dict, showImage, check_folder, sampleValidSet, \
                             mergeDatasets, ExpLogger, loadModel, saveModel, duration, plot_loss, plot_valid
 
@@ -1010,7 +1011,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
     
     """
     
-    def __init__(self, classifier, scenario:str, model_type, useGPU = True, binary_dataset = True, batch_size = "dafault"):
+    def __init__(self, classifier, scenario:str, model_type, useGPU = True, binary_dataset = True, batch_size = "dafault", extended_ood = False):
         """ 
         
             scenario (str): choose between: "content", "mix", "group"
@@ -1047,7 +1048,8 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             self.dataset_class = CDDB_binary_Partial
         else:
             self.dataset_class = CDDB_Partial
-        self._prepare_data(extended_ood = False, verbose = True)
+        self.extended_ood = extended_ood
+        self._prepare_data(extended_ood = self.extended_ood, verbose = True)
         
         # configuration variables
         self.augment_data_train = False
@@ -1060,6 +1062,12 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         self.softmax = F.softmax
         
     def _build_model(self):
+        
+        if self.model_type in ["basic", "encoder", "encoder_v2", "encoder_v4"]:
+            self.classifier.model.large_encoding = True
+        else:
+            self.classifier.model.large_encoding = False
+        
         # compute shapes for the input
         x_shape = (1, *self.classifier.model.input_shape)
         x = T.rand(x_shape).to(self.device)
@@ -1067,17 +1075,14 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         
         if self.model_type == "basic":
             self.model = Abnormality_module_Basic(probs_softmax.shape, encoding.shape, residual_flatten.shape)
-            self.classifier.model.large_encoding = True
         if self.model_type == "encoder":
             self.model = Abnormality_module_Encoder_v1(probs_softmax.shape, encoding.shape, residual_flatten.shape)
-            self.classifier.model.large_encoding = True
         if self.model_type == "encoder_v2":
             self.model = Abnormality_module_Encoder_v2(probs_softmax.shape, encoding.shape, residual_flatten.shape)
-            self.classifier.model.large_encoding = True
         if self.model_type == "encoder_v3":
             self.model = Abnormality_module_Encoder_v3(probs_softmax.shape, encoding.shape, residual_flatten.shape)
-            self.classifier.model.large_encoding = False
-
+        if self.model_type == "encoder_v4":  
+            self.model = Abnormality_module_Encoder_v4(probs_softmax.shape, encoding.shape, residual_flatten.shape)
         
         self.model.to(self.device)
         self.model.eval()
@@ -1371,7 +1376,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         
         for epoch_idx in range(self.n_epochs):
             print(f"\n             [Epoch {epoch_idx+1}]             \n")
-            
+            # print(self.classifier.model.large_encoding)
             # define cumulative loss for the current epoch and max/min loss
             loss_epoch = 0; max_loss_epoch = 0; min_loss_epoch = math.inf
             
@@ -1789,25 +1794,29 @@ if __name__ == "__main__":
         classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
         classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
         
-        abn = Abnormality_module(classifier, scenario="content", model_type="encoder_v3")
+        abn = Abnormality_module(classifier, scenario="content", model_type="encoder_v4")
         abn.train(additional_name="112p", test_loop=False)
-    
-    def test_abn_content_faces(name_model, epoch):
+        
+    def train_plus_abn_encoder():
         classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
         classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
         
-        abn = Abnormality_module(classifier, scenario="content", model_type="basic")
+        abn = Abnormality_module(classifier, scenario="content", model_type="encoder_v4", extended_ood = True)
+        abn.train(additional_name="112p", test_loop=False)
+    
+    def test_abn_content_faces(name_model, epoch, type_model):
+        classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
+        classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
+        
+        abn = Abnormality_module(classifier, scenario="content", model_type=type_model)
         
         abn.load(name_model, epoch)
         abn.test_risk()
     
-    # test_baseline_content_faces()
-    train_abn_encoder()
-    
-    
-    # test_baseline_facesCDDB_CIFAR()
-    # test_baselineODIN_facesCDDB_CIFAR()
 
+    # train_plus_abn_encoder()
+    
+    test_abn_content_faces("Abnormality_module_encoder_v4_112p_19-12-2023", 50,"encoder_v4")
     #                           [End test section] 
    
     """ 
@@ -1821,5 +1830,9 @@ if __name__ == "__main__":
     
     train_abn_basic()
     test_abn_content_faces("Abnormality_module_basic_112p_05-12-2023", 30) 
+    
+    
+    train_abn_encoder()
+    train_plus_abn_encoder()
     
     """
