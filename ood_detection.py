@@ -310,6 +310,10 @@ class OOD_Classifier(object):
 class Baseline(OOD_Classifier):             # No model training necessary (Empty model forlder)
     """
         OOD detection baseline using softmax probability
+        
+        IDEA: an higher MSP should be related to In-Distribution samples, a lower one instead to Out-Of-Distribution
+        So values approching -> 1, are more likely to be ID, and the opposite with values approching 0.5
+        
     """
     def __init__(self, classifier,  task_type_prog, name_ood_data, id_data_test , ood_data_test , id_data_train = None, ood_data_train = None, useGPU = True):
         """
@@ -771,6 +775,11 @@ class Baseline(OOD_Classifier):             # No model training necessary (Empty
 class Baseline_ODIN(OOD_Classifier):        # No model training necessary (Empty model forlder)
     """
         OOD detection baseline using softmax probability + ODIN framework
+        
+        IDEA: an higher MSP should be related to In-Distribution samples, a lower one instead to Out-Of-Distribution
+        So values approching -> 1, are more likely to be ID, and the opposite with values approching 0.5
+        are used perturbation and temperature to improve the separability between ID and OOD.
+        
     """
     def __init__(self, classifier, task_type_prog, name_ood_data, id_data_test , ood_data_test , id_data_train = None, ood_data_train = None, useGPU = True):
         """
@@ -1009,6 +1018,10 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
     
     model_type (str): choose between: "basic", 
     
+    IDEA: define a custom model that uses several information from the classifier (softmax probs, encoding, residual) to
+    generate a risk score (from 0 to 1) that represents the likely of a sample to be Out of Distribution.
+    So values approching -> 1, are more likely to be OOD, and the opposite with values approching 0.5 or lower
+    
     """
     
     def __init__(self, classifier, scenario:str, model_type, useGPU = True, binary_dataset = True, batch_size = "dafault", extended_ood = False):
@@ -1109,12 +1122,14 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             - verbose (boolean, optional): choose to print extra information while loading the data
         """
         
-        # synthesis of OOD data
+        # synthesis of OOD data (train and valid)
+        print("\n\t\t[Loading OOD (synthetized) data]\n")
         ood_data_train     = self.dataset_class(scenario = self.scenario, train = True,  ood = False, augment = False, label_vector= False, transform2ood = True)
         tmp        = self.dataset_class(scenario = self.scenario, train = False, ood = False, augment = False, label_vector= False, transform2ood = True)
         ood_data_valid , _      = sampleValidSet(trainset = ood_data_train, testset= tmp, useOnlyTest = True, verbose = True)
         
-        # fetch ID data
+        # fetch ID data (train, valid and test)
+        print("\n\t\t[Loading ID data]\n")
         id_data_train      = self.dataset_class(scenario = self.scenario, train = True,  ood = False, augment = False, label_vector= False, transform2ood = False)
         tmp            = self.dataset_class(scenario = self.scenario, train = False, ood = False, augment = False, label_vector= False, transform2ood = False)
         id_data_valid , id_data_test   = sampleValidSet(trainset = id_data_train, testset= tmp, useOnlyTest = True, verbose = True)
@@ -1133,6 +1148,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         # showImage(x)
         
         if extended_ood:
+            print("\n\t\t[Extending OOD data with CDDB samples]\n")
             ood_train_expansion = self.dataset_class(scenario = self.scenario, train = True,   ood = True, augment = False, label_vector= False)            
             ood_data_train = mergeDatasets(ood_data_train, ood_train_expansion) 
            
@@ -1151,7 +1167,8 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         self.dataset_test  = OOD_dataset(id_data_test , ood_data_test,  balancing_mode="max")
         
         if verbose: print("length full dataset (train/valid/test) with balancing -> ", len(self.dataset_train), len(self.dataset_valid), len(self.dataset_test))
-    
+        print("\n")
+        
     def _hyperParams(self):
         return {
             "lr": self.lr,
@@ -1265,6 +1282,8 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         return  out
     
     def load(self, name_folder, epoch):
+        
+        print("\n\t\t[Loading model]\n")
         
         # save folder of the train (can be used to save new files in models and results)
         self.train_name = name_folder
@@ -1502,7 +1521,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         name_valid_file         = "valid_" + str(last_epoch) + '.png' 
         if test_loop:
             plot_loss(loss_epochs, title_plot = self.name + "_" + self.model_type, path_save = None)
-            plot_valid(valid_history, title_plot = self.name + "_" + self.model_type, path_save= None )
+            plot_valid(valid_history, title_plot = self.name + "_" + self.model_type, path_save= None)
         else: 
             plot_loss(loss_epochs, title_plot= self.name + "_" + self.model_type, path_save = os.path.join(path_save_results, name_loss_file))
             plot_loss(loss_epochs, title_plot= self.name + "_" + self.model_type, path_save = os.path.join(path_save_model  ,name_loss_file), show=False)  # just save, not show
@@ -1511,6 +1530,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
 
 
         # save model
+        print("\n\t\t[Saving model]\n")
         name_model_file         = str(last_epoch) +'.ckpt'
         path_model_save         = os.path.join(path_save_model, name_model_file)  # path folder + name file
         saveModel(self.model, path_model_save)
@@ -1684,8 +1704,7 @@ if __name__ == "__main__":
     classifier_name = "faces_Unet4_Scorer112p_v4_03-12-2023"
     classifier_type = "Unet4_Scorer"
     classifier_epoch = 73
-    
-    name_ood_data_content  = "CDDB_content_faces_scenario"
+    scenario = "content"
     
     # ________________________________ baseline  _______________________________________
     def test_baseline_implementation():
@@ -1722,6 +1741,8 @@ if __name__ == "__main__":
             ood_detector.test_threshold(thr_type="fpr95_normality",     normality_setting=True)
       
     def test_baseline_content_faces():
+        name_ood_data_content  = "CDDB_content_faces_scenario"
+        
         classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
         classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
         
@@ -1761,6 +1782,7 @@ if __name__ == "__main__":
         ood_detector.test_probabilties()
     
     def test_baselineOdin_content_faces():
+        name_ood_data_content  = "CDDB_content_faces_scenario"
         classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
         classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
         
@@ -1805,13 +1827,49 @@ if __name__ == "__main__":
         abn.train(additional_name="112p", test_loop=False)
     
     def test_abn_content_faces(name_model, epoch, type_model):
-        classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
+        
+        def test_forward():
+            dl =  DataLoader(abn.dataset_train, batch_size = 16,  num_workers = 8,  shuffle= True,   pin_memory= False)
+            for x,y in dl:
+                x = x.to(abn.device)
+                # output abnormality module
+                out_abn = abn.forward(x)
+               
+               
+                # output softmax baseline
+                out_soft, _, _ = abn._forward_A(x)
+                out_soft, _ = T.max(out_soft, dim = 1)
+                
+                for i in range(16):
+                    
+                    y_abn = round(T.squeeze(out_abn[i]).item(),4)
+                    y_soft = round(out_soft[i].item(),4)
+                                        
+                    label = y[i].tolist() == [1,0]
+                    
+                    showImage(x[i], name = "ID: "+ str(label) + " abn: " + str(y_abn) + " soft: " + str(y_soft) + " ")
+                    print(y_abn, y_soft)
+                    
+                    
+                # print(y)
+                break
+        
+        # load models
+        classifier = DFD_BinClassifier_v4(scenario=scenario, model_type=classifier_type)
         classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
-        
-        abn = Abnormality_module(classifier, scenario="content", model_type=type_model)
-        
+        abn = Abnormality_module(classifier, scenario=scenario, model_type=type_model)
         abn.load(name_model, epoch)
-        abn.test_risk()
+        
+        test_forward()
+        
+        
+
+        
+        # launch test with non-thr metrics
+        # abn.test_risk()
+        
+        
+        
     
 
     # train_plus_abn_encoder()

@@ -542,6 +542,8 @@ def plot_loss(loss_array, title_plot = None, path_save = None, duration_timer = 
         timer.start()
     if show:
         plt.show()
+    
+    plt.clf()  # clear plot data
         
 def plot_valid(valid_history, title_plot = None, path_save = None, duration_timer = 2500, show = True):
     """ save and plot the loss by epochs
@@ -588,6 +590,8 @@ def plot_valid(valid_history, title_plot = None, path_save = None, duration_time
         timer.start()
     if show:
         plt.show()
+        
+    plt.clf()  # clear plot data
 
 def plot_cm(cm, labels, title_plot = None, path_save = None, duration_timer = 2500):
     """ sava and plot the confusion matrix
@@ -633,7 +637,9 @@ def plot_cm(cm, labels, title_plot = None, path_save = None, duration_timer = 25
         plt.savefig(os.path.join(path_save, "confusion_matrix.png"))
         
     if duration_timer is not None: timer.start()
+    
     plt.show()
+    plt.clf()   # clear plot data
     
 def plot_ROC_curve(fpr, tpr, path_save = None, duration_timer = 2500):
     def close_event():
@@ -659,7 +665,7 @@ def plot_ROC_curve(fpr, tpr, path_save = None, duration_timer = 2500):
         timer.add_callback(close_event)
         timer.start()
         
-    plt.show()
+    plt.clf()  # clear plot data
 
 def plot_PR_curve(recalls, precisions, path_save = None, duration_timer = 2500):
     
@@ -686,6 +692,7 @@ def plot_PR_curve(recalls, precisions, path_save = None, duration_timer = 2500):
         timer.start()
         
     plt.show()
+    plt.clf()  # clear plot data
 
 ##################################################  Metrics functions #################################################################
 

@@ -110,6 +110,8 @@ class BinaryClassifier(object):
         return pred, fake_prob, logits
     
     def load(self, folder_model, epoch):
+        
+        print("\n\t\t[Loading model]\n")
         try:
             self.classifier_name    = folder_model
             self.path2model         = os.path.join(self.path_models,  folder_model, str(epoch) + ".ckpt")
@@ -123,6 +125,8 @@ class BinaryClassifier(object):
     
     @duration    
     def test(self):
+        
+        self._load_data()
         
         # define test dataloader
         test_dataloader = DataLoader(self.test_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= False, pin_memory= True)
@@ -167,6 +171,7 @@ class BinaryClassifier(object):
         # compute metrics from test data
         metrics_binClass(predictions, targets, predicted_probabilities, epoch_model= str(self.modelEpochs), path_save = self.path2model_results)
     
+    @duration  
     def train_and_test(self, name_train):
         """ for both train and test the model
         
@@ -174,6 +179,8 @@ class BinaryClassifier(object):
             name_train (str) should include the scenario selected and the model name (i.e. ResNet50), keep this convention {scenario}_{model_name}
 
         """
+        self._load_data()
+        
         self.train(name_train)
         self.test()
         
@@ -245,10 +252,6 @@ class DFD_BinClassifier_v1(BinaryClassifier):
         super(DFD_BinClassifier_v1, self).__init__(useGPU = useGPU, batch_size = batch_size, model_type = model_type)
         self.version = 1
          
-        # load dataset & dataloader
-        self.train_dataset = CDDB_binary(train = True)
-        self.test_dataset = CDDB_binary(train = False)
-        
         # load model
         if self.model_type == "resnet_pretrained":   # fine-tuning
             self.model = ResNet_ImageNet(n_classes = 2).getModel()
@@ -270,13 +273,21 @@ class DFD_BinClassifier_v1(BinaryClassifier):
         self.n_epochs       = 20
         self.weight_decay   = 0.001       # L2 regularization term 
         
+    
+    def _load_data(self):
         
+        print("\n\t\t[Loading CDDB binary data]\n")
+        # load dataset & dataloader
+        self.train_dataset = CDDB_binary(train = True)
+        self.test_dataset = CDDB_binary(train = False)
+     
     def valid(self):
         raise NotImplementedError
     
     @duration
     def train(self, name_train):
         
+        self._load_data()
         # set the full current model name 
         self.classifier_name = name_train
         
@@ -419,10 +430,7 @@ class DFD_BinClassifier_v2(BinaryClassifier):
         self.version = 2
         self.scenario = scenario
             
-        # load dataset & dataloader
-        self.train_dataset  = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False, augment= True)
-        test_dataset        = CDDB_binary_Partial(scenario = self.scenario, train = False, ood = False, augment= False)
-        self.valid_dataset, self.test_dataset = sampleValidSet(trainset= self.train_dataset, testset= test_dataset, useOnlyTest = True, verbose = True)
+
         
         # load model
         if self.model_type == "resnet_pretrained":   # fine-tuning
@@ -448,6 +456,14 @@ class DFD_BinClassifier_v2(BinaryClassifier):
         self.early_stopping_trigger = "acc"        # values "acc" or "loss"
         
         self._check_parameters()
+     
+    def _load_data(self):
+        
+        print(f"\n\t\t[Loading CDDB binary partial ({self.scenario}) data]\n")
+        # load dataset & dataloader
+        self.train_dataset  = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False, augment= True)
+        test_dataset        = CDDB_binary_Partial(scenario = self.scenario, train = False, ood = False, augment= False)
+        self.valid_dataset, self.test_dataset = sampleValidSet(trainset= self.train_dataset, testset= test_dataset, useOnlyTest = True, verbose = True)
      
     def _check_parameters(self):
         if not(self.early_stopping_trigger in ["loss", "acc"]):
@@ -512,6 +528,8 @@ class DFD_BinClassifier_v2(BinaryClassifier):
     @duration
     def train(self, name_train):
         """name_train (str) should include the scenario selected and the model name (i.e. ResNet50), keep this convention {scenario}_{model_name}"""
+        
+        self._load_data()
         
         # set the full current model name 
         self.classifier_name = name_train
@@ -694,15 +712,6 @@ class DFD_BinClassifier_v3(BinaryClassifier):
         self.augment_data_train = True
         self.use_cutmix         = True
             
-        # load dataset: train, validation and test.
-        
-        if self.use_cutmix:
-            self.train_dataset  = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False, augment= self.augment_data_train, label_vector= False)  # set label_vector = False for CutMix collate
-        else:
-             self.train_dataset  = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False, augment= self.augment_data_train, label_vector= True)
-        test_dataset        = CDDB_binary_Partial(scenario = self.scenario, train = False, ood = False, augment= False)
-        self.valid_dataset, self.test_dataset = sampleValidSet(trainset= self.train_dataset, testset= test_dataset, useOnlyTest = True, verbose = True)
-        
         # load model
         self.model_type = "resnet_eds" 
         self.model = ResNet_EDS(n_classes=2, use_upsample= False)
@@ -727,7 +736,18 @@ class DFD_BinClassifier_v3(BinaryClassifier):
         self.beta_loss              = 0.1  # reconstruction
 
         self._check_parameters()
-     
+    
+    
+    def _load_data(self):
+        # load dataset: train, validation and test.
+        print(f"\n\t\t[Loading CDDB binary partial ({self.scenario}) data]\n")
+        if self.use_cutmix:
+            self.train_dataset  = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False, augment= self.augment_data_train, label_vector= False)  # set label_vector = False for CutMix collate
+        else:
+             self.train_dataset  = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False, augment= self.augment_data_train, label_vector= True)
+        test_dataset        = CDDB_binary_Partial(scenario = self.scenario, train = False, ood = False, augment= False)
+        self.valid_dataset, self.test_dataset = sampleValidSet(trainset= self.train_dataset, testset= test_dataset, useOnlyTest = True, verbose = True)
+    
     def _check_parameters(self):
         if not(self.early_stopping_trigger in ["loss", "acc"]):
             raise ValueError('The early stopping trigger value must be chosen between "loss" and "acc"')
@@ -836,6 +856,7 @@ class DFD_BinClassifier_v3(BinaryClassifier):
             name_train (str) should include the scenario selected and the model name (i.e. ResNet50), keep this convention {scenario}_{model_name}
         """
         
+        self._load_data()
         
         # set the full current model name 
         self.classifier_name = name_train
@@ -1126,15 +1147,7 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         self.augment_data_train = True
         self.use_cutmix         = True
             
-        # load dataset: train, validation and test.
-        
-        if self.use_cutmix:
-            self.train_dataset  = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False, augment= self.augment_data_train, label_vector= False)  # set label_vector = False for CutMix collate
-        else:
-             self.train_dataset  = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False, augment= self.augment_data_train, label_vector= True)
-        test_dataset        = CDDB_binary_Partial(scenario = self.scenario, train = False, ood = False, augment= False)
-        self.valid_dataset, self.test_dataset = sampleValidSet(trainset= self.train_dataset, testset= test_dataset, useOnlyTest = True, verbose = True)
-        
+
         # load model
         if model_type == "Unet4_Scorer":
             self.model = Unet4_Scorer(n_classes=2)
@@ -1181,6 +1194,18 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         self.optimizer_name     = "Adam"
         self.lr_scheduler_name  = "ReduceLROnPlateau"
      
+     
+    def _load_data(self):
+        # load dataset: train, validation and test.
+        print(f"\n\t\t[Loading CDDB binary partial ({self.scenario}) data]\n")
+        if self.use_cutmix:
+            self.train_dataset  = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False, augment= self.augment_data_train, label_vector= False)  # set label_vector = False for CutMix collate
+        else:
+             self.train_dataset  = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False, augment= self.augment_data_train, label_vector= True)
+        test_dataset        = CDDB_binary_Partial(scenario = self.scenario, train = False, ood = False, augment= False)
+        self.valid_dataset, self.test_dataset = sampleValidSet(trainset= self.train_dataset, testset= test_dataset, useOnlyTest = True, verbose = True)
+        
+        
     def _check_parameters(self):
         if not(self.early_stopping_trigger in ["loss", "acc"]):
             raise ValueError('The early stopping trigger value must be chosen between "loss" and "acc"')
@@ -1297,6 +1322,7 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         Args:
             name_train (str) should include the scenario selected and the model name (i.e. ResNet50), keep this convention {scenario}_{model_name}
         """
+        self._load_data()
         
         # set the full current model name 
         self.classifier_name = name_train
