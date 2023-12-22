@@ -1024,11 +1024,15 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
     
     """
     
-    def __init__(self, classifier, scenario:str, model_type, useGPU = True, binary_dataset = True, batch_size = "dafault", extended_ood = False):
+    def __init__(self, classifier, scenario:str, model_type, useGPU = True, binary_dataset = True,
+                 batch_size = "dafault", use_synthetic = True, extended_ood = False):
         """ 
-        
+            classifier (T.nn.Module): the classifier (Module A) that produces the input for Module B (abnormality module)
             scenario (str): choose between: "content", "mix", "group"
-            model_type (str): choose between avaialbe model for the abnrormality module: "basic","encoder"   
+            model_type (str): choose between avaialbe model for the abnrormality module: "basic","encoder"
+            batch_size (str/int): the size of the batch, set defaut to use the assigned from superclass, otherwise the int size. Default is "default".
+            use_synthetic (boolean): choose if use ood data generated from ID data (synthetic) with several techniques, or not. Defaults is True.
+            extended_ood (boolean): This parameter has sense only if use_synthetic is True. choose if use real ood data in the dataset besides the synthetized ones.
             
         """
         super(Abnormality_module, self).__init__(useGPU=useGPU)
@@ -1061,9 +1065,15 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             self.dataset_class = CDDB_binary_Partial
         else:
             self.dataset_class = CDDB_Partial
+            
         self.extended_ood = extended_ood
-        self._prepare_data(extended_ood = self.extended_ood, verbose = True)
+        self.use_synthetic = use_synthetic
         
+        if self.use_synthetic:
+            self._prepare_data_syn(extended_ood = self.extended_ood, blind_test = False, verbose = True)
+        else:
+            self._prepare_data(verbose=True)
+            
         # configuration variables
         self.augment_data_train = False
         self.loss_name          = "bce"   # binary cross entropy or sigmoid cross entropy
@@ -1114,70 +1124,110 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         else:
             self.name_ood_data  = "CDDB_" + self.scenario + "_scenario"
         
-    def _prepare_data(self, extended_ood = False, verbose = False):
-        """ method used to prepare Dataset class used for both training and testing
+    def _prepare_data_syn(self, extended_ood = False, blind_test = True, verbose = False):
+        """ method used to prepare Dataset class used for both training and testing, synthetizing OOD data for training
         
             ARGS:
-            - extended_ood (boolean, optional): select if extend the ood data for training, using not only synthetic data
+            - extended_ood (boolean, optional): select if extend the ood data for training, using not only synthetic data. Default is True
+            - blind_test (boolean, optional): select if use real ood data (True) or synthetized one from In distributiion data. Default is True
             - verbose (boolean, optional): choose to print extra information while loading the data
         """
         
         # synthesis of OOD data (train and valid)
         print("\n\t\t[Loading OOD (synthetized) data]\n")
-        ood_data_train     = self.dataset_class(scenario = self.scenario, train = True,  ood = False, augment = False, label_vector= False, transform2ood = True)
-        tmp        = self.dataset_class(scenario = self.scenario, train = False, ood = False, augment = False, label_vector= False, transform2ood = True)
-        ood_data_valid , _      = sampleValidSet(trainset = ood_data_train, testset= tmp, useOnlyTest = True, verbose = True)
+        ood_data_train_syn    = self.dataset_class(scenario = self.scenario, train = True,  ood = False, augment = False, transform2ood = True)
+        tmp        = self.dataset_class(scenario = self.scenario, train = False, ood = False, augment = False, transform2ood = True)
+        ood_data_valid_syn , ood_data_test_syn      = sampleValidSet(trainset = ood_data_train_syn, testset= tmp, useOnlyTest = True, verbose = True)
         
         # fetch ID data (train, valid and test)
         print("\n\t\t[Loading ID data]\n")
-        id_data_train      = self.dataset_class(scenario = self.scenario, train = True,  ood = False, augment = False, label_vector= False, transform2ood = False)
-        tmp            = self.dataset_class(scenario = self.scenario, train = False, ood = False, augment = False, label_vector= False, transform2ood = False)
+        id_data_train      = self.dataset_class(scenario = self.scenario, train = True,  ood = False, augment = False, transform2ood = False)
+        tmp            = self.dataset_class(scenario = self.scenario, train = False, ood = False, augment = False, transform2ood = False)
         id_data_valid , id_data_test   = sampleValidSet(trainset = id_data_train, testset= tmp, useOnlyTest = True, verbose = True)
-        
         
         
         if verbose:
             print("length ID dataset  (train) -> ",  len(id_data_train))
             print("length ID dataset  (valid) -> ",  len(id_data_valid))
             print("length ID dataset  (test) -> ", len(id_data_test))
-            print("length OOD dataset (train) synthetized -> ", len(ood_data_train))
-            print("length OOD dataset (valid) synthetized -> ", len(ood_data_valid))
+            print("length OOD dataset (train) synthetized -> ", len(ood_data_train_syn))
+            print("length OOD dataset (valid) synthetized -> ", len(ood_data_valid_syn))
 
-        
-        # x,_ = self.ood_data_train.__getitem__(30000)
-        # showImage(x)
-        
+                
         if extended_ood:
             print("\n\t\t[Extending OOD data with CDDB samples]\n")
-            ood_train_expansion = self.dataset_class(scenario = self.scenario, train = True,   ood = True, augment = False, label_vector= False)            
-            ood_data_train = mergeDatasets(ood_data_train, ood_train_expansion) 
+            ood_train_expansion = self.dataset_class(scenario = self.scenario, train = True,   ood = True, augment = False)            
+            ood_data_train = mergeDatasets(ood_data_train_syn, ood_train_expansion) 
            
             if verbose: print("length OOD dataset after extension (train) -> ", len(ood_data_train))
             
-            # can be extended also the ood_data_valid , reducing the ood_data_test below
+            # train set: id data train + ood from synthetic ood and expansion)
+            self.dataset_train = OOD_dataset(id_data_train, ood_data_train, balancing_mode="max")
+        else:
+            # train set: id data train + synthetic ood (id data train transformed in ood)
+            self.dataset_train = OOD_dataset(id_data_train, ood_data_train_syn, balancing_mode="max")
+            
+        if blind_test:
+            ood_data_test  = self.dataset_class(scenario = self.scenario, train = False,  ood = True, augment = False)
+            if verbose: print("length OOD dataset (test) -> ", len(ood_data_test))
+            # test set: id data test + ood data test
+            self.dataset_test  = OOD_dataset(id_data_test , ood_data_test,  balancing_mode="max")
+        else:
+            self.dataset_test  = OOD_dataset(id_data_test , ood_data_test_syn,  balancing_mode="max")  # not real ood data but the synthetized one (useful to test the effective learning of the model)
         
-        ood_data_test  = self.dataset_class(scenario = self.scenario, train = False,  ood = True, augment = False, label_vector= False)
-        if verbose: print("length OOD dataset (test) -> ", len(ood_data_test))
-        
-        # train set: id data train + synthetic ood (id data train transformed in ood, optionally + ood data train)
-        self.dataset_train = OOD_dataset(id_data_train, ood_data_train, balancing_mode="max")
         # valid set: id data valid + synthetic ood (id data train transformed in ood)
-        self.dataset_valid = OOD_dataset(id_data_valid, ood_data_valid, balancing_mode="max")
-        # test set: id data test + ood data test
-        self.dataset_test  = OOD_dataset(id_data_test , ood_data_test,  balancing_mode="max")
+        self.dataset_valid = OOD_dataset(id_data_valid, ood_data_valid_syn, balancing_mode="max")
+        
         
         if verbose: print("length full dataset (train/valid/test) with balancing -> ", len(self.dataset_train), len(self.dataset_valid), len(self.dataset_test))
         print("\n")
+    
+    def _prepare_data(self, verbose = False):
         
+        """ method used to prepare Dataset class used for both training and testing
+        
+            ARGS:
+           - verbose (boolean, optional): choose to print extra information while loading the data
+        """
+        
+        # fetch ID data (train, valid and test)
+        print("\n\t\t[Loading ID data]\n")
+        id_data_train      = self.dataset_class(scenario = self.scenario, train = True,  ood = False, augment = False, transform2ood = False)
+        tmp            = self.dataset_class(scenario = self.scenario, train = False, ood = False, augment = False, transform2ood = False)
+        id_data_valid , id_data_test   = sampleValidSet(trainset = id_data_train, testset= tmp, useOnlyTest = True, verbose = True)
+        
+
+        print("\n\t\t[Loading OOD data]\n")
+        ood_data_train = self.dataset_class(scenario = self.scenario, train = True,   ood = True, augment = False) 
+        tmp  = self.dataset_class(scenario = self.scenario, train = False,  ood = True, augment = False)
+        ood_data_valid , ood_data_test   = sampleValidSet(trainset = ood_data_train, testset= tmp, useOnlyTest = True, verbose = True)
+        
+        
+        if verbose:
+            print("length ID dataset  (train) -> ",  len(id_data_train))
+            print("length ID dataset  (valid) -> ",  len(id_data_valid))
+            print("length ID dataset  (test)  -> ", len(id_data_test))
+        if verbose: 
+            print("length OOD dataset (train) -> ", len(ood_data_train))
+            print("length OOD dataset (valid) -> ", len(ood_data_valid))
+            print("length OOD dataset (test)  -> ", len(ood_data_test))
+
+                
+        # define the OOD detection sets
+        self.dataset_train = OOD_dataset(id_data_train, ood_data_train, balancing_mode="max")
+        self.dataset_test  = OOD_dataset(id_data_test , ood_data_valid, balancing_mode="max")
+        self.dataset_valid = OOD_dataset(id_data_valid, ood_data_test , balancing_mode="max")
+        
+        if verbose: print("length full dataset (train/valid/test) with balancing -> ", len(self.dataset_train), len(self.dataset_valid), len(self.dataset_test))
+        print("\n")
+    
+    
     def _hyperParams(self):
         return {
             "lr": self.lr,
             "batch_size": self.batch_size,
             "epochs_max": self.n_epochs,
             "weight_decay": self.weight_decay
-            # "early_stopping_patience": self.patience,
-            # "early_stopping_trigger": self.early_stopping_trigger,
-            # "early_stopping_start_epoch": self.start_early_stopping
                 }
     
     def _dataConf(self):
@@ -1203,7 +1253,8 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             "optimizer": self.optimizer.__class__.__name__,
             "scheduler": self.scheduler.__class__.__name__,
             "loss": self.loss_name,
-            "base_augmentation": self.augment_data_train,       
+            "base_augmentation": self.augment_data_train,
+            "Use OOD data synthetized":  self.use_synthetic,
             "grad_scaler": True,                # always true
             }
     
@@ -1574,7 +1625,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             # to numpy array
             risk   = risk.cpu().numpy()
             y       = y.numpy()
-                
+            
             pred_risks = np.append(pred_risks, risk, axis= 0)
             dl_labels = np.append(dl_labels, y, axis= 0)
             
@@ -1619,7 +1670,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         # print("\tKL divergence (entropy)")
         # kl_norm_aupr, kl_norm_auroc = self.compute_curves(id_entropy, ood_entropy)
         print("\tPrediction probability")
-        p_norm_aupr, p_norm_auroc = self.compute_curves(risks_id, risks_ood)
+        p_norm_aupr, p_norm_auroc = self.compute_curves(1- risks_id, 1- risks_ood)
         
         # abnormality detection
         print("Abnormality detection:")
@@ -1629,15 +1680,15 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         # kl_abnorm_aupr, kl_abnorm_auroc = self.compute_curves(-id_entropy, -ood_entropy, positive_reversed= True)
         # kl_abnorm_aupr, kl_abnorm_auroc = self.compute_curves(1-id_entropy, 1-ood_entropy, positive_reversed= True)
         print("\tPrediction probability")
-        p_abnorm_aupr, p_abnorm_auroc = self.compute_curves(1-risks_id, 1-risks_ood, positive_reversed= True)
+        p_abnorm_aupr, p_abnorm_auroc = self.compute_curves(risks_id, risks_ood, positive_reversed= True)
         # p_abnorm_aupr, p_abnorm_auroc = self.compute_curves(1-risks_id, 1-risk_ood, positive_reversed= True)
         
 
         
         # compute fpr95, detection_error and threshold_error 
-        metrics_norm = self.compute_metrics_ood(risks_id, risks_ood)
+        metrics_norm = self.compute_metrics_ood(1-risks_id, 1-risks_ood)
         print("OOD metrics:\n", metrics_norm)  
-        metrics_abnorm = self.compute_metrics_ood(1-risks_id, 1-risks_ood, positive_reversed= True)
+        metrics_abnorm = self.compute_metrics_ood(risks_id, risks_ood, positive_reversed= True)
         print("OOD metrics:\n", metrics_abnorm)  
         
         
@@ -1723,11 +1774,12 @@ if __name__ == "__main__":
         
         # id_data_train    = CDDB_binary(train = True, augment = False
         # laod id data test
-        id_data_train      = CDDB_binary_Partial(scenario = "content", train = True,  ood = False, augment = False, label_vector= True)
-        id_data_test       = CDDB_binary_Partial(scenario = "content", train = False, ood = False, augment = False, label_vector= True)
+        id_data_train      = CDDB_binary_Partial(scenario = "content", train = True,  ood = False, augment = False)
+        id_data_test       = CDDB_binary_Partial(scenario = "content", train = False, ood = False, augment = False)
         _ , id_data_test   = sampleValidSet(trainset = id_data_train, testset= id_data_test, useOnlyTest = True, verbose = True)
         # ood_data_train   = getCIFAR100_dataset(train = True)
         ood_data_test    = getCIFAR100_dataset(train = False)
+        
         
         # [3] define the detector
         ood_detector = Baseline(classifier=bin_classifier, task_type_prog= 0, name_ood_data="cifar100", id_data_test = id_data_test, ood_data_test = ood_data_test, useGPU= True)
@@ -1747,13 +1799,15 @@ if __name__ == "__main__":
         classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
         
         # laod id data test
-        id_data_train      = CDDB_binary_Partial(scenario = "content", train = True,  ood = False, augment = False, label_vector= True)
-        id_data_test       = CDDB_binary_Partial(scenario = "content", train = False, ood = False, augment = False, label_vector= True)
+        id_data_train      = CDDB_binary_Partial(scenario = "content", train = True,  ood = False, augment = False)
+        id_data_test       = CDDB_binary_Partial(scenario = "content", train = False, ood = False, augment = False)
         _ , id_data_test   = sampleValidSet(trainset = id_data_train, testset= id_data_test, useOnlyTest = True, verbose = True)
         
         # load ood data test
-        ood_data_test  = CDDB_binary_Partial(scenario = "content", train = False,  ood = True, augment = False, label_vector= False)
+        ood_data_test  = CDDB_binary_Partial(scenario = "content", train = False,  ood = True, augment = False)
         
+        print(len(id_data_test), len(ood_data_test))
+                
         ood_detector = Baseline(classifier=classifier, task_type_prog = 0, name_ood_data = name_ood_data_content ,  id_data_test = id_data_test, ood_data_test = ood_data_test, useGPU= True)
         
         ood_detector.test_probabilties()
@@ -1769,8 +1823,8 @@ if __name__ == "__main__":
         
         # id_data_train    = CDDB_binary(train = True, augment = False
         # laod id data test
-        id_data_train      = CDDB_binary_Partial(scenario = "content", train = True,  ood = False, augment = False, label_vector= True)
-        id_data_test       = CDDB_binary_Partial(scenario = "content", train = False, ood = False, augment = False, label_vector= True)
+        id_data_train      = CDDB_binary_Partial(scenario = "content", train = True,  ood = False, augment = False)
+        id_data_test       = CDDB_binary_Partial(scenario = "content", train = False, ood = False, augment = False)
         _ , id_data_test   = sampleValidSet(trainset = id_data_train, testset= id_data_test, useOnlyTest = True, verbose = True)
         # ood_data_train   = getCIFAR100_dataset(train = True)
         ood_data_test    = getCIFAR100_dataset(train = False)
@@ -1787,12 +1841,12 @@ if __name__ == "__main__":
         classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
         
         # laod id data test
-        id_data_train      = CDDB_binary_Partial(scenario = "content", train = True,  ood = False, augment = False, label_vector= True)
-        id_data_test       = CDDB_binary_Partial(scenario = "content", train = False, ood = False, augment = False, label_vector= True)
+        id_data_train      = CDDB_binary_Partial(scenario = "content", train = True,  ood = False, augment = False)
+        id_data_test       = CDDB_binary_Partial(scenario = "content", train = False, ood = False, augment = False)
         _ , id_data_test   = sampleValidSet(trainset = id_data_train, testset= id_data_test, useOnlyTest = True, verbose = True)
         
         # load ood data test
-        ood_data_test  = CDDB_binary_Partial(scenario = "content", train = False,  ood = True, augment = False, label_vector= False)
+        ood_data_test  = CDDB_binary_Partial(scenario = "content", train = False,  ood = True, augment = False)
         
         ood_detector = Baseline_ODIN(classifier=classifier, task_type_prog = 0, name_ood_data = name_ood_data_content ,  id_data_test = id_data_test, ood_data_test = ood_data_test, useGPU= True)
         
@@ -1820,6 +1874,8 @@ if __name__ == "__main__":
         abn.train(additional_name="112p", test_loop=False)
         
     def train_plus_abn_encoder():
+        """ uses extended OOD data"""
+        
         classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
         classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
         
@@ -1860,21 +1916,17 @@ if __name__ == "__main__":
         abn = Abnormality_module(classifier, scenario=scenario, model_type=type_model)
         abn.load(name_model, epoch)
         
-        test_forward()
+        # test_forward()
         
         
 
         
         # launch test with non-thr metrics
-        # abn.test_risk()
+        abn.test_risk()
         
         
-        
-    
-
-    # train_plus_abn_encoder()
-    
     test_abn_content_faces("Abnormality_module_encoder_v4_112p_19-12-2023", 50,"encoder_v4")
+    
     #                           [End test section] 
    
     """ 
