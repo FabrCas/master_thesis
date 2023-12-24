@@ -664,11 +664,11 @@ def plot_ROC_curve(fpr, tpr, path_save = None, duration_timer = 2500):
         timer = fig.canvas.new_timer(interval=duration_timer)
         timer.add_callback(close_event)
         timer.start()
-        
+    
     plt.clf()  # clear plot data
 
 def plot_PR_curve(recalls, precisions, path_save = None, duration_timer = 2500):
-    
+   
     def close_event():
         plt.close()
     
@@ -691,7 +691,6 @@ def plot_PR_curve(recalls, precisions, path_save = None, duration_timer = 2500):
         timer.add_callback(close_event)
         timer.start()
         
-    plt.show()
     plt.clf()  # clear plot data
 
 ##################################################  Metrics functions #################################################################
@@ -775,12 +774,15 @@ def metrics_binClass(preds, targets, pred_probs, epoch_model="unknown", path_sav
     
     return metrics_results
 
-def metrics_OOD(targets, pred_probs, pos_label = 1, path_save = None, save = True):
+def metrics_OOD(targets, pred_probs, pos_label = 1, path_save_json = None, path_save_plot = None, save = True):
     """ 
         Computation of metrics for the OOD classification task
     """
     fpr, tpr, _ = roc_curve(targets, pred_probs, pos_label=1,  drop_intermediate= False)
     auroc = auc(fpr, tpr)
+    
+    # plot and save ROC curve
+    plot_ROC_curve(fpr, tpr, path_save_plot, duration_timer = None)
     
     fpr95 = fpr_at_95_tpr(pred_probs, targets, pos_label)
     
@@ -794,8 +796,8 @@ def metrics_OOD(targets, pred_probs, pos_label = 1, path_save = None, save = Tru
     }
     
     # save the results (JSON file) if a path has been provided
-    if path_save is not None and save:
-        saveJson(os.path.join(path_save, 'metricsOOD.json'), metric_results)
+    if path_save_json is not None and save:
+        saveJson(os.path.join(path_save_json, 'metricsOOD.json'), metric_results)
     
     return metric_results
 

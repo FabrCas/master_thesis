@@ -45,7 +45,10 @@ class OOD_Classifier(object):
         if self.useGPU: self.device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
         else: self.device = "cpu"
         
-        self.batch_size   =  256  # 32 -> basic, 64/128 -> encoder
+        
+        # hyper-params
+        self.batch_size     =  256  # 32 -> basic, 64/128 -> encoder
+        
         
     #                                       math/statistics aux functions
     
@@ -133,7 +136,7 @@ class OOD_Classifier(object):
         else:
             return prob
         
-    def odin_perturbations(self,x, classifier, is_batch = True, loss_function = F.cross_entropy, epsilon = 12e-4, t = 1000):  # original hyperparms: epislon = 12e-4, t = 1000
+    def odin_perturbations(self,x, classifier, y = None, is_batch = True, loss_function = F.cross_entropy, epsilon = 12e-4, t = 1000):  # original hyperparms: epislon = 12e-4, t = 1000
         """ Perturbation from ODIN framework
 
         Args:
@@ -152,55 +155,41 @@ class OOD_Classifier(object):
             classifier.model.eval()  # Set the model to evaluation mode
         except Exception as e:
             print(e)
-            
+        
+        classifier.zero_grad()
+        
+        x = x.clone()
         x.requires_grad_(True)  # Enable gradient computation for the input
-        
-        # forward and loss
-        _, _, logits = classifier.forward(x)
-        
-        if False: 
-            logits = logits/t
-            
-            if is_batch:
-                loss = loss_function(logits, T.argmax(logits, dim=-1))
-            else:
-                loss = loss_function(logits, T.argmax(logits))  # Assuming cross-entropy loss for illustration
-            
-            # backprogation
-            # classifier.optimizer.zero_grad()  # Clear previous gradients
-            loss.backward()         # Compute gradients
-
-            # gradient based perturbation
-            perturbation = epsilon * T.sign(x.grad.data)    # This ensures that the perturbation is added in the direction that increases the loss, 
-            perturbed_x = x + perturbation              # making the model more sensitive to variations in the input data during inference.
-
-        # classifier.optimizer.zero_grad()  # Clear previous gradients
-        
-        # Apply temperature scaling to logits
-        logits /= t
-        
-        if False:
-            # Calculate softmax probabilities
-            # probabilities = F.softmax(logits, dim=1)
-            
-            # Calculate the derivative of the cross-entropy loss with respect to the input
-            gradients = T.autograd.grad(outputs=logits, inputs=x,
-                                            grad_outputs=T.ones_like(logits),
-                                            retain_graph=False, create_graph=False)[0]
-            
-            # Calculate the perturbed input
-            perturbed_x = x - epsilon * gradients.sign()
     
-        if is_batch:
-            loss = loss_function(logits, T.argmax(logits, dim=-1))
-        else:
-            loss = loss_function(logits, T.argmax(logits))  # Assuming cross-entropy loss for illustration
         
+        with T.enable_grad():
+            # forward and loss
+            _, _, logits = classifier.forward(x)
+            
+            logits /= t
+        
+        if y is None:   # pseudo-labels
+            # y = logits.max(dim = 1).indices  # same as 
+            y  = T.argmax(logits, dim=-1)
+        
+        loss = loss_function(logits, y)
         loss.backward()
         
-        perturbed_x = x + epsilon * x.grad.detach().sign()
+        # gradient = T.sign(x.grad.data)
+        # Normalizing the gradient to binary in {0, 1}
+        gradient = T.ge(x.grad.data, 0)
+        gradient = (gradient.float() - 0.5) * 2
+        # Normalizing the gradient to the same space of image
+        gradient[0][0] = (gradient[0][0] )/(63.0/255.0)
+        gradient[0][1] = (gradient[0][1] )/(62.1/255.0)
+        gradient[0][2] = (gradient[0][2])/(66.7/255.0)
         
+        with T.no_grad():
+            # perturbed_x = x - epsilon *gradient
+            perturbed_x = T.add(x, -gradient, alpha= epsilon)
         
+        perturbed_x.requires_grad = False
+        classifier.zero_grad()
         return perturbed_x
     
     # metrics aux functions
@@ -239,7 +228,7 @@ class OOD_Classifier(object):
         
         return aupr, auroc
 
-    def compute_metrics_ood(self, id_data, ood_data, positive_reversed = False):
+    def compute_metrics_ood(self, id_data, ood_data, path_save = None, positive_reversed = False):
         """_
             aux function used to compute fpr95, detection error and relative threshold.
             con be selected the positive label, the defulat one is for ID data, set to False
@@ -255,7 +244,9 @@ class OOD_Classifier(object):
         # print(target)
         
         predictions = np.squeeze(np.vstack((id_data, ood_data)))
-        metrics_ood = metrics_OOD(targets=target, pred_probs= predictions, pos_label= 1)
+        # get metrics and save AUROC plot
+        metrics_ood = metrics_OOD(targets=target, pred_probs= predictions, pos_label= 1, path_save_plot = path_save)
+        
         return metrics_ood 
     
     # path utilities
@@ -352,6 +343,9 @@ class Baseline(OOD_Classifier):             # No model training necessary (Empty
             testing function using probabilty-based metrics, computing OOD metrics that are not threshold related
         """
         
+        # saving folder path
+        path_results_folder         = self.get_path2SaveResults()
+        
         # define the dataloader 
         id_ood_dataloader   = DataLoader(self.dataset_test,  batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
         
@@ -430,7 +424,7 @@ class Baseline(OOD_Classifier):             # No model training necessary (Empty
         # p_abnorm_aupr, p_abnorm_auroc = self.compute_curves(1-maximum_prob_id, 1-maximum_prob_ood, positive_reversed= True)
 
         # compute fpr95, detection_error and threshold_error 
-        metrics_norm = self.compute_metrics_ood(maximum_prob_id, maximum_prob_ood)
+        metrics_norm = self.compute_metrics_ood(maximum_prob_id, maximum_prob_ood, path_save = path_results_folder)
         print("OOD metrics:\n", metrics_norm)  
         metrics_abnorm = self.compute_metrics_ood(1-maximum_prob_id, 1-maximum_prob_ood, positive_reversed= True)
         print("OOD metrics:\n", metrics_abnorm)   
@@ -771,7 +765,6 @@ class Baseline(OOD_Classifier):             # No model training necessary (Empty
             pred = np.where(condition= maximum_prob < threshold, x=1, y=0)  # if true set x otherwise set y
         return pred
 
-# TODO check odin correctness
 class Baseline_ODIN(OOD_Classifier):        # No model training necessary (Empty model forlder)
     """
         OOD detection baseline using softmax probability + ODIN framework
@@ -813,6 +806,9 @@ class Baseline_ODIN(OOD_Classifier):        # No model training necessary (Empty
         """ testing function using probabilty-based metrics, computing OOD metrics that are not threshold related
         """
         
+        # saving folder path
+        path_results_folder         = self.get_path2SaveResults()
+        
         # define the dataloader 
         id_ood_dataloader = DataLoader(self.dataset_test,  batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
         
@@ -823,28 +819,37 @@ class Baseline_ODIN(OOD_Classifier):        # No model training necessary (Empty
         pred_logits = np.empty((0,2), dtype= np.float32)
         dl_labels = np.empty((0,2), dtype= np.int32)            # dataloader labels, binary one-hot encoding, ID -> [1,0], OOD -> [0,1]
         
+        # set temperature hyperparam
+        odin_temperature = 1000
+        odin_epsilon     = 0.00012  # 0.05
+        
         for idx, (x,y) in tqdm(enumerate(id_ood_dataloader), total= len(id_ood_dataloader)):
             
             # to test
             # if idx >= 5: break
             
             x = x.to(self.device)
-            x = self.odin_perturbations(x,self.classifier, is_batch=True)  # ODIN step 1
+            y = y.to(self.device).to(T.float32)
+            
+            x_perturbed = self.odin_perturbations(x, self.classifier, is_batch=True, t = odin_temperature, epsilon= odin_epsilon)  # ODIN step 1
             
             with T.no_grad():
                 with autocast():
-                    _ ,_, logits =self.classifier.forward(x)
-                    
+                    _ ,_, logits =self.classifier.forward(x_perturbed)
+              
+            logits = logits/odin_temperature    # ODIN step 2
+            
             # to numpy array
             logits  = logits.cpu().numpy()
-            y       = y.numpy()
+            y       = y.detach().cpu().numpy()
+            
+            logits = logits - np.max(logits) # ODIN step 3
                 
             pred_logits = np.append(pred_logits, logits, axis= 0)
             dl_labels = np.append(dl_labels, y, axis= 0)
             
         # to softmax probabilities
-        probs = self.softmax_temperature(pred_logits)     # ODIN step 2
-        # probs = self._softmax(pred_logits)
+        probs = self._softmax(pred_logits)
    
         # separation of id/ood labels and probabilities
         id_labels  =  dl_labels[:,0]                # filter by label column
@@ -893,7 +898,7 @@ class Baseline_ODIN(OOD_Classifier):        # No model training necessary (Empty
         # p_abnorm_aupr, p_abnorm_auroc = self.compute_curves(1-maximum_prob_id, 1-maximum_prob_ood, positive_reversed= True)
 
         # compute fpr95, detection_error and threshold_error 
-        metrics_norm = self.compute_metrics_ood(maximum_prob_id, maximum_prob_ood)
+        metrics_norm = self.compute_metrics_ood(maximum_prob_id, maximum_prob_ood, path_save = path_results_folder)
         print("OOD metrics:\n", metrics_norm)  
         metrics_abnorm = self.compute_metrics_ood(1-maximum_prob_id, 1-maximum_prob_ood, positive_reversed= True)
         print("OOD metrics:\n", metrics_abnorm)   
@@ -944,7 +949,6 @@ class Baseline_ODIN(OOD_Classifier):        # No model training necessary (Empty
         
         # save data (JSON)
         if self.name_ood_data is not None:
-            path_results_folder         = self.get_path2SaveResults()
             name_result_file            = 'metrics_ood_{}.json'.format(self.name_ood_data)
             path_result_save            = os.path.join(path_results_folder, name_result_file)   # full path to json file
             
@@ -1590,6 +1594,10 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         logger.end_log()
         
     def test_risk(self, task_type_prog = None):
+        
+        # saving folder path
+        path_results_folder         = self.get_path2SaveResults()
+        
         # 1) prepare meta-data
         self._meta_data(task_type_prog= task_type_prog)
         self.model.eval()
@@ -1688,7 +1696,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         # compute fpr95, detection_error and threshold_error 
         metrics_norm = self.compute_metrics_ood(1-risks_id, 1-risks_ood)
         print("OOD metrics:\n", metrics_norm)  
-        metrics_abnorm = self.compute_metrics_ood(risks_id, risks_ood, positive_reversed= True)
+        metrics_abnorm = self.compute_metrics_ood(risks_id, risks_ood, positive_reversed= True, path_save = path_results_folder)
         print("OOD metrics:\n", metrics_abnorm)  
         
         
@@ -1729,7 +1737,10 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             "avg_confidence":   float(conf_all),
             "fpr95_normality":            float(metrics_norm['fpr95']),
             "detection_error_normality":  float(metrics_norm['detection_error']),
-            "threshold_normality":        float(metrics_norm['thr_de'])
+            "threshold_normality":        float(metrics_norm['thr_de']),
+            "fpr95_abnormality":            float(metrics_abnorm['fpr95']),
+            "detection_error_abnormality":  float(metrics_abnorm['detection_error']),
+            "threshold_abnormality":        float(metrics_abnorm['thr_de'])
             
         }
         
@@ -1806,7 +1817,7 @@ if __name__ == "__main__":
         # load ood data test
         ood_data_test  = CDDB_binary_Partial(scenario = "content", train = False,  ood = True, augment = False)
         
-        print(len(id_data_test), len(ood_data_test))
+        # print(len(id_data_test), len(ood_data_test))
                 
         ood_detector = Baseline(classifier=classifier, task_type_prog = 0, name_ood_data = name_ood_data_content ,  id_data_test = id_data_test, ood_data_test = ood_data_test, useGPU= True)
         
@@ -1814,7 +1825,7 @@ if __name__ == "__main__":
         
     # ________________________________ baseline + ODIN  ________________________________
     
-    def test_baselineODIN_facesCDDB_CIFAR():
+    def test_baselineOdin_facesCDDB_CIFAR():
                 # [1] load deep fake classifier
         bin_classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
         bin_classifier.load(classifier_name, classifier_epoch)
@@ -1873,14 +1884,23 @@ if __name__ == "__main__":
         abn = Abnormality_module(classifier, scenario="content", model_type="encoder_v4")
         abn.train(additional_name="112p", test_loop=False)
         
-    def train_plus_abn_encoder():
+    def train_extended_abn_encoder():
         """ uses extended OOD data"""
         
         classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
         classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
         
         abn = Abnormality_module(classifier, scenario="content", model_type="encoder_v4", extended_ood = True)
-        abn.train(additional_name="112p", test_loop=False)
+        abn.train(additional_name="112p_extendedOOD", test_loop=False)
+        
+    def train_nosynt_abn_encoder():
+        """ uses extended OOD data"""
+        
+        classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
+        classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
+        
+        abn = Abnormality_module(classifier, scenario="content", model_type="encoder_v4", use_synthetic= False)
+        abn.train(additional_name="112p_nosynt", test_loop=False)
     
     def test_abn_content_faces(name_model, epoch, type_model):
         
@@ -1924,8 +1944,9 @@ if __name__ == "__main__":
         # launch test with non-thr metrics
         abn.test_risk()
         
-        
-    test_abn_content_faces("Abnormality_module_encoder_v4_112p_19-12-2023", 50,"encoder_v4")
+    # test_abn_content_faces("Abnormality_module_encoder_v4_112p_19-12-2023", 50,"encoder_v4")
+
+    test_baselineOdin_content_faces()
     
     #                           [End test section] 
    

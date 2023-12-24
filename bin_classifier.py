@@ -233,7 +233,11 @@ class BinaryClassifier(object):
             print("Impossible to retrieve the model structure for logging")
         
         return logger
-                
+    
+    def zero_grad(self):
+        self.optimizer.zero_grad()
+        
+             
 class DFD_BinClassifier_v1(BinaryClassifier):
     """
         binary classifier for deepfake detection using CDDB dataset, first version.
@@ -273,6 +277,7 @@ class DFD_BinClassifier_v1(BinaryClassifier):
         self.n_epochs       = 20
         self.weight_decay   = 0.001       # L2 regularization term 
         
+        self.optimizer = Adam(self.model.parameters(), lr = self.lr, weight_decay =  self.weight_decay)
     
     def _load_data(self):
         
@@ -456,6 +461,7 @@ class DFD_BinClassifier_v2(BinaryClassifier):
         self.early_stopping_trigger = "acc"        # values "acc" or "loss"
         
         self._check_parameters()
+        self.optimizer = Adam(self.model.parameters(), lr = self.lr, weight_decay =  self.weight_decay)
      
     def _load_data(self):
         
@@ -736,6 +742,7 @@ class DFD_BinClassifier_v3(BinaryClassifier):
         self.beta_loss              = 0.1  # reconstruction
 
         self._check_parameters()
+        self.optimizer = Adam(self.model.parameters(), lr = self.lr, weight_decay =  self.weight_decay)
     
     
     def _load_data(self):
@@ -1193,6 +1200,7 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         # training components definintion
         self.optimizer_name     = "Adam"
         self.lr_scheduler_name  = "ReduceLROnPlateau"
+        self.optimizer = Adam(self.model.parameters(), lr = self.lr, weight_decay =  self.weight_decay)
      
      
     def _load_data(self):
