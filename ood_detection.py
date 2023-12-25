@@ -12,7 +12,7 @@ from    sklearn.metrics     import precision_recall_curve, auc, roc_auc_score
 from    torch.optim         import Adam, lr_scheduler
 from    torch.cuda.amp      import GradScaler, autocast
 # local import
-from    dataset             import CDDB_binary, CDDB_binary_Partial, CDDB, CDDB_Partial, OOD_dataset, getCIFAR100_dataset, getMNIST_dataset, getFMNIST_dataset
+from    dataset             import CDDB_binary_Partial, CDDB_Partial, OOD_dataset, getCIFAR100_dataset, getMNIST_dataset, getFMNIST_dataset
 from    experiments         import MNISTClassifier_keras
 from    bin_classifier      import DFD_BinClassifier_v4
 from    models              import Abnormality_module_Basic, Abnormality_module_Encoder_v1, Abnormality_module_Encoder_v2,\
@@ -1029,14 +1029,17 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
     """
     
     def __init__(self, classifier, scenario:str, model_type, useGPU = True, binary_dataset = True,
-                 batch_size = "dafault", use_synthetic = True, extended_ood = False):
+                 batch_size = "dafault", use_synthetic = True, extended_ood = False, blind_test = True):
         """ 
-            classifier (T.nn.Module): the classifier (Module A) that produces the input for Module B (abnormality module)
-            scenario (str): choose between: "content", "mix", "group"
-            model_type (str): choose between avaialbe model for the abnrormality module: "basic","encoder"
-            batch_size (str/int): the size of the batch, set defaut to use the assigned from superclass, otherwise the int size. Default is "default".
-            use_synthetic (boolean): choose if use ood data generated from ID data (synthetic) with several techniques, or not. Defaults is True.
-            extended_ood (boolean): This parameter has sense only if use_synthetic is True. choose if use real ood data in the dataset besides the synthetized ones.
+            ARGS:
+            - classifier (T.nn.Module): the classifier (Module A) that produces the input for Module B (abnormality module)
+            - scenario (str): choose between: "content", "mix", "group"
+            - model_type (str): choose between avaialbe model for the abnrormality module: "basic", "encoder", "encoder_v2", "encoder_v3"
+            "encoder_v4"
+            - batch_size (str/int): the size of the batch, set defaut to use the assigned from superclass, otherwise the int size. Default is "default".
+            - use_synthetic (boolean): choose if use ood data generated from ID data (synthetic) with several techniques, or not. Defaults is True.
+            - extended_ood (boolean, optional): This has sense if use_synthetic is set to True. Select if extend the ood data for training, using not only synthetic data. Default is True
+            - blind_test (boolean, optional): This has sense if use_synthetic is set to True. Select if use real ood data (True) or synthetized one from In distributiion data. Default is True
             
         """
         super(Abnormality_module, self).__init__(useGPU=useGPU)
@@ -1069,12 +1072,14 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             self.dataset_class = CDDB_binary_Partial
         else:
             self.dataset_class = CDDB_Partial
-            
-        self.extended_ood = extended_ood
-        self.use_synthetic = use_synthetic
+        
+        # Dataset flags
+        self.use_synthetic  = use_synthetic    
+        self.extended_ood   = extended_ood
+        self.blind_test     = blind_test
         
         if self.use_synthetic:
-            self._prepare_data_syn(extended_ood = self.extended_ood, blind_test = False, verbose = True)
+            self._prepare_data_syn(verbose = True)
         else:
             self._prepare_data(verbose=True)
             
@@ -1090,6 +1095,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         
     def _build_model(self):
         
+        # select the type of encoding, encoder_v3 is a smaller dimensionality
         if self.model_type in ["basic", "encoder", "encoder_v2", "encoder_v4"]:
             self.classifier.model.large_encoding = True
         else:
@@ -1128,12 +1134,10 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         else:
             self.name_ood_data  = "CDDB_" + self.scenario + "_scenario"
         
-    def _prepare_data_syn(self, extended_ood = False, blind_test = True, verbose = False):
+    def _prepare_data_syn(self,verbose = False):
         """ method used to prepare Dataset class used for both training and testing, synthetizing OOD data for training
         
             ARGS:
-            - extended_ood (boolean, optional): select if extend the ood data for training, using not only synthetic data. Default is True
-            - blind_test (boolean, optional): select if use real ood data (True) or synthetized one from In distributiion data. Default is True
             - verbose (boolean, optional): choose to print extra information while loading the data
         """
         
@@ -1158,7 +1162,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             print("length OOD dataset (valid) synthetized -> ", len(ood_data_valid_syn))
 
                 
-        if extended_ood:
+        if self.extended_ood:
             print("\n\t\t[Extending OOD data with CDDB samples]\n")
             ood_train_expansion = self.dataset_class(scenario = self.scenario, train = True,   ood = True, augment = False)            
             ood_data_train = mergeDatasets(ood_data_train_syn, ood_train_expansion) 
@@ -1171,7 +1175,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             # train set: id data train + synthetic ood (id data train transformed in ood)
             self.dataset_train = OOD_dataset(id_data_train, ood_data_train_syn, balancing_mode="max")
             
-        if blind_test:
+        if self.blind_test:
             ood_data_test  = self.dataset_class(scenario = self.scenario, train = False,  ood = True, augment = False)
             if verbose: print("length OOD dataset (test) -> ", len(ood_data_test))
             # test set: id data test + ood data test
@@ -1188,7 +1192,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
     
     def _prepare_data(self, verbose = False):
         
-        """ method used to prepare Dataset class used for both training and testing
+        """ method used to prepare Dataset class used for both training and testing, both ID and OOD comes from CDDB dataset
         
             ARGS:
            - verbose (boolean, optional): choose to print extra information while loading the data
@@ -1224,8 +1228,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         
         if verbose: print("length full dataset (train/valid/test) with balancing -> ", len(self.dataset_train), len(self.dataset_valid), len(self.dataset_test))
         print("\n")
-    
-    
+     
     def _hyperParams(self):
         return {
             "lr": self.lr,
@@ -1596,7 +1599,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
     def test_risk(self, task_type_prog = None):
         
         # saving folder path
-        path_results_folder         = self.get_path2SaveResults()
+        path_results_folder         = self.get_path2SaveResults(train_name=self.train_name)
         
         # 1) prepare meta-data
         self._meta_data(task_type_prog= task_type_prog)
@@ -1645,8 +1648,8 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         risks_ood     = pred_risks[ood_labels == 1]
         
         risks_id = risks_id[:risks_ood.shape[0]]
-        print(risks_id.shape)
-        print(risks_ood.shape)
+        # print(risks_id.shape)
+        # print(risks_ood.shape)
          
         # compute statistical moments from risks output
         
@@ -1877,29 +1880,29 @@ if __name__ == "__main__":
         # y = abn.forward(x)
         # print(y)
     
-    def train_abn_encoder():
+    def train_abn_encoder(type_encoder = "encoder"):
         classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
         classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
         
-        abn = Abnormality_module(classifier, scenario="content", model_type="encoder_v4")
+        abn = Abnormality_module(classifier, scenario="content", model_type= type_encoder)
         abn.train(additional_name="112p", test_loop=False)
         
-    def train_extended_abn_encoder():
+    def train_extended_abn_encoder(type_encoder = "encoder"):
         """ uses extended OOD data"""
         
         classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
         classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
         
-        abn = Abnormality_module(classifier, scenario="content", model_type="encoder_v4", extended_ood = True)
+        abn = Abnormality_module(classifier, scenario="content", model_type= type_encoder, extended_ood = True)
         abn.train(additional_name="112p_extendedOOD", test_loop=False)
         
-    def train_nosynt_abn_encoder():
+    def train_nosynt_abn_encoder(type_encoder = "encoder"):
         """ uses extended OOD data"""
         
         classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
         classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
         
-        abn = Abnormality_module(classifier, scenario="content", model_type="encoder_v4", use_synthetic= False)
+        abn = Abnormality_module(classifier, scenario="content", model_type=type_encoder, use_synthetic= False)
         abn.train(additional_name="112p_nosynt", test_loop=False)
     
     def test_abn_content_faces(name_model, epoch, type_model):
@@ -1943,27 +1946,58 @@ if __name__ == "__main__":
         
         # launch test with non-thr metrics
         abn.test_risk()
-        
-    # test_abn_content_faces("Abnormality_module_encoder_v4_112p_19-12-2023", 50,"encoder_v4")
-
-    test_baselineOdin_content_faces()
     
+    
+
+    
+    train_nosynt_abn_encoder(type_encoder= "encoder")
+    train_nosynt_abn_encoder(type_encoder= "encoder_v2")
+    train_nosynt_abn_encoder(type_encoder= "encoder_v3")
+    
+    
+
+    
+
+    pass
     #                           [End test section] 
    
     """ 
             Past test/train launched: 
-            
+                                BASELINE    
     test_baseline_implementation()
-    test_baseline_CDDB_CIFAR()
+    test_baseline_facesCDDB_CIFAR()
     test_baseline_content_faces()
     
+                                BASELINE + ODIN
+    test_baselineOdin_facesCDDB_CIFAR()
+    test_baselineOdin_content_faces()
     
-    
+                                ABNORMALITY MODULE BASIC  (Synthetic ood data, no extension)
     train_abn_basic()
-    test_abn_content_faces("Abnormality_module_basic_112p_05-12-2023", 30) 
+    
+    test_abn_content_faces("Abnormality_module_basic_112p_05-12-2023", 30,"basic")
+    
+                                ABNORMALITY MODULE ENCODER  (Synthetic ood data, no extension)
+    train_abn_encoder(type_encoder = "encoder" )
+    train_abn_encoder(type_encoder = "encoder_v2" )
+    train_abn_encoder(type_encoder = "encoder_v3" )
+    train_abn_encoder(type_encoder = "encoder_v4" )
+    
+    test_abn_content_faces("Abnormality_module_encoder_112p_19-12-2023", 30,"encoder")
+    test_abn_content_faces("Abnormality_module_encoder_v2_112p_19-12-2023", 50,"encoder_v2")
+    test_abn_content_faces("Abnormality_module_encoder_v3_112p_19-12-2023", 50,"encoder_v3")
+    test_abn_content_faces("Abnormality_module_encoder_v4_112p_19-12-2023", 50,"encoder_v4")
     
     
-    train_abn_encoder()
-    train_plus_abn_encoder()
+                                ABNORMALITY MODULE ENCODER  (Synthetic ood data, + extension)
+    train_extended_abn_encoder(type_encoder = encoder_v4)
+    
+    test_abn_content_faces("Abnormality_module_encoder_v4_112p_extendedOOD_19-12-2023", 50,"encoder_v4")
+    
+                                ABNORMALITY MODULE ENCODER  (CDDB OOD data)
+    train_nosynt_abn_encoder(type_encoder= "encoder")
+    train_nosynt_abn_encoder(type_encoder= "encoder_v2")
+    train_nosynt_abn_encoder(type_encoder= "encoder_v3")                 
+    train_nosynt_abn_encoder(type_encoder= "encoder_v4")
     
     """
