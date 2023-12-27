@@ -1985,10 +1985,7 @@ if __name__ == "__main__":
         abn = Abnormality_module(classifier, scenario="content", model_type= type_encoder)
         abn.train(additional_name="112p", test_loop=False)
         
-    def train_extended_abn_encoder(type_encoder = "encoder", mode_balancing: str = "max"):
-        
-        "mode balancing (str): choose btw max or all"
-        
+    def train_extended_abn_encoder(type_encoder = "encoder"):
         """ uses extended OOD data"""
         
         classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
@@ -2006,9 +2003,7 @@ if __name__ == "__main__":
         abn = Abnormality_module(classifier, scenario="content", model_type=type_encoder, use_synthetic= False)
         abn.train(additional_name="112p_nosynt", test_loop=False)
     
-    def train_full_extended_abn_encoder(type_encoder = "encoder", mode_balancing: str = "max"):
-        
-        "mode balancing (str): choose btw max or all"
+    def train_full_extended_abn_encoder(type_encoder = "encoder"):
         
         """ uses extended OOD data"""
         
@@ -2057,15 +2052,11 @@ if __name__ == "__main__":
         # launch test with non-thr metrics
         abn.test_risk()
    
-    classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
-    classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
-    
-    abn = Abnormality_module(classifier, scenario="content", model_type= "encoder", extended_ood = True, balancing_mode="all")
-    abn.train(additional_name="cancellaaaaa", test_loop=False)
-    
-    
-    
-    
+
+    train_full_extended_abn_encoder("encoder")
+    train_full_extended_abn_encoder("encoder_v1")
+    train_full_extended_abn_encoder("encoder_v2")
+    train_full_extended_abn_encoder("encoder_v3")
     
     pass
     #                           [End test section] 
@@ -2120,8 +2111,11 @@ if __name__ == "__main__":
     test_abn_content_faces("Abnormality_module_encoder_v3_112p_nosynt_25-12-2023", 50,"encoder_v3")      
     test_abn_content_faces("Abnormality_module_encoder_v4_112p_nosynt_25-12-2023", 50,"encoder_v4")   
 
-    
                                 ABNORMALITY MODULE ENCODER  (Synthetic ood data, + extension, all merging)
+    train_full_extended_abn_encoder("encoder")
+    train_full_extended_abn_encoder("encoder_v1")
+    train_full_extended_abn_encoder("encoder_v2")
+    train_full_extended_abn_encoder("encoder_v3")
     
     
     

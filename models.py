@@ -1274,14 +1274,15 @@ class Unet5_Scorer(Project_conv_model):
         U-net 5 + Scorer, 5 encoders and 5 decoders
     """
 
-    def __init__(self, n_classes= 10):
+    def __init__(self, n_classes= 10, large_encoding = True):
         super(Unet5_Scorer,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = n_classes)
         print("Initializing {} ...".format(self.__class__.__name__))
 
         self.features_order = UNET_EXP_FMS   # orders greater and equal than 5 saturates the GPU!
         self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
         self.bottleneck_size = int(self.feature_maps(5)*math.floor(self.width/32)**2)  
-        self.n_levels = 5     
+        self.n_levels = 5
+        self.large_encoding = large_encoding       
         
         # create net and initialize
         self._createNet()
@@ -1352,7 +1353,7 @@ class Unet5_Scorer(Project_conv_model):
             
         # self.model = nn.Sequential(self.encoder, self.decoder)
 
-    def forward(self, x):
+    def forward(self, x, verbose = False):
         """
             Returns: logits, reconstruction, encoding
         """
@@ -1368,23 +1369,34 @@ class Unet5_Scorer(Project_conv_model):
         bottleneck  = self.b(p5)
         enc         = self.flatten(bottleneck)
         
-        # classification
-        # f1          = self.relu(self.bn1(self.fc1(enc)))
-        # f1_drop     = self.do(f1)
-        # f2          = self.relu(self.bn2(self.fc2(f1_drop)))
-        # f2_drop     = self.do(f2)
-        # logits      = self.fc3(f2_drop)
-        out         = self.relu(self.bn1(self.fc1(enc)))
-        out         = self.do(out)
-        out         = self.relu(self.bn2(self.fc2(out)))
-        out         = self.do(out)
-        out         = self.relu(self.bn3(self.fc3(out)))
-        out         = self.do(out)
-        out         = self.relu(self.bn4(self.fc4(out)))
-        out         = self.do(out)
-        logits      = self.fc5(out)
+        if verbose: print ("enc shape ", enc.shape)
         
-
+        # classification
+        c1          = self.relu(self.bn1(self.fc1(enc)))
+        c1d         = self.do(c1)
+        
+        c2          = self.relu(self.bn2(self.fc2(c1d)))
+        c2d         = self.do(c2)
+        
+        c3          = self.relu(self.bn3(self.fc3(c2d)))
+        c3d         = self.do(c3)
+        
+        c4          = self.relu(self.bn4(self.fc4(c3d)))
+        c4d         = self.do(c4)
+        
+        logits      = self.fc5(c4d)
+        
+        
+        if verbose:
+            print("c1 shape ", c1.shape, "\n", "c2 shape ", c2.shape, "\n", "c3 shape ", c3.shape, "\n","c4 shape ", c4.shape, "\n")
+            
+        # select large or small encoding for the forward 
+        if self.large_encoding:
+            encoding = enc
+        else:
+            encoding = c1
+        
+        
         # decoder 
         d1 = self.d1(bottleneck, s5)
         d2 = self.d2(d1, s4)
@@ -1394,7 +1406,7 @@ class Unet5_Scorer(Project_conv_model):
         
         # reconstuction
         rec = self.decoder_out_fn(self.out(d5))  # check sigmoid vs tanh
-        return logits, rec, enc
+        return logits, rec, encoding
 
 class Unet6_Scorer(Project_conv_model):
     """
@@ -1402,13 +1414,14 @@ class Unet6_Scorer(Project_conv_model):
         This version include an additional layer for the scorer
     """
 
-    def __init__(self, n_classes= 10):
+    def __init__(self, n_classes= 10, large_encoding = True):
         super(Unet6_Scorer,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = n_classes)
         print("Initializing {} ...".format(self.__class__.__name__))
 
         self.features_order = UNET_EXP_FMS   # orders greater and equal than 5 saturates the GPU!
         self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
         self.n_levels = 6
+        self.large_encoding = large_encoding
         
         # self.bottleneck_size = int(self.feature_maps(6)*3**2)  # 3 comes from the computation on spatial dimensionality, kernel applied on odd tensor (if image different from 244 check again this value)
         self.bottleneck_size = int(self.feature_maps(6)*math.floor(self.width/64)**2)  # if 224x224 the width is divided by 32
@@ -1481,7 +1494,7 @@ class Unet6_Scorer(Project_conv_model):
         self.decoder_out_fn = nn.Sigmoid()
 
 
-    def forward(self, x):
+    def forward(self, x, verbose = False):
         """
             Returns: logits, reconstruction, encoding
         """
@@ -1498,19 +1511,31 @@ class Unet6_Scorer(Project_conv_model):
         bottleneck  = self.b(p6)
         enc         = self.flatten(bottleneck)
         
-        
+        if verbose: print ("enc shape ", enc.shape)
         # classification
-        out         = self.relu(self.bn1(self.fc1(enc)))
-        out         = self.do(out)
-        out         = self.relu(self.bn2(self.fc2(out)))
-        out         = self.do(out)
-        out         = self.relu(self.bn3(self.fc3(out)))
-        out         = self.do(out)
-        out         = self.relu(self.bn4(self.fc4(out)))
-        out         = self.do(out)
-        logits      = self.fc5(out)
-
+        c1          = self.relu(self.bn1(self.fc1(enc)))
+        c1d         = self.do(c1)
         
+        c2          = self.relu(self.bn2(self.fc2(c1d)))
+        c2d         = self.do(c2)
+        
+        c3          = self.relu(self.bn3(self.fc3(c2d)))
+        c3d         = self.do(c3)
+        
+        c4          = self.relu(self.bn4(self.fc4(c3d)))
+        c4d         = self.do(c4)
+        
+        logits      = self.fc5(c4d)
+
+        if verbose:
+            print("c1 shape ", c1.shape, "\n", "c2 shape ", c2.shape, "\n", "c3 shape ", c3.shape, "\n","c4 shape ", c4.shape, "\n")
+        
+        # select large or small encoding for the forward 
+        if self.large_encoding:
+            encoding = enc
+        else:
+            encoding = c1
+            
         d1 = self.d1(bottleneck, s6)
         d2 = self.d2(d1, s5)
         d3 = self.d3(d2, s4)
@@ -1520,7 +1545,7 @@ class Unet6_Scorer(Project_conv_model):
         
         # reconstuction
         rec = self.decoder_out_fn(self.out(d6))  # check sigmoid vs tanh
-        return logits, rec, enc
+        return logits, rec, encoding
 
 class Unet6L_Scorer(Project_conv_model):
     """
@@ -1528,7 +1553,7 @@ class Unet6L_Scorer(Project_conv_model):
         This version include an additional layer for the scorer and LargeConv_block instead of Conv_blocks
     """
 
-    def __init__(self, n_classes= 10):
+    def __init__(self, n_classes= 10, large_encoding = True):
         super(Unet6L_Scorer,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = n_classes)
         print("Initializing {} ...".format(self.__class__.__name__))
 
@@ -1536,6 +1561,7 @@ class Unet6L_Scorer(Project_conv_model):
         self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
         self.bottleneck_size = int(self.feature_maps(6)*math.floor(self.width/64)**2)
         self.n_levels = 6
+        self.large_encoding = large_encoding
         
         # create net and initialize
         self._createNet()
@@ -1605,7 +1631,7 @@ class Unet6L_Scorer(Project_conv_model):
         self.decoder_out_fn = nn.Sigmoid()
 
     
-    def forward(self, x):
+    def forward(self, x, verbose = False):
         """
             Returns: logits, reconstruction, encoding
         """
@@ -1622,21 +1648,36 @@ class Unet6L_Scorer(Project_conv_model):
         bottleneck  = self.b(p6)
         enc         = self.flatten(bottleneck)
         
+        if verbose: print ("enc shape ", enc.shape)
+        
         # print(bottleneck.shape)
         # print(enc.shape)
         # print(self.bottleneck_size)
         
         # classification
-        out         = self.relu(self.bn1(self.fc1(enc)))
-        out         = self.do(out)
-        out         = self.relu(self.bn2(self.fc2(out)))
-        out         = self.do(out)
-        out         = self.relu(self.bn3(self.fc3(out)))
-        out         = self.do(out)
-        out         = self.relu(self.bn4(self.fc4(out)))
-        out         = self.do(out)
-        logits      = self.fc5(out)
+        c1          = self.relu(self.bn1(self.fc1(enc)))
+        c1d         = self.do(c1)
         
+        c2          = self.relu(self.bn2(self.fc2(c1d)))
+        c2d         = self.do(c2)
+        
+        c3          = self.relu(self.bn3(self.fc3(c2d)))
+        c3d         = self.do(c3)
+        
+        c4          = self.relu(self.bn4(self.fc4(c3d)))
+        c4d         = self.do(c4)
+        
+        logits      = self.fc5(c4d)
+        
+        if verbose:
+            print("c1 shape ", c1.shape, "\n", "c2 shape ", c2.shape, "\n", "c3 shape ", c3.shape, "\n","c4 shape ", c4.shape, "\n")
+
+        # select large or small encoding for the forward 
+        if self.large_encoding:
+            encoding = enc
+        else:
+            encoding = c1
+            
         d1 = self.d1(bottleneck, s6)
         d2 = self.d2(d1, s5)
         d3 = self.d3(d2, s4)
@@ -1646,14 +1687,14 @@ class Unet6L_Scorer(Project_conv_model):
         
         # reconstuction
         rec = self.decoder_out_fn(self.out(d6))  # check sigmoid vs tanh
-        return logits, rec, enc
+        return logits, rec, encoding
 
 class Unet4_ResidualScorer(Project_conv_model):
     """
         U-net 4 with Resiudal Encoder + Scorer, 5 encoders and 5 decoders
     """
 
-    def __init__(self, n_classes= 10):
+    def __init__(self, n_classes= 10, large_encoding = True):
         super(Unet4_ResidualScorer,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = n_classes)
         print("Initializing {} ...".format(self.__class__.__name__))
 
@@ -1663,6 +1704,7 @@ class Unet4_ResidualScorer(Project_conv_model):
         self.bottleneck_size = int(self.feature_maps(4)*math.floor(self.width/16)**2) 
         self.residual2conv = False  # if False identity shortcuts are connected after the pooling layer
         self.n_levels = 4
+        self.large_encoding = large_encoding
         
         # create net and initialize
         self._createNet()
@@ -1722,7 +1764,7 @@ class Unet4_ResidualScorer(Project_conv_model):
             
         # self.model = nn.Sequential(self.encoder, self.decoder)
 
-    def forward(self, x):
+    def forward(self, x, verbose = False):
         """
             Returns: logits, reconstruction, encoding
         """
@@ -1737,22 +1779,32 @@ class Unet4_ResidualScorer(Project_conv_model):
         bottleneck = self.b(p4)
         enc         = self.flatten(bottleneck)
         
-        # classification
-        # f1          = self.relu(self.bn1(self.fc1(enc)))
-        # f1_drop     = self.do(f1)
-        # f2          = self.relu(self.bn2(self.fc2(f1_drop)))
-        # f2_drop     = self.do(f2)
-        # logits      = self.fc3(f2_drop)
+        if verbose: print ("enc shape ", enc.shape)
         
-        out         = self.relu(self.bn1(self.fc1(enc)))
-        out         = self.do(out)
-        out         = self.relu(self.bn2(self.fc2(out)))
-        out         = self.do(out)
-        out         = self.relu(self.bn3(self.fc3(out)))
-        out         = self.do(out)
-        out         = self.relu(self.bn4(self.fc4(out)))
-        out         = self.do(out)
-        logits      = self.fc5(out)
+        # classification        
+        c1          = self.relu(self.bn1(self.fc1(enc)))
+        c1d         = self.do(c1)
+        
+        c2          = self.relu(self.bn2(self.fc2(c1d)))
+        c2d         = self.do(c2)
+        
+        c3          = self.relu(self.bn3(self.fc3(c2d)))
+        c3d         = self.do(c3)
+        
+        c4          = self.relu(self.bn4(self.fc4(c3d)))
+        c4d         = self.do(c4)
+        
+        logits      = self.fc5(c4d)
+        
+        
+        if verbose:
+            print("c1 shape ", c1.shape, "\n", "c2 shape ", c2.shape, "\n", "c3 shape ", c3.shape, "\n","c4 shape ", c4.shape, "\n")
+        
+        # select large or small encoding for the forward 
+        if self.large_encoding:
+            encoding = enc
+        else:
+            encoding = c1
         
         # decoder 
         d1 = self.d1(bottleneck, s4)
@@ -1762,14 +1814,14 @@ class Unet4_ResidualScorer(Project_conv_model):
         
         # reconstuction
         rec = self.decoder_out_fn(self.out(d4))  # check sigmoid vs tanh
-        return logits, rec, enc
+        return logits, rec, encoding
 
 class Unet5_ResidualScorer(Project_conv_model):
     """
         U-net 5 with Resiudal Encoder + Scorer, 5 encoders (residual) and 5 decoders
     """
     
-    def __init__(self, n_classes= 10):
+    def __init__(self, n_classes= 10, large_encoding = True):
         super(Unet5_ResidualScorer,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = n_classes)
         print("Initializing {} ...".format(self.__class__.__name__))
 
@@ -1778,6 +1830,7 @@ class Unet5_ResidualScorer(Project_conv_model):
         self.bottleneck_size = int(self.feature_maps(5)*math.floor(self.width/32)**2) 
         self.residual2conv = False  # if False identity shortcuts are connected after the pooling layer
         self.n_levels = 5
+        self.large_encoding = large_encoding
         
         # create net and initialize
         self._createNet()
@@ -1847,7 +1900,7 @@ class Unet5_ResidualScorer(Project_conv_model):
             
         # self.model = nn.Sequential(self.encoder, self.decoder)
 
-    def forward(self, x):
+    def forward(self, x, verbose = False):
         """
             Returns: logits, reconstruction, encoding
         """
@@ -1862,26 +1915,34 @@ class Unet5_ResidualScorer(Project_conv_model):
         # bottleneck (encoding)
         bottleneck  = self.b(p5)
         enc         = self.flatten(bottleneck)
-        # print(enc.shape)
+        
+        if verbose: print ("enc shape ", enc.shape)
+
         
         # classification
-        # f1          = self.relu(self.bn1(self.fc1(enc)))
-        # f1_drop     = self.do(f1)
-        # f2          = self.relu(self.bn2(self.fc2(f1_drop)))
-        # f2_drop     = self.do(f2)
-        # logits      = self.fc3(f2_drop)
-        out         = self.relu(self.bn1(self.fc1(enc)))
-        out         = self.do(out)
-        out         = self.relu(self.bn2(self.fc2(out)))
-        out         = self.do(out)
-        out         = self.relu(self.bn3(self.fc3(out)))
-        out         = self.do(out)
-        out         = self.relu(self.bn4(self.fc4(out)))
-        out         = self.do(out)
-        logits      = self.fc5(out)
         
+        c1          = self.relu(self.bn1(self.fc1(enc)))
+        c1d         = self.do(c1)
         
-
+        c2          = self.relu(self.bn2(self.fc2(c1d)))
+        c2d         = self.do(c2)
+        
+        c3          = self.relu(self.bn3(self.fc3(c2d)))
+        c3d         = self.do(c3)
+        
+        c4          = self.relu(self.bn4(self.fc4(c3d)))
+        c4d         = self.do(c4)
+        
+        logits      = self.fc5(c4d)
+        
+        if verbose:
+            print("c1 shape ", c1.shape, "\n", "c2 shape ", c2.shape, "\n", "c3 shape ", c3.shape, "\n","c4 shape ", c4.shape, "\n")
+        
+        # select large or small encoding for the forward 
+        if self.large_encoding:
+            encoding = enc
+        else:
+            encoding = c1
         # decoder 
         d1 = self.d1(bottleneck, s5)
         d2 = self.d2(d1, s4)
@@ -1891,7 +1952,7 @@ class Unet5_ResidualScorer(Project_conv_model):
         
         # reconstuction
         rec = self.decoder_out_fn(self.out(d5))  # check sigmoid vs tanh
-        return logits, rec, enc
+        return logits, rec, encoding
     
 class Unet6_ResidualScorer(Project_conv_model):
     """
@@ -1899,7 +1960,7 @@ class Unet6_ResidualScorer(Project_conv_model):
         This version include an additional layer for the scorer
     """
 
-    def __init__(self, n_classes = 10):
+    def __init__(self, n_classes = 10, large_encoding = True):
         super(Unet6_ResidualScorer,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = n_classes)
         print("Initializing {} ...".format(self.__class__.__name__))
 
@@ -1909,6 +1970,7 @@ class Unet6_ResidualScorer(Project_conv_model):
         self.bottleneck_size = int(self.feature_maps(6)*math.floor(self.width/64)**2)  # if 224x224 the width is divided by 32
         self.residual2conv = False  # if False identity shortcuts are connected after the pooling layer
         self.n_levels = 6
+        self.large_encoding = large_encoding
         
         # create net and initialize
         self._createNet()
@@ -1977,7 +2039,7 @@ class Unet6_ResidualScorer(Project_conv_model):
         self.out = nn.Conv2d(self.feature_maps(0), self.n_channels, kernel_size=1, padding=0)
         self.decoder_out_fn = nn.Sigmoid()
 
-    def forward(self, x):
+    def forward(self, x, verbose = False):
         """
             Returns: logits, reconstruction, encoding
         """
@@ -1994,16 +2056,31 @@ class Unet6_ResidualScorer(Project_conv_model):
         bottleneck  = self.b(p6)
         enc         = self.flatten(bottleneck)
         
+        if verbose: print ("enc shape ", enc.shape)
+
         # classification
-        out         = self.relu(self.bn1(self.fc1(enc)))
-        out         = self.do(out)
-        out         = self.relu(self.bn2(self.fc2(out)))
-        out         = self.do(out)
-        out         = self.relu(self.bn3(self.fc3(out)))
-        out         = self.do(out)
-        out         = self.relu(self.bn4(self.fc4(out)))
-        out         = self.do(out)
-        logits      = self.fc5(out)
+        c1          = self.relu(self.bn1(self.fc1(enc)))
+        c1d         = self.do(c1)
+        
+        c2          = self.relu(self.bn2(self.fc2(c1d)))
+        c2d         = self.do(c2)
+        
+        c3          = self.relu(self.bn3(self.fc3(c2d)))
+        c3d         = self.do(c3)
+        
+        c4          = self.relu(self.bn4(self.fc4(c3d)))
+        c4d         = self.do(c4)
+        
+        logits      = self.fc5(c4d)
+        
+        if verbose:
+            print("c1 shape ", c1.shape, "\n", "c2 shape ", c2.shape, "\n", "c3 shape ", c3.shape, "\n","c4 shape ", c4.shape, "\n")
+        
+        # select large or small encoding for the forward 
+        if self.large_encoding:
+            encoding = enc
+        else:
+            encoding = c1
 
         d1 = self.d1(bottleneck, s6)
         d2 = self.d2(d1, s5)
@@ -2014,7 +2091,7 @@ class Unet6_ResidualScorer(Project_conv_model):
         
         # reconstuction
         rec = self.decoder_out_fn(self.out(d6))  # check sigmoid vs tanh
-        return logits, rec, enc
+        return logits, rec, encoding
 
 class Unet6L_ResidualScorer(Project_conv_model):
     """
@@ -2022,7 +2099,7 @@ class Unet6L_ResidualScorer(Project_conv_model):
         This version include an additional layer for the scorer and LargeConv_block instead of Conv_blocks
     """
 
-    def __init__(self, n_classes= 10):
+    def __init__(self, n_classes= 10, large_encoding = True):
         super(Unet6L_ResidualScorer,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = n_classes)
         print("Initializing {} ...".format(self.__class__.__name__))
 
@@ -2032,6 +2109,7 @@ class Unet6L_ResidualScorer(Project_conv_model):
         self.bottleneck_size = int(self.feature_maps(6)*math.floor(self.width/64)**2)  # if 224x224 the width is divided by 32
         self.residual2conv = False  # if False identity shortcuts are connected after the pooling layer
         self.n_levels = 6
+        self.large_encoding = large_encoding
         
         # create net and initialize
         self._createNet()
@@ -2100,7 +2178,7 @@ class Unet6L_ResidualScorer(Project_conv_model):
         self.out = nn.Conv2d(self.feature_maps(0), self.n_channels, kernel_size=1, padding=0)
         self.decoder_out_fn = nn.Sigmoid()
 
-    def forward(self, x):
+    def forward(self, x, verbose = False ):
         """
             Returns: logits, reconstruction, encoding
         """
@@ -2117,16 +2195,32 @@ class Unet6L_ResidualScorer(Project_conv_model):
         bottleneck  = self.b(p6)
         enc         = self.flatten(bottleneck)
         
+        if verbose: print ("enc shape ", enc.shape)
+
         # classification
-        out         = self.relu(self.bn1(self.fc1(enc)))
-        out         = self.do(out)
-        out         = self.relu(self.bn2(self.fc2(out)))
-        out         = self.do(out)
-        out         = self.relu(self.bn3(self.fc3(out)))
-        out         = self.do(out)
-        out         = self.relu(self.bn4(self.fc4(out)))
-        out         = self.do(out)
-        logits      = self.fc5(out)
+        
+        c1          = self.relu(self.bn1(self.fc1(enc)))
+        c1d         = self.do(c1)
+        
+        c2          = self.relu(self.bn2(self.fc2(c1d)))
+        c2d         = self.do(c2)
+        
+        c3          = self.relu(self.bn3(self.fc3(c2d)))
+        c3d         = self.do(c3)
+        
+        c4          = self.relu(self.bn4(self.fc4(c3d)))
+        c4d         = self.do(c4)
+        
+        logits      = self.fc5(c4d)
+        
+        if verbose:
+            print("c1 shape ", c1.shape, "\n", "c2 shape ", c2.shape, "\n", "c3 shape ", c3.shape, "\n","c4 shape ", c4.shape, "\n")
+        
+        # select large or small encoding for the forward 
+        if self.large_encoding:
+            encoding = enc
+        else:
+            encoding = c1
 
         d1 = self.d1(bottleneck, s6)
         d2 = self.d2(d1, s5)
@@ -2137,7 +2231,7 @@ class Unet6L_ResidualScorer(Project_conv_model):
         
         # reconstuction
         rec = self.decoder_out_fn(self.out(d6))  # check sigmoid vs tanh
-        return logits, rec, enc
+        return logits, rec, encoding
 
 #                                       custom abnormality module
 
@@ -2554,7 +2648,7 @@ class Abnormality_module_Encoder_v4(Project_abnorm_model):
     
     """ 
         based on Abnormality_module_Encoder_v2:
-        - moves the conctenation after several fc layer separately defined for encoding and residual
+        - moves the concatenation after several fc layer separately defined for encoding and residual
     """
     
     def __init__(self, shape_softmax_probs, shape_encoding, shape_residual):
@@ -2771,7 +2865,7 @@ def get_fc_classifier_Keras(input_shape = (28,28)):
 
     return model
 
-class TestModel(Project_abnorm_model):
+class TestAbnormModel(Project_abnorm_model):
     
     def __init__(self, shape_residual):
         
@@ -2906,7 +3000,7 @@ if __name__ == "__main__":
         input("press enter to exit ")
 
     def test_UnetScorer():
-        unet = Unet4_Scorer(n_classes=2)
+        unet = Unet6L_Scorer(n_classes=2, large_encoding=True)
         unet.to_device(device)
         print(unet.bottleneck_size)
         # unet.getSummary()
@@ -2914,6 +3008,7 @@ if __name__ == "__main__":
         x = T.rand((32, 3, INPUT_HEIGHT, INPUT_WIDTH)).to(device)
         # print(x.shape)
         logits, rec, enc = unet.forward(x)
+        print(enc.shape)
         # input("press enter to exit ")
     
     def test_UnetResidualScorer():
@@ -2926,10 +3021,11 @@ if __name__ == "__main__":
         
         x = T.rand((32, 3, INPUT_HEIGHT, INPUT_WIDTH)).to(device)
         # unet = Unet6L_ResidualScorer(n_channels=3, n_classes=2)
-        unet = Unet6L_ResidualScorer(n_classes=2)
+        unet = Unet6L_ResidualScorer(n_classes=2, large_encoding=True)
         unet.to_device(device)
+        print(unet.bottleneck_size)
         # print(unet.bottleneck_size)
-        unet.getSummary()
+        # unet.getSummary()
         try:
             logits, rec, enc = unet.forward(x)
             print("logits shape: ", logits.shape)
@@ -2997,6 +3093,6 @@ if __name__ == "__main__":
         abnorm_module.forward(probs_softmax=softmax_prob, residual=residual, encoding=encoding)
         # input("press enter to exit ")
     
-    test_abnorm_encoder()
+    test_UnetResidualScorer()
     #                           [End test section] 
     
