@@ -1651,7 +1651,13 @@ class OOD_dataset(Dataset):
         self.exact_samples  = exact_samples
         self.grayscale      = grayscale
         self._count_samples()
+        
+        # boolean flag for load just labels (used for class weights computation)
+        self.only_labels = False
 
+    def set_only_labels(self, flag_value):
+        self.only_labels = flag_value
+        
     def _count_samples(self):
         print("Building OOD detection dataset...\nID samples: {}, OOD samples: {}, balancing mode: {}".format(len(self.id_data), len(self.ood_data), self.balancing_mode))
         
@@ -1664,6 +1670,8 @@ class OOD_dataset(Dataset):
             # compute indices
             self.id_indices  =  random.sample(range(len(self.id_data)), max_samples)
             self.ood_indices =  random.sample(range(len(self.ood_data)), max_samples)
+            
+
             
         elif self.balancing_mode == "exact" and not(self.exact_samples is None):
             # self.n_IDsamples    = math.floor(self.exact_samples/2)
@@ -1695,30 +1703,43 @@ class OOD_dataset(Dataset):
         return self.n_samples
     
     def __getitem__(self,idx):
-        if idx < self.n_IDsamples:
-            if self.id_indices is None:   # sample by providen index, this is used when no balancing is appleid on data (all data ID and ODD returned)
-                x, _ = self.id_data[idx]
-            else:
-                x, _ = self.id_data[self.id_indices[idx]]    # sample from random sampled index, this is used when balancing is appleid on data (max or exact mode)
-            y = 0
+        
+        
+        if self.only_labels:
+            # define just label
+            if idx < self.n_IDsamples: y = 0
+            else: y = 1
+            
         else:
-            idx_ood = idx - self.n_IDsamples  # compute the index for the ood data
-            if self.ood_indices is None:
-                x, _ = self.ood_data[idx_ood]
+            # define sample and label 
+            if idx < self.n_IDsamples:
+                if self.id_indices is None:   # sample by providen index, this is used when no balancing is appleid on data (all data ID and ODD returned)
+                    x, _ = self.id_data[idx]
+                else:
+                    x, _ = self.id_data[self.id_indices[idx]]    # sample from random sampled index, this is used when balancing is appleid on data (max or exact mode)
+                y = 0
             else:
-                x, _ = self.ood_data[self.ood_indices[idx_ood]]
-            y = 1
-    
-        # check whether grayscale image, perform pseudocolor inversion 
-        if x.shape[0] == 1 and not(self.grayscale):
-            x = x.expand(3, -1, -1)
+                idx_ood = idx - self.n_IDsamples  # compute the index for the ood data
+                if self.ood_indices is None:
+                    x, _ = self.ood_data[idx_ood]
+                else:
+                    x, _ = self.ood_data[self.ood_indices[idx_ood]]
+                y = 1
+            
+            # check whether grayscale image, perform pseudocolor inversion 
+            if x.shape[0] == 1 and not(self.grayscale):
+                x = x.expand(3, -1, -1)
         
         # label to one-hot-encoding
         y_vector    = [0,0]             # zero vector
         y_vector[y] = 1                 # mark with one the correct position: [1,0] -> ID, [0,1]-> OOD
         y_vector    = T.tensor(y_vector) 
         
-        return x, y_vector
+        # return label or sample + label
+        if self.only_labels:
+            return y_vector
+        else:
+            return x, y_vector
             
 
 if __name__ == "__main__":

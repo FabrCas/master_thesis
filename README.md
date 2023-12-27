@@ -22,5 +22,7 @@ The dataset can be downloaded at the following [link](https://drive.google.com/f
 [paper](https://arxiv.org/abs/1610.02136)
 - **CutMix**, Regularization Strategy to Train Strong Classifiers with Localizable Features.
 [paper](https://arxiv.org/abs/1905.04899)
-- **ODIIN**, Enhancing The Reliability of Out-of-distribution Image Detection in Neural Networks.
+- **ODIN**, Enhancing The Reliability of Out-of-distribution Image Detection in Neural Networks.
 [paper](https://arxiv.org/abs/1706.02690)
+- **Confidence Branch**, Learning Confidence for Out-of-Distribution Detection in Neural Networks.
+[paper](https://arxiv.org/abs/1802.04865)

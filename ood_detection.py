@@ -49,8 +49,73 @@ class OOD_Classifier(object):
         # hyper-params
         self.batch_size     =  256  # 32 -> basic, 64/128 -> encoder
         
+    
+    #                                      data aux functions
+    def compute_class_weights(self, verbose = False, positive = "ood"):
+        """ positive (str), if ood is used 1 to represent ood labels and 0 for id. The opposite behavior is obtained using "id" """
+        
+        print("Computing class weights for the training set")
+        
+        # set modality to load just the label
+        self.dataset_train.set_only_labels(True)
+        loader = DataLoader(self.dataset_train, batch_size= None,  num_workers = 8)  # self.dataset_train is instance of OOD_dataset class
+
+        
+        # compute occurrences of labels
+        class_freq={}
+        total = len(self.dataset_train)
+        self.samples_train = total
+        
+        print(total)
+        
+        for y in tqdm(loader, total = len(loader)):
+            
+            # print(y.shape)
+            # print(y.shape)
+            # l = y.item()
+            y = y.detach().cpu().tolist()
+                
+            if positive == "ood":
+                l = y[1]
+            elif positive == "id":
+                l = y[0]
+            else:
+                ValueError('invalid value for the parameter "positive", choose between "ood  and "id"')
+            
+            if l not in class_freq.keys():
+                class_freq[l] = 1
+            else:
+                class_freq[l] = class_freq[l]+1
+        if verbose: print("class_freq -> ", class_freq)
+        
+        # compute the weights   
+        class_weights = []
+        for class_ in sorted(class_freq.keys()):
+            freq = class_freq[class_]
+            class_weights.append(round(total/freq,5))
+
+        print("Class_weights-> ", class_weights)
+        
+        
+        # turn back in loading modality sample + label
+        self.dataset_train.set_only_labels(False)
+        
+        return class_weights
+
         
     #                                       math/statistics aux functions
+    
+    # def weighted_binary_cross_entropy(output, target, weights=None):
+        
+    #     if weights is not None:
+    #         assert len(weights) == 2
+            
+    #         loss = weights[1] * (target * T.log(output)) + \
+    #             weights[0] * ((1 - target) * T.log(1 - output))
+    #     else:
+    #         loss = target * T.log(output) + (1 - target) * T.log(1 - output)
+
+    #     return T.neg(T.mean(loss))
     
     def _sigmoid(self,x):
         """ numpy implementation of sigmoid actiavtion function"""
@@ -269,7 +334,7 @@ class OOD_Classifier(object):
         check_folder(path_results_ood_data)
         check_folder(path_results_classifier)
         if train_name is not None:
-            check_folder(path_results_folder)
+            check_folder(path_results_folder, force = False) #$
         
         if train_name is not None:
             return path_results_folder
@@ -291,7 +356,7 @@ class OOD_Classifier(object):
         check_folder(path_models_ood_data)
         check_folder(path_models_classifier)
         if train_name is not None:
-            check_folder(path_models_folder)
+            check_folder(path_models_folder, force = False)  #$
         
         if train_name is not None:
             return path_models_folder
@@ -1028,8 +1093,9 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
     
     """
     
-    def __init__(self, classifier, scenario:str, model_type, useGPU = True, binary_dataset = True,
-                 batch_size = "dafault", use_synthetic = True, extended_ood = False, blind_test = True, mode_balancing = "max"):
+    def __init__(self, classifier, scenario:str, model_type: str, useGPU: bool= True, binary_dataset: bool = True,
+                 batch_size = "dafault", use_synthetic:bool = True, extended_ood: bool = False, blind_test: bool = True,
+                 balancing_mode: str = "max"):
         """ 
             ARGS:
             - classifier (T.nn.Module): the classifier (Module A) that produces the input for Module B (abnormality module)
@@ -1040,7 +1106,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             - use_synthetic (boolean): choose if use ood data generated from ID data (synthetic) with several techniques, or not. Defaults is True.
             - extended_ood (boolean, optional): This has sense if use_synthetic is set to True. Select if extend the ood data for training, using not only synthetic data. Default is True
             - blind_test (boolean, optional): This has sense if use_synthetic is set to True. Select if use real ood data (True) or synthetized one from In distributiion data. Default is True
-            - mode_balancing (string,optinal): This has sense if use_synthethid is set to True and extended_ood is set to True.
+            - balancing_mode (string,optinal): This has sense if use_synthethid is set to True and extended_ood is set to True.
             Choose between "max and "all", max mode give a balance number of OOD same as ID, while, all produces more OOD samples than ID.
             . Default is "max"
             
@@ -1076,20 +1142,26 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         else:
             self.dataset_class = CDDB_Partial
         
-        # Dataset flags
+        # Datasets flags
         self.use_synthetic  = use_synthetic    
         self.extended_ood   = extended_ood
-        self.mode_balancing = mode_balancing
         self.blind_test     = blind_test
+        if not(balancing_mode in ["max", "all"]):
+            raise ValueError('Wrong selection for balancing mode. Choose between "max" or "all".') 
+        self.balancing_mode = balancing_mode
         
+        # Define sets
         if self.use_synthetic:
             self._prepare_data_synt(verbose = True)
         else:
             self._prepare_data(verbose=True)
+        
+        # compute the weights for the labels
+        self.weights_labels = self.compute_class_weights(verbose=True, positive="ood")
             
         # configuration variables
         self.augment_data_train = False
-        self.loss_name          = "bce"   # binary cross entropy or sigmoid cross entropy
+        self.loss_name          = "weighted bce"   # binary cross entropy or sigmoid cross entropy (weighted)
         
         # instantiation aux elements
         self.bce     = F.binary_cross_entropy_with_logits   # performs sigmoid internally
@@ -1174,21 +1246,21 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             if verbose: print("length OOD dataset after extension (train) -> ", len(ood_data_train))
             
             # train set: id data train + ood from synthetic ood and expansion)
-            self.dataset_train = OOD_dataset(id_data_train, ood_data_train, balancing_mode= self.mode_balancing)
+            self.dataset_train = OOD_dataset(id_data_train, ood_data_train, balancing_mode= self.balancing_mode)
         else:
             # train set: id data train + synthetic ood (id data train transformed in ood)
-            self.dataset_train = OOD_dataset(id_data_train, ood_data_train_syn, balancing_mode= self.mode_balancing)
+            self.dataset_train = OOD_dataset(id_data_train, ood_data_train_syn, balancing_mode= self.balancing_mode)
             
         if self.blind_test:
             ood_data_test  = self.dataset_class(scenario = self.scenario, train = False,  ood = True, augment = False)
             if verbose: print("length OOD dataset (test) -> ", len(ood_data_test))
             # test set: id data test + ood data test
-            self.dataset_test  = OOD_dataset(id_data_test , ood_data_test,  balancing_mode= self.mode_balancing)
+            self.dataset_test  = OOD_dataset(id_data_test , ood_data_test,  balancing_mode= self.balancing_mode)
         else:
-            self.dataset_test  = OOD_dataset(id_data_test , ood_data_test_syn,  balancing_mode= self.mode_balancing)  # not real ood data but the synthetized one (useful to test the effective learning of the model)
+            self.dataset_test  = OOD_dataset(id_data_test , ood_data_test_syn,  balancing_mode= self.balancing_mode)  # not real ood data but the synthetized one (useful to test the effective learning of the model)
         
         # valid set: id data valid + synthetic ood (id data train transformed in ood)
-        self.dataset_valid = OOD_dataset(id_data_valid, ood_data_valid_syn, balancing_mode= self.mode_balancing)
+        self.dataset_valid = OOD_dataset(id_data_valid, ood_data_valid_syn, balancing_mode= self.balancing_mode)
         
         
         if verbose: print("length full dataset (train/valid/test) with balancing -> ", len(self.dataset_train), len(self.dataset_valid), len(self.dataset_test))
@@ -1226,9 +1298,9 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
 
                 
         # define the OOD detection sets
-        self.dataset_train = OOD_dataset(id_data_train, ood_data_train, balancing_mode=self.mode_balancing)
-        self.dataset_test  = OOD_dataset(id_data_test , ood_data_valid, balancing_mode=self.mode_balancing)
-        self.dataset_valid = OOD_dataset(id_data_valid, ood_data_test , balancing_mode=self.mode_balancing)
+        self.dataset_train = OOD_dataset(id_data_train, ood_data_train, balancing_mode=self.balancing_mode)
+        self.dataset_test  = OOD_dataset(id_data_test , ood_data_valid, balancing_mode=self.balancing_mode)
+        self.dataset_valid = OOD_dataset(id_data_valid, ood_data_test , balancing_mode=self.balancing_mode)
         
         if verbose: print("length full dataset (train/valid/test) with balancing -> ", len(self.dataset_train), len(self.dataset_valid), len(self.dataset_test))
         print("\n")
@@ -1257,7 +1329,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         
         return {
             "date_training": date.today().strftime("%d-%m-%Y"),
-            "model": self.model_type,
+            "model": "Abnormality module " + self.model_type,
             "large_encoding_classifier": large_encoding_classifier,
             "input_shape": input_shape,
             "data_scenario": self.scenario,
@@ -1268,7 +1340,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             "base_augmentation": self.augment_data_train,
             "Use OOD data synthetized":  self.use_synthetic,
             "Use extension OOD from CDDB": self.extended_ood,
-            "Balancing mode": self.mode_balancing,
+            "Balancing mode": self.balancing_mode,
 
             # dataset lengths 
             "Train Set Samples": len(self.dataset_train),
@@ -1276,7 +1348,8 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             "Test Set Samples":  len(self.dataset_test),
             
             # dataset distribution
-            
+            "ID samples": round((1/self.weights_labels[0]) * self.samples_train),
+            "OOD samples": round((1/self.weights_labels[1]) * self.samples_train)
             }
     
     def init_logger(self, path_model):
@@ -1493,10 +1566,16 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
                 # prepare samples/targets batches 
                 x = x.to(self.device)
                 x.requires_grad_(True)
-                      
-                y = y[:,1]                           # take only label for the positive class (fake)
-                y = y.to(self.device).to(T.float32)               # binary int encoding for each sample
                 
+                y = y[:,1]                           # take only label for the positive class (fake)
+                
+                # compute weights for the full batch
+                weights = T.tensor([self.weights_labels[elem] for elem in y ]).to(self.device)
+
+                # int2float and move data to GPU mem                
+                y = y.to(self.device).to(T.float32)               # binary int encoding for each sample
+               
+        
                 # print(x.shape)
                 # print(y.shape)
                 
@@ -1526,8 +1605,13 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
                     # print(logit.shape)
                     time2.append(time()- s_2)
 
-                    loss = self.bce(input=logit, target= y)
+                    
+                    # print(logit.shape)
+                    # print(y.shape)
+                
+                    loss = self.bce(input=logit, target= y, pos_weight=weights)
                     # print(loss)
+    
                  
 
                 # Exit the autocast() context manager
@@ -1922,6 +2006,18 @@ if __name__ == "__main__":
         abn = Abnormality_module(classifier, scenario="content", model_type=type_encoder, use_synthetic= False)
         abn.train(additional_name="112p_nosynt", test_loop=False)
     
+    def train_full_extended_abn_encoder(type_encoder = "encoder", mode_balancing: str = "max"):
+        
+        "mode balancing (str): choose btw max or all"
+        
+        """ uses extended OOD data"""
+        
+        classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
+        classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
+        
+        abn = Abnormality_module(classifier, scenario="content", model_type= type_encoder, extended_ood = True, balancing_mode="all")
+        abn.train(additional_name="112p_fullExtendedOOD", test_loop=False)
+    
     def test_abn_content_faces(name_model, epoch, type_model):
         
         def test_forward():
@@ -1957,15 +2053,20 @@ if __name__ == "__main__":
         abn.load(name_model, epoch)
         
         # test_forward()
-        
-        
-
-        
+    
         # launch test with non-thr metrics
         abn.test_risk()
    
-
-
+    classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
+    classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
+    
+    abn = Abnormality_module(classifier, scenario="content", model_type= "encoder", extended_ood = True, balancing_mode="all")
+    abn.train(additional_name="cancellaaaaa", test_loop=False)
+    
+    
+    
+    
+    
     pass
     #                           [End test section] 
    

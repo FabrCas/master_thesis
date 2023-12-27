@@ -1221,8 +1221,8 @@ def check_folder(path:str, force = False):
                     counter_copy += 1 
             
             os.makedirs(os.path.join(path_to, last_folder_name + "_" + str(counter_copy)))
-        else:
-            print('The folder to create already exists, set the force parameter to "True" for a new version')
+        # else:
+        #     print('The folder to create already exists, set the force parameter to "True" for a new version')
     else:
         raise ValueError("Impossible to create a folder, the path {} is relative to a file!".format(path))
     
