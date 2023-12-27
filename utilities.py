@@ -1190,17 +1190,39 @@ def isFolder(path):
     """ simple check if a path (relative or absolute) is related to a folder (returns True) or a file (returns False)
         (are also considere the hidden file)
     """
-    match_file = re.match(r"^[^.]+\..*$", path)
+    name_file = path.split("/")[-1]
+        
+    match_file = re.match(r"^[^.]+\..*$", name_file)
     if match_file is None: return True
     else: return False
       
-def check_folder(path):
-    """ check if a folder exists, otherwise create """
+def check_folder(path:str, force = False):
+    """ check if a folder exists, otherwise create, if "force" is set to True, the folder is always copied """
+    
+    # remove slash if last character
+    if path[-1] == "/": path = path[:-1]
     
     if(isFolder(path)):
         if(not os.path.exists(path)):
-            os.makedirs(path) 
+            os.makedirs(path)
+            return
+            
+        # if forced try to save a copy even if file already exist
+        elif force:
+            path_folders = path.split("/")
+            path_to = "/".join(path_folders[:-1])
+            last_folder_name = path_folders[-1]
+            print(path_to)
+            print(last_folder_name)
+            
+            counter_copy = 0
+            for file in os.listdir(path_to):
+                if last_folder_name in file and (isFolder(os.path.join(path_to, file))):
+                    counter_copy += 1 
+            
+            os.makedirs(os.path.join(path_to, last_folder_name + "_" + str(counter_copy)))
+        else:
+            print('The folder to create already exists, set the force parameter to "True" for a new version')
     else:
         raise ValueError("Impossible to create a folder, the path {} is relative to a file!".format(path))
     
-

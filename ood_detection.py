@@ -1029,7 +1029,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
     """
     
     def __init__(self, classifier, scenario:str, model_type, useGPU = True, binary_dataset = True,
-                 batch_size = "dafault", use_synthetic = True, extended_ood = False, blind_test = True):
+                 batch_size = "dafault", use_synthetic = True, extended_ood = False, blind_test = True, mode_balancing = "max"):
         """ 
             ARGS:
             - classifier (T.nn.Module): the classifier (Module A) that produces the input for Module B (abnormality module)
@@ -1040,6 +1040,9 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             - use_synthetic (boolean): choose if use ood data generated from ID data (synthetic) with several techniques, or not. Defaults is True.
             - extended_ood (boolean, optional): This has sense if use_synthetic is set to True. Select if extend the ood data for training, using not only synthetic data. Default is True
             - blind_test (boolean, optional): This has sense if use_synthetic is set to True. Select if use real ood data (True) or synthetized one from In distributiion data. Default is True
+            - mode_balancing (string,optinal): This has sense if use_synthethid is set to True and extended_ood is set to True.
+            Choose between "max and "all", max mode give a balance number of OOD same as ID, while, all produces more OOD samples than ID.
+            . Default is "max"
             
         """
         super(Abnormality_module, self).__init__(useGPU=useGPU)
@@ -1076,10 +1079,11 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         # Dataset flags
         self.use_synthetic  = use_synthetic    
         self.extended_ood   = extended_ood
+        self.mode_balancing = mode_balancing
         self.blind_test     = blind_test
         
         if self.use_synthetic:
-            self._prepare_data_syn(verbose = True)
+            self._prepare_data_synt(verbose = True)
         else:
             self._prepare_data(verbose=True)
             
@@ -1134,7 +1138,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         else:
             self.name_ood_data  = "CDDB_" + self.scenario + "_scenario"
         
-    def _prepare_data_syn(self,verbose = False):
+    def _prepare_data_synt(self,verbose = False):
         """ method used to prepare Dataset class used for both training and testing, synthetizing OOD data for training
         
             ARGS:
@@ -1170,21 +1174,21 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             if verbose: print("length OOD dataset after extension (train) -> ", len(ood_data_train))
             
             # train set: id data train + ood from synthetic ood and expansion)
-            self.dataset_train = OOD_dataset(id_data_train, ood_data_train, balancing_mode="max")
+            self.dataset_train = OOD_dataset(id_data_train, ood_data_train, balancing_mode= self.mode_balancing)
         else:
             # train set: id data train + synthetic ood (id data train transformed in ood)
-            self.dataset_train = OOD_dataset(id_data_train, ood_data_train_syn, balancing_mode="max")
+            self.dataset_train = OOD_dataset(id_data_train, ood_data_train_syn, balancing_mode= self.mode_balancing)
             
         if self.blind_test:
             ood_data_test  = self.dataset_class(scenario = self.scenario, train = False,  ood = True, augment = False)
             if verbose: print("length OOD dataset (test) -> ", len(ood_data_test))
             # test set: id data test + ood data test
-            self.dataset_test  = OOD_dataset(id_data_test , ood_data_test,  balancing_mode="max")
+            self.dataset_test  = OOD_dataset(id_data_test , ood_data_test,  balancing_mode= self.mode_balancing)
         else:
-            self.dataset_test  = OOD_dataset(id_data_test , ood_data_test_syn,  balancing_mode="max")  # not real ood data but the synthetized one (useful to test the effective learning of the model)
+            self.dataset_test  = OOD_dataset(id_data_test , ood_data_test_syn,  balancing_mode= self.mode_balancing)  # not real ood data but the synthetized one (useful to test the effective learning of the model)
         
         # valid set: id data valid + synthetic ood (id data train transformed in ood)
-        self.dataset_valid = OOD_dataset(id_data_valid, ood_data_valid_syn, balancing_mode="max")
+        self.dataset_valid = OOD_dataset(id_data_valid, ood_data_valid_syn, balancing_mode= self.mode_balancing)
         
         
         if verbose: print("length full dataset (train/valid/test) with balancing -> ", len(self.dataset_train), len(self.dataset_valid), len(self.dataset_test))
@@ -1222,9 +1226,9 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
 
                 
         # define the OOD detection sets
-        self.dataset_train = OOD_dataset(id_data_train, ood_data_train, balancing_mode="max")
-        self.dataset_test  = OOD_dataset(id_data_test , ood_data_valid, balancing_mode="max")
-        self.dataset_valid = OOD_dataset(id_data_valid, ood_data_test , balancing_mode="max")
+        self.dataset_train = OOD_dataset(id_data_train, ood_data_train, balancing_mode=self.mode_balancing)
+        self.dataset_test  = OOD_dataset(id_data_test , ood_data_valid, balancing_mode=self.mode_balancing)
+        self.dataset_valid = OOD_dataset(id_data_valid, ood_data_test , balancing_mode=self.mode_balancing)
         
         if verbose: print("length full dataset (train/valid/test) with balancing -> ", len(self.dataset_train), len(self.dataset_valid), len(self.dataset_test))
         print("\n")
@@ -1260,9 +1264,19 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             "optimizer": self.optimizer.__class__.__name__,
             "scheduler": self.scheduler.__class__.__name__,
             "loss": self.loss_name,
+            "grad_scaler": True,                # always true
             "base_augmentation": self.augment_data_train,
             "Use OOD data synthetized":  self.use_synthetic,
-            "grad_scaler": True,                # always true
+            "Use extension OOD from CDDB": self.extended_ood,
+            "Balancing mode": self.mode_balancing,
+
+            # dataset lengths 
+            "Train Set Samples": len(self.dataset_train),
+            "Valid Set Samples": len(self.dataset_valid),
+            "Test Set Samples":  len(self.dataset_test),
+            
+            # dataset distribution
+            
             }
     
     def init_logger(self, path_model):
@@ -1887,7 +1901,10 @@ if __name__ == "__main__":
         abn = Abnormality_module(classifier, scenario="content", model_type= type_encoder)
         abn.train(additional_name="112p", test_loop=False)
         
-    def train_extended_abn_encoder(type_encoder = "encoder"):
+    def train_extended_abn_encoder(type_encoder = "encoder", mode_balancing: str = "max"):
+        
+        "mode balancing (str): choose btw max or all"
+        
         """ uses extended OOD data"""
         
         classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
@@ -1946,17 +1963,8 @@ if __name__ == "__main__":
         
         # launch test with non-thr metrics
         abn.test_risk()
-    
-    
+   
 
-    
-    train_nosynt_abn_encoder(type_encoder= "encoder")
-    train_nosynt_abn_encoder(type_encoder= "encoder_v2")
-    train_nosynt_abn_encoder(type_encoder= "encoder_v3")
-    
-    
-
-    
 
     pass
     #                           [End test section] 
@@ -1989,9 +1997,15 @@ if __name__ == "__main__":
     test_abn_content_faces("Abnormality_module_encoder_v4_112p_19-12-2023", 50,"encoder_v4")
     
     
-                                ABNORMALITY MODULE ENCODER  (Synthetic ood data, + extension)
+                                ABNORMALITY MODULE ENCODER  (Synthetic ood data, + extension, max merging)
     train_extended_abn_encoder(type_encoder = encoder_v4)
+    train_extended_abn_encoder(type_encoder= "encoder")
+    train_extended_abn_encoder(type_encoder= "encoder_v2")
+    train_extended_abn_encoder(type_encoder= "encoder_v3")         
     
+    test_abn_content_faces("Abnormality_module_encoder_112p_extendedOOD_26-12-2023", 50,"encoder")    
+    test_abn_content_faces("Abnormality_module_encoder_v2_112p_extendedOOD_26-12-2023", 50,"encoder_v2")    
+    test_abn_content_faces("Abnormality_module_encoder_v3_112p_extendedOOD_26-12-2023", 50,"encoder_v3")      
     test_abn_content_faces("Abnormality_module_encoder_v4_112p_extendedOOD_19-12-2023", 50,"encoder_v4")
     
                                 ABNORMALITY MODULE ENCODER  (CDDB OOD data)
@@ -1999,5 +2013,15 @@ if __name__ == "__main__":
     train_nosynt_abn_encoder(type_encoder= "encoder_v2")
     train_nosynt_abn_encoder(type_encoder= "encoder_v3")                 
     train_nosynt_abn_encoder(type_encoder= "encoder_v4")
+    
+    test_abn_content_faces("Abnormality_module_encoder_112p_nosynt_25-12-2023", 50,"encoder")    
+    test_abn_content_faces("Abnormality_module_encoder_v2_112p_nosynt_25-12-2023", 50,"encoder_v2")    
+    test_abn_content_faces("Abnormality_module_encoder_v3_112p_nosynt_25-12-2023", 50,"encoder_v3")      
+    test_abn_content_faces("Abnormality_module_encoder_v4_112p_nosynt_25-12-2023", 50,"encoder_v4")   
+
+    
+                                ABNORMALITY MODULE ENCODER  (Synthetic ood data, + extension, all merging)
+    
+    
     
     """

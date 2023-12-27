@@ -1626,16 +1626,16 @@ class UniformNoise(Dataset):
 
 # To generate the dataloader containing both ID and OOD data, with the real and fake labels
 class OOD_dataset(Dataset):
-    def __init__(self, id_data, ood_data, balancing_mode:str = None, exact_samples:int = None, grayscale = False):  # balancing_mode = "max","exact" or None
+    def __init__(self, id_data, ood_data, balancing_mode:str = "all", exact_samples:int = None, grayscale = False):  # balancing_mode = "max","exact" or None
         """ Dataset for ID and OOD data
 
         Args:
             id_data (torch.Dataset): The dataset used for the In-Distribution data (label: [1,0] or 0)
             ood_data (torch.Dataset):  The dataset used for the Out-Of-Distribution data (label: [0,1] or 1)
-            balancing_mode (str, optional): Possible values are the following: "max","exact" or None. Defaults to None.
+            balancing_mode (str, optional): Possible values are the following: "max","exact" or "all". Defaults to None.
                 max (str): use the maximum number of samples to perfectly balance ID and OOD data
                 exact (str):use an exact number of samples for both ID and OOD data (to be specifed with the "exact_samples" parameter)
-                None: No balance is providen
+                all (str): No balance is providen
             exact_samples (int, optional): Number of exact samples to specify whether the balancing_mode "exact" is chosen. Defaults to None.
             grayscale (boolean, optional): specify whether samples are in grayscale, Defaults to None
         """
@@ -1683,7 +1683,7 @@ class OOD_dataset(Dataset):
             self.id_indices  =  random.sample(range(len(self.id_data)), self.n_IDsamples)
             self.ood_indices =  random.sample(range(len(self.ood_data)), self.n_OODsamples)
             
-        else:  # unbalanced way of mixing ID and OOD data
+        else:  # "all" case. Unbalanced way of mixing ID and OOD data
             self.n_IDsamples    = len(self.id_data)
             self.n_OODsamples   = len(self.ood_data)
             self.n_samples      = self.n_IDsamples + self.n_OODsamples # be careful, don't use too different dataset in size
