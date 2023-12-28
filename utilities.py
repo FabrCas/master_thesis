@@ -1187,8 +1187,9 @@ def print_list(x):
         print("{:>3}){}".format(str(idx), str(elem)))
 
 def isFolder(path):
-    """ simple check if a path (relative or absolute) is related to a folder (returns True) or a file (returns False)
-        (are also considere the hidden file)
+    """
+    simple check if a path (relative or absolute) is related to a folder (returns True) or a file (returns False).
+    This method also considers the hidden file.
     """
     name_file = path.split("/")[-1]
         
@@ -1197,7 +1198,11 @@ def isFolder(path):
     else: return False
       
 def check_folder(path:str, force = False):
-    """ check if a folder exists, otherwise create, if "force" is set to True, the folder is always copied """
+    """ 
+    check if a folder exists, otherwise create it. 
+    if "force" is set to False (Default), this method has no return
+    if "force" is set to True, the folder is always copied. In this case return the new path considering homonymous folders.
+    """
     
     # remove slash if last character
     if path[-1] == "/": path = path[:-1]
@@ -1220,7 +1225,10 @@ def check_folder(path:str, force = False):
                 if last_folder_name in file and (isFolder(os.path.join(path_to, file))):
                     counter_copy += 1 
             
-            os.makedirs(os.path.join(path_to, last_folder_name + "_" + str(counter_copy)))
+            new_path = os.path.join(path_to, last_folder_name + "_" + str(counter_copy))
+            
+            os.makedirs(new_path)
+            return new_path
         # else:
         #     print('The folder to create already exists, set the force parameter to "True" for a new version')
     else:

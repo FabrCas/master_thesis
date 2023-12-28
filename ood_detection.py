@@ -65,9 +65,8 @@ class OOD_Classifier(object):
         class_freq={}
         total = len(self.dataset_train)
         self.samples_train = total
-        
-        print(total)
-        
+
+    
         for y in tqdm(loader, total = len(loader)):
             
             # print(y.shape)
@@ -319,29 +318,31 @@ class OOD_Classifier(object):
     def get_path2SaveResults(self, train_name = None):
         """ Return the path to the folder to save results both for OOD metrics and ID/OOD bin classification"""
         
+        # compose paths
         name_task                   = self.types_classifier[self.task_type_prog]
         path_results_task           = os.path.join(self.path_results, name_task)
         path_results_method         = os.path.join(path_results_task, self.name)
         path_results_ood_data       = os.path.join(path_results_method, "ood_" + self.name_ood_data)
         path_results_classifier     = os.path.join(path_results_ood_data, self.name_classifier) 
-        
         if train_name is not None:   
             path_results_folder         = os.path.join(path_results_classifier,train_name)    
         
-        # prepare file-system
+        # prepare file-system without forcing creations
         check_folder(path_results_task)
         check_folder(path_results_method)
         check_folder(path_results_ood_data)
         check_folder(path_results_classifier)
-        if train_name is not None:
-            check_folder(path_results_folder, force = False) #$
+            
         
         if train_name is not None:
+            path_results_folder = check_folder(path_results_folder, force = True) #$
             return path_results_folder
-        else: 
+        else:
             return path_results_classifier
     
     def get_path2SaveModels(self, train_name = None):
+        
+        # compose paths
         name_task                   = self.types_classifier[self.task_type_prog]
         path_models_task            = os.path.join(self.path_models, name_task)
         path_models_method          = os.path.join(path_models_task, self.name)
@@ -350,15 +351,14 @@ class OOD_Classifier(object):
         if train_name is not None:   
             path_models_folder          = os.path.join(path_models_classifier, train_name)
         
-        # prepare file-system
+        # prepare file-system without forcing creations
         check_folder(path_models_task)
         check_folder(path_models_method)
         check_folder(path_models_ood_data)
         check_folder(path_models_classifier)
-        if train_name is not None:
-            check_folder(path_models_folder, force = False)  #$
         
         if train_name is not None:
+            path_models_folder = check_folder(path_models_folder, force = True)  #$
             return path_models_folder
         else:
             return path_models_classifier
@@ -1197,7 +1197,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         self.model.eval()
     
     def _meta_data(self, task_type_prog = None):
-        """ prepare meta data of the current model"""
+        """ prepare meta data of the current model: task_type_prog and name_ood_data"""
         
         if task_type_prog is None:
             if self.binary_dataset:
@@ -1348,8 +1348,8 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             "Test Set Samples":  len(self.dataset_test),
             
             # dataset distribution
-            "ID samples": round((1/self.weights_labels[0]) * self.samples_train),
-            "OOD samples": round((1/self.weights_labels[1]) * self.samples_train)
+            "ID train samples": round((1/self.weights_labels[0]) * self.samples_train),
+            "OOD train samples": round((1/self.weights_labels[1]) * self.samples_train)
             }
     
     def init_logger(self, path_model):
@@ -1430,13 +1430,16 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         
         print("\n\t\t[Loading model]\n")
         
-        # save folder of the train (can be used to save new files in models and results)
-        self.train_name = name_folder
-        
-        models_path = self.get_path2SaveModels()
         self._meta_data()
-        path2model              = os.path.join(models_path,  name_folder, str(epoch) + ".ckpt")
-        self.modelEpochs        = epoch
+        
+        # save folder of the train (can be used to save new files in models and results)
+        self.train_name     = name_folder
+        self.modelEpochs    = epoch
+        
+        # get full path to load
+        models_path         = self.get_path2SaveModels()
+        path2model          = os.path.join(models_path,  name_folder, str(epoch) + ".ckpt")
+
         try:
             loadModel(self.model, path2model)
             self.model.eval()   # no train mode, fix dropout, batchnormalization, etc.
@@ -1465,6 +1468,10 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             
             # take only label for the positive class (fake)
             y = y[:,1]
+            
+            # compute weights for the full batch
+            weights = T.tensor([self.weights_labels[elem] for elem in y ]).to(self.device)
+            
             y = y.to(self.device).to(T.float32)
 
             
@@ -1481,7 +1488,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
                         raise ValueError("Forward not defined in valid function for model: {}".format(self.model_type))
                     
 
-                    loss = self.bce(input=logit, target=y)   # logits bce version, peforms first sigmoid and binary cross entropy on the output
+                    loss = self.bce(input=logit, target=y, pos_weight=weights)   # logits bce version, peforms first sigmoid and binary cross entropy on the output
                     losses.append(loss.item())
 
                         
@@ -1501,15 +1508,16 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         # 1) prepare meta-data
         self._meta_data(task_type_prog= task_type_prog)
         
-        
+        # compose train name
         current_date        = date.today().strftime("%d-%m-%Y")   
         train_name          = self.name + "_" + self.model_type + "_"+ additional_name + "_" + current_date
-        path_save_model     = self.get_path2SaveModels(train_name  =train_name)   # specify train_name for an additional depth layer in the models file system
-        path_save_results   = self.get_path2SaveResults(train_name =train_name)
         self.train_name     = train_name
         
+        # get paths to save files on model and results
+        path_save_model     = self.get_path2SaveModels(train_name  =train_name)   # specify train_name for an additional depth layer in the models file system
+        path_save_results   = self.get_path2SaveResults(train_name =train_name)
+
         # 2) prepare the training components
-        
         self.model.train()
         
         train_dl = DataLoader(self.dataset_train, batch_size= self.batch_size,  num_workers = 8,  shuffle= True,   pin_memory= False)
@@ -1617,8 +1625,9 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
                 # Exit the autocast() context manager
                 autocast(enabled=False)
                 
-                if loss_epoch>max_loss_epoch    : max_loss_epoch = round(loss_epoch,4)
-                if loss_epoch<min_loss_epoch    : min_loss_epoch = round(loss_epoch,4)
+                loss_value = loss.item()
+                if loss_value>max_loss_epoch    : max_loss_epoch = round(loss_value,4)
+                if loss_value<min_loss_epoch    : min_loss_epoch = round(loss_value,4)
                 
                 # update total loss    
                 loss_epoch += loss.item()   # from tensor with single value to int and accumulation
@@ -1847,7 +1856,6 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         
         # save data (JSON)
         if self.name_ood_data is not None:
-            path_results_folder         = self.get_path2SaveResults(train_name=self.train_name)
             name_result_file            = 'metrics_ood_{}.json'.format(self.name_ood_data)
             path_result_save            = os.path.join(path_results_folder, name_result_file)   # full path to json file
             
@@ -1863,11 +1871,22 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
 if __name__ == "__main__":
     #                           [Start test section] 
     
+    # choose classifier model has module A
+    classifier_model = 0
+    
+    # [1] load deep fake classifier
+    
     # common classifier model definition
-    classifier_name = "faces_Unet4_Scorer112p_v4_03-12-2023"
-    classifier_type = "Unet4_Scorer"
-    classifier_epoch = 73
-    scenario = "content"
+    if classifier_model == 0:
+        classifier_name = "faces_Unet4_Scorer112p_v4_03-12-2023"
+        classifier_type = "Unet4_Scorer"
+        classifier_epoch = 73
+        scenario = "content"
+        classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
+        classifier.load(classifier_name, classifier_epoch)
+    
+    
+    
     
     # ________________________________ baseline  _______________________________________
     def test_baseline_implementation():
@@ -1877,11 +1896,7 @@ if __name__ == "__main__":
     def test_baseline_facesCDDB_CIFAR():
         # select executions
         exe = [1,0]
-        
-        # [1] load deep fake classifier
-        bin_classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
-        bin_classifier.load(classifier_name, classifier_epoch)
-        
+                
         # [2] define the id/ood data
         
         # id_data_train    = CDDB_binary(train = True, augment = False
@@ -1894,7 +1909,7 @@ if __name__ == "__main__":
         
         
         # [3] define the detector
-        ood_detector = Baseline(classifier=bin_classifier, task_type_prog= 0, name_ood_data="cifar100", id_data_test = id_data_test, ood_data_test = ood_data_test, useGPU= True)
+        ood_detector = Baseline(classifier=classifier, task_type_prog= 0, name_ood_data="cifar100", id_data_test = id_data_test, ood_data_test = ood_data_test, useGPU= True)
         
         # [4] launch analyzer/training
         if exe[0]: ood_detector.test_probabilties()
@@ -1906,9 +1921,6 @@ if __name__ == "__main__":
       
     def test_baseline_content_faces():
         name_ood_data_content  = "CDDB_content_faces_scenario"
-        
-        classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
-        classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
         
         # laod id data test
         id_data_train      = CDDB_binary_Partial(scenario = "content", train = True,  ood = False, augment = False)
@@ -1927,10 +1939,7 @@ if __name__ == "__main__":
     # ________________________________ baseline + ODIN  ________________________________
     
     def test_baselineOdin_facesCDDB_CIFAR():
-                # [1] load deep fake classifier
-        bin_classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
-        bin_classifier.load(classifier_name, classifier_epoch)
-        
+
         # [2] define the id/ood data
         
         # id_data_train    = CDDB_binary(train = True, augment = False
@@ -1942,16 +1951,14 @@ if __name__ == "__main__":
         ood_data_test    = getCIFAR100_dataset(train = False)
         
         # [3] define the detector
-        ood_detector = Baseline_ODIN(classifier=bin_classifier, task_type_prog= 0, name_ood_data="cifar100", id_data_test = id_data_test, ood_data_test = ood_data_test, useGPU= True)
+        ood_detector = Baseline_ODIN(classifier=classifier, task_type_prog= 0, name_ood_data="cifar100", id_data_test = id_data_test, ood_data_test = ood_data_test, useGPU= True)
         
         # [4] launch analyzer/training
         ood_detector.test_probabilties()
     
     def test_baselineOdin_content_faces():
         name_ood_data_content  = "CDDB_content_faces_scenario"
-        classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
-        classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
-        
+
         # laod id data test
         id_data_train      = CDDB_binary_Partial(scenario = "content", train = True,  ood = False, augment = False)
         id_data_test       = CDDB_binary_Partial(scenario = "content", train = False, ood = False, augment = False)
@@ -1967,10 +1974,7 @@ if __name__ == "__main__":
 
     # ________________________________ abnormality module  _____________________________
     
-    def train_abn_basic():
-        classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
-        classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
-        
+    def train_abn_basic():        
         abn = Abnormality_module(classifier, scenario="content", model_type="basic")
         abn.train(additional_name="112p", test_loop=True)
         
@@ -1979,26 +1983,16 @@ if __name__ == "__main__":
         # print(y)
     
     def train_abn_encoder(type_encoder = "encoder"):
-        classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
-        classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
-        
         abn = Abnormality_module(classifier, scenario="content", model_type= type_encoder)
         abn.train(additional_name="112p", test_loop=False)
         
     def train_extended_abn_encoder(type_encoder = "encoder"):
         """ uses extended OOD data"""
-        
-        classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
-        classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
-        
         abn = Abnormality_module(classifier, scenario="content", model_type= type_encoder, extended_ood = True)
         abn.train(additional_name="112p_extendedOOD", test_loop=False)
         
     def train_nosynt_abn_encoder(type_encoder = "encoder"):
         """ uses extended OOD data"""
-        
-        classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
-        classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
         
         abn = Abnormality_module(classifier, scenario="content", model_type=type_encoder, use_synthetic= False)
         abn.train(additional_name="112p_nosynt", test_loop=False)
@@ -2006,9 +2000,6 @@ if __name__ == "__main__":
     def train_full_extended_abn_encoder(type_encoder = "encoder"):
         
         """ uses extended OOD data"""
-        
-        classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
-        classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
         
         abn = Abnormality_module(classifier, scenario="content", model_type= type_encoder, extended_ood = True, balancing_mode="all")
         abn.train(additional_name="112p_fullExtendedOOD", test_loop=False)
@@ -2041,9 +2032,7 @@ if __name__ == "__main__":
                 # print(y)
                 break
         
-        # load models
-        classifier = DFD_BinClassifier_v4(scenario=scenario, model_type=classifier_type)
-        classifier.load(folder_model = classifier_name, epoch = classifier_epoch)
+        # load model
         abn = Abnormality_module(classifier, scenario=scenario, model_type=type_model)
         abn.load(name_model, epoch)
         
@@ -2053,69 +2042,68 @@ if __name__ == "__main__":
         abn.test_risk()
    
 
-    train_full_extended_abn_encoder("encoder")
-    train_full_extended_abn_encoder("encoder_v1")
-    train_full_extended_abn_encoder("encoder_v2")
-    train_full_extended_abn_encoder("encoder_v3")
+    # train_full_extended_abn_encoder("encoder_v2")
+    # train_full_extended_abn_encoder("encoder_v3")
+    # train_full_extended_abn_encoder("encoder_v4")
     
     pass
     #                           [End test section] 
    
     """ 
             Past test/train launched: 
-                                BASELINE    
-    test_baseline_implementation()
-    test_baseline_facesCDDB_CIFAR()
-    test_baseline_content_faces()
+            
+    classifier: faces_Unet4_Scorer112p_v4_03-12-2023
     
-                                BASELINE + ODIN
-    test_baselineOdin_facesCDDB_CIFAR()
-    test_baselineOdin_content_faces()
-    
-                                ABNORMALITY MODULE BASIC  (Synthetic ood data, no extension)
-    train_abn_basic()
-    
-    test_abn_content_faces("Abnormality_module_basic_112p_05-12-2023", 30,"basic")
-    
-                                ABNORMALITY MODULE ENCODER  (Synthetic ood data, no extension)
-    train_abn_encoder(type_encoder = "encoder" )
-    train_abn_encoder(type_encoder = "encoder_v2" )
-    train_abn_encoder(type_encoder = "encoder_v3" )
-    train_abn_encoder(type_encoder = "encoder_v4" )
-    
-    test_abn_content_faces("Abnormality_module_encoder_112p_19-12-2023", 30,"encoder")
-    test_abn_content_faces("Abnormality_module_encoder_v2_112p_19-12-2023", 50,"encoder_v2")
-    test_abn_content_faces("Abnormality_module_encoder_v3_112p_19-12-2023", 50,"encoder_v3")
-    test_abn_content_faces("Abnormality_module_encoder_v4_112p_19-12-2023", 50,"encoder_v4")
-    
-    
-                                ABNORMALITY MODULE ENCODER  (Synthetic ood data, + extension, max merging)
-    train_extended_abn_encoder(type_encoder = encoder_v4)
-    train_extended_abn_encoder(type_encoder= "encoder")
-    train_extended_abn_encoder(type_encoder= "encoder_v2")
-    train_extended_abn_encoder(type_encoder= "encoder_v3")         
-    
-    test_abn_content_faces("Abnormality_module_encoder_112p_extendedOOD_26-12-2023", 50,"encoder")    
-    test_abn_content_faces("Abnormality_module_encoder_v2_112p_extendedOOD_26-12-2023", 50,"encoder_v2")    
-    test_abn_content_faces("Abnormality_module_encoder_v3_112p_extendedOOD_26-12-2023", 50,"encoder_v3")      
-    test_abn_content_faces("Abnormality_module_encoder_v4_112p_extendedOOD_19-12-2023", 50,"encoder_v4")
-    
-                                ABNORMALITY MODULE ENCODER  (CDDB OOD data)
-    train_nosynt_abn_encoder(type_encoder= "encoder")
-    train_nosynt_abn_encoder(type_encoder= "encoder_v2")
-    train_nosynt_abn_encoder(type_encoder= "encoder_v3")                 
-    train_nosynt_abn_encoder(type_encoder= "encoder_v4")
-    
-    test_abn_content_faces("Abnormality_module_encoder_112p_nosynt_25-12-2023", 50,"encoder")    
-    test_abn_content_faces("Abnormality_module_encoder_v2_112p_nosynt_25-12-2023", 50,"encoder_v2")    
-    test_abn_content_faces("Abnormality_module_encoder_v3_112p_nosynt_25-12-2023", 50,"encoder_v3")      
-    test_abn_content_faces("Abnormality_module_encoder_v4_112p_nosynt_25-12-2023", 50,"encoder_v4")   
+                                    BASELINE    
+        test_baseline_implementation()
+        test_baseline_facesCDDB_CIFAR()
+        test_baseline_content_faces()
+        
+                                    BASELINE + ODIN
+        test_baselineOdin_facesCDDB_CIFAR()
+        test_baselineOdin_content_faces()
+        
+                                    ABNORMALITY MODULE BASIC  (Synthetic ood data, no extension)
+        train_abn_basic()
+        
+        test_abn_content_faces("Abnormality_module_basic_112p_05-12-2023", 30,"basic")
+        
+                                    ABNORMALITY MODULE ENCODER  (Synthetic ood data, no extension)
+        train_abn_encoder(type_encoder = "encoder" )
+        train_abn_encoder(type_encoder = "encoder_v2" )
+        train_abn_encoder(type_encoder = "encoder_v3" )
+        train_abn_encoder(type_encoder = "encoder_v4" )
+        
+        test_abn_content_faces("Abnormality_module_encoder_112p_19-12-2023", 30,"encoder")
+        test_abn_content_faces("Abnormality_module_encoder_v2_112p_19-12-2023", 50,"encoder_v2")
+        test_abn_content_faces("Abnormality_module_encoder_v3_112p_19-12-2023", 50,"encoder_v3")
+        test_abn_content_faces("Abnormality_module_encoder_v4_112p_19-12-2023", 50,"encoder_v4")
+        
+        
+                                    ABNORMALITY MODULE ENCODER  (Synthetic ood data, + extension, max merging)
+        train_extended_abn_encoder(type_encoder = encoder_v4)
+        train_extended_abn_encoder(type_encoder= "encoder")
+        train_extended_abn_encoder(type_encoder= "encoder_v2")
+        train_extended_abn_encoder(type_encoder= "encoder_v3")         
+        
+        test_abn_content_faces("Abnormality_module_encoder_112p_extendedOOD_26-12-2023", 50,"encoder")    
+        test_abn_content_faces("Abnormality_module_encoder_v2_112p_extendedOOD_26-12-2023", 50,"encoder_v2")    
+        test_abn_content_faces("Abnormality_module_encoder_v3_112p_extendedOOD_26-12-2023", 50,"encoder_v3")      
+        test_abn_content_faces("Abnormality_module_encoder_v4_112p_extendedOOD_19-12-2023", 50,"encoder_v4")
+        
+                                    ABNORMALITY MODULE ENCODER  (CDDB OOD data)
+        train_nosynt_abn_encoder(type_encoder= "encoder")
+        train_nosynt_abn_encoder(type_encoder= "encoder_v2")
+        train_nosynt_abn_encoder(type_encoder= "encoder_v3")                 
+        train_nosynt_abn_encoder(type_encoder= "encoder_v4")
+        
+        test_abn_content_faces("Abnormality_module_encoder_112p_nosynt_25-12-2023", 50,"encoder")    
+        test_abn_content_faces("Abnormality_module_encoder_v2_112p_nosynt_25-12-2023", 50,"encoder_v2")    
+        test_abn_content_faces("Abnormality_module_encoder_v3_112p_nosynt_25-12-2023", 50,"encoder_v3")      
+        test_abn_content_faces("Abnormality_module_encoder_v4_112p_nosynt_25-12-2023", 50,"encoder_v4")   
 
-                                ABNORMALITY MODULE ENCODER  (Synthetic ood data, + extension, all merging)
-    train_full_extended_abn_encoder("encoder")
-    train_full_extended_abn_encoder("encoder_v1")
-    train_full_extended_abn_encoder("encoder_v2")
-    train_full_extended_abn_encoder("encoder_v3")
+                                    ABNORMALITY MODULE ENCODER  (Synthetic ood data, + extension, all merging)
+        train_full_extended_abn_encoder("encoder")
     
     
     

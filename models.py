@@ -16,7 +16,7 @@ config = get_inputConfig()
 INPUT_WIDTH     = config['width']
 INPUT_HEIGHT    = config['height']
 INPUT_CHANNELS  = config['channels']
-UNET_EXP_FMS    = 4    # U-net power of 2 exponent for feature maps
+UNET_EXP_FMS    = 4    # U-net power of 2 exponent for feature maps (starting)
 
 
 # 1st models superclass
@@ -2233,6 +2233,141 @@ class Unet6L_ResidualScorer(Project_conv_model):
         rec = self.decoder_out_fn(self.out(d6))  # check sigmoid vs tanh
         return logits, rec, encoding
 
+
+#                                       custom Unet + Confidence
+class Unet4_Scorer_Confidence(Project_conv_model):
+    """
+        U-net 4 + Scorer, 4 encoders and 4 decoders + cponfidence estimantion.
+        Confidence reflects the model's abiliy to produce a correct prediction for any given input
+    """
+
+    def __init__(self, n_classes= 10,  large_encoding = True):
+        super(Unet4_Scorer_Confidence,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = n_classes,)
+        print("Initializing {} ...".format(self.__class__.__name__))
+
+        self.features_order = UNET_EXP_FMS   # orders greater and equal than 5 saturates the GPU!
+        self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
+        # self.bottleneck_size = int(self.feature_maps(4)*(self.width/16)*(self.width/16))
+        self.bottleneck_size = int(self.feature_maps(4)*math.floor(self.width/16)**2) 
+        self.n_levels = 4
+        self.large_encoding = large_encoding
+        # create net and initialize
+        self._createNet()
+        
+        # initialize conv layers
+        self._init_weights_kaimingNormal_module()
+        
+        # initialize FC layer
+        self._init_weights_normal_module(self.fc1)
+        self._init_weights_normal_module(self.fc2)
+        self._init_weights_normal_module(self.fc3)
+        self._init_weights_normal_module(self.fc4)
+        self._init_weights_normal_module(self.fc5)
+        self._init_weights_normal_module(self.conf_layer)
+    
+    def _createNet(self):
+        # encoder
+        self.e1 = Encoder_block(self.n_channels, self.feature_maps(0))
+        self.e2 = Encoder_block(self.feature_maps(0) , self.feature_maps(1))
+        self.e3 = Encoder_block(self.feature_maps(1) , self.feature_maps(2))
+        self.e4 = Encoder_block(self.feature_maps(2) , self.feature_maps(3))
+        
+        # bottlenech (encoding)
+        self.b = Conv_block(self.feature_maps(3) , self.feature_maps(4))
+        
+        # Flatten the encoding
+        self.flatten = nn.Flatten()
+        
+        # classification branch
+        self.do     = nn.Dropout(p=0.3)
+        self.relu   = nn.ReLU()
+        
+        self.fc1 = nn.Linear(self.bottleneck_size, int(self.bottleneck_size/8))
+        self.bn1 = nn.BatchNorm1d(int(self.bottleneck_size/8))
+        self.fc2 = nn.Linear(int(self.bottleneck_size/8), int(self.bottleneck_size/32))
+        self.bn2 = nn.BatchNorm1d(int(self.bottleneck_size/32))
+        self.fc3 = nn.Linear(int(self.bottleneck_size/32), int(self.bottleneck_size/64))
+        self.bn3 = nn.BatchNorm1d(int(self.bottleneck_size/64))
+        self.fc4 = nn.Linear(int(self.bottleneck_size/64), int(self.bottleneck_size/128))
+        self.bn4 = nn.BatchNorm1d(int(self.bottleneck_size/128))
+        self.fc5 = nn.Linear(int(self.bottleneck_size/128), int(self.n_classes))
+        
+        # confidence branch
+        self.sigmoid = nn.Sigmoid()
+        self.conf_layer = nn.Linear(int(self.bottleneck_size/128), 1)
+        
+        
+        # decoder 
+        self.d1 = Decoder_block(self.feature_maps(4) , self.feature_maps(3))
+        self.d2 = Decoder_block(self.feature_maps(3) , self.feature_maps(2))
+        self.d3 = Decoder_block(self.feature_maps(2) , self.feature_maps(1))
+        self.d4 = Decoder_block(self.feature_maps(1) , self.feature_maps(0))
+            
+        # self.out= decoder_block(64, self.n_channels)
+        self.out = nn.Conv2d(self.feature_maps(0), self.n_channels, kernel_size=1, padding=0)
+        self.decoder_out_fn = nn.Sigmoid()
+            
+        # self.model = nn.Sequential(self.encoder, self.decoder)
+
+
+    def forward(self, x, verbose = False):
+        """
+            Returns: logits, reconstruction, encoding
+        """
+        
+        # encoder
+        s1, p1 = self.e1(x)
+        s2, p2 = self.e2(p1)
+        s3, p3 = self.e3(p2)
+        s4, p4 = self.e4(p3)
+    
+        # bottleneck (encoding)
+        bottleneck = self.b(p4)
+        enc         = self.flatten(bottleneck)
+        
+        if verbose: print ("enc shape ", enc.shape)
+
+        
+        # classification
+        
+        c1          = self.relu(self.bn1(self.fc1(enc)))
+        c1d         = self.do(c1)
+        
+        c2          = self.relu(self.bn2(self.fc2(c1d)))
+        c2d         = self.do(c2)
+        
+        c3          = self.relu(self.bn3(self.fc3(c2d)))
+        c3d         = self.do(c3)
+        
+        c4          = self.relu(self.bn4(self.fc4(c3d)))
+        c4d         = self.do(c4)
+        
+        logits      = self.fc5(c4d)
+        
+        if verbose:
+            print("c1 shape ", c1.shape, "\n", "c2 shape ", c2.shape, "\n", "c3 shape ", c3.shape, "\n","c4 shape ", c4.shape, "\n")
+        
+        # select large or small encoding for the forward 
+        if self.large_encoding:
+            encoding = enc
+        else:
+            encoding = c1
+        
+        # confidence logit
+        confidence = self.sigmoid(self.conf_layer(c4))
+        
+        
+        # decoder 
+        d1 = self.d1(bottleneck, s4)
+        d2 = self.d2(d1, s3)
+        d3 = self.d3(d2, s2)
+        d4 = self.d4(d3, s1)
+        
+        # reconstuction
+        rec = self.decoder_out_fn(self.out(d4))  # check sigmoid vs tanh
+        return logits, rec, encoding, confidence
+
+
 #                                       custom abnormality module
 
 # 2nd models superclass
@@ -2452,7 +2587,10 @@ class Abnormality_module_Encoder_v1(Project_abnorm_model):
 
 
 class Encoder_block_v2(nn.Module):
-    """ it reduces the spatial dimensionality of half """ 
+    """ 
+    it reduces the spatial dimensionality of half
+    respect the Encoder_block class, downsampling is performed through conv layer instead of pooling one.
+    """ 
     def __init__(self, in_c, out_c):
         super().__init__()
         self.conv1 = nn.Conv2d(in_c, out_c, kernel_size=3, stride = 1, padding=1)
@@ -2642,7 +2780,6 @@ class Abnormality_module_Encoder_v3(Project_abnorm_model):
         x = self.gelu(self.bn_risk_final(self.fc_risk_final(x)))
         
         return x
-    
     
 class Abnormality_module_Encoder_v4(Project_abnorm_model):
     
@@ -3036,6 +3173,21 @@ if __name__ == "__main__":
         print("enc shape: ", enc.shape)
         # input("press enter to exit ")
         
+    def test_UnetScorerConfidence():
+        unet = Unet4_Scorer_Confidence(n_classes=2, large_encoding=True)
+        unet.to_device(device)
+        print(unet.bottleneck_size)
+        # unet.getSummary()
+        
+        x = T.rand((32, 3, INPUT_HEIGHT, INPUT_WIDTH)).to(device)
+        # print(x.shape)
+        logits, rec, enc, conf = unet.forward(x)
+        print(logits.shape)
+        print(rec.shape)
+        print(enc.shape)
+        print(conf.shape)
+        # input("press enter to exit ")
+        
     def test_abnorm_basic():
         from    bin_classifier                  import DFD_BinClassifier_v4
         classifier = DFD_BinClassifier_v4(scenario="content", model_type="Unet4_Scorer")
@@ -3093,6 +3245,8 @@ if __name__ == "__main__":
         abnorm_module.forward(probs_softmax=softmax_prob, residual=residual, encoding=encoding)
         # input("press enter to exit ")
     
-    test_UnetResidualScorer()
+    test_UnetScorerConfidence()
+        
+    
     #                           [End test section] 
     
