@@ -125,9 +125,12 @@ class BinaryClassifier(object):
             print("No model: {} found for the epoch: {} in the folder: {}".format(folder_model, epoch, self.path_models))
     
     @duration    
-    def test(self):
+    def test(self, load_data = True):
         
-        self._load_data()
+        if load_data: 
+            self._load_data()
+        
+        
         
         # define test dataloader
         test_dataloader = DataLoader(self.test_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= False, pin_memory= True)
@@ -237,7 +240,57 @@ class BinaryClassifier(object):
     
     def zero_grad(self):
         self.optimizer.zero_grad()
+    
+    def compute_class_weights(self, verbose = False):
+
+        print("\n\t\t[Computing class weights for the training set]\n")
         
+        #TODO optimize data load with just labels from CDDB datasets
+        
+        # set modality to load just the label
+        # self.dataset_train.set_only_labels(True)
+        loader =  DataLoader(self.train_dataset, batch_size= None, num_workers= 8)  # self.dataset_train is instance of OOD_dataset class
+
+
+        # compute occurrences of labels
+        class_freq={}
+        total = len(self.train_dataset)
+        self.samples_train = total
+
+    
+        for x,y in tqdm(loader, total = len(loader)):
+            
+            # print(y.shape)
+            # print(y.shape)
+            # l = y.item()
+            try:                # encoding
+                y = y.detach().cpu().tolist()
+                
+                # from one-hot encoding to label (positive one is realted to fake samples in second position) 
+                l = y[1]
+            except:             # label index
+                l = y
+                
+            
+            if l not in class_freq.keys():
+                class_freq[l] = 1
+            else:
+                class_freq[l] = class_freq[l]+1
+        if verbose: print("class_freq -> ", class_freq)
+        
+        # compute the weights   
+        class_weights = []
+        for class_ in sorted(class_freq.keys()):
+            freq = class_freq[class_]
+            class_weights.append(round(total/freq,5))
+
+        print("Class_weights-> ", class_weights)
+        
+        
+        # turn back in loading modality sample + label
+        # self.dataset_train.set_only_labels(False)
+        
+        return class_weights 
              
 class DFD_BinClassifier_v1(BinaryClassifier):
     """
@@ -1622,10 +1675,15 @@ class DFD_BinClassifier_v5(BinaryClassifier):
         self.model.to(self.device)
         self.model.eval()
         
+        self._load_data()
+        
+        # compute labels weights
+        self.weights_labels = self.compute_class_weights()
+        
         # define loss and final activation function
-        self.sigmoid    = T.nn.Sigmoid()
+        self.sigmoid    = T.nn.Sigmoid().cuda()
         # self.bce     = F.binary_cross_entropy_with_logits
-        self.bce        = T.nn.BCELoss()   # to apply after sigmodi 
+        self.bce        = T.nn.BCELoss(weight = T.tensor(self.weights_labels)).cuda()   # to apply after sigmodi 
         
         # learning hyperparameters (default)
         self.lr                     = 1e-3     # 1e-4
@@ -1636,11 +1694,11 @@ class DFD_BinClassifier_v5(BinaryClassifier):
         self.early_stopping_trigger = "acc"                 # values "acc" or "loss"
         
         # loss definition + interpolation values for the new loss
-        self.loss_name              = "bce + reconstruction + confidence loss"
+        self.loss_name              = "weighted bce + reconstruction + confidence loss"
         self.alpha_loss             = 0.9  # bce
         self.beta_loss              = 0.1  # reconstruction
         self.lambda_loss            = 0.1  # lambda weight for confidence loss, this changes over time
-        self.confidence_budget      = 0.3
+        self.confidence_budget      = 0.3  # lambda should converge to this hyperparameter 
         self.use_MAE                = True
         self._check_parameters()
         
@@ -1648,8 +1706,7 @@ class DFD_BinClassifier_v5(BinaryClassifier):
         self.optimizer_name     = "Adam"
         self.lr_scheduler_name  = "ReduceLROnPlateau"
         self.optimizer = Adam(self.model.parameters(), lr = self.lr, weight_decay =  self.weight_decay)
-     
-     
+        
     def _load_data(self):
         # load dataset: train, validation and test.
         
@@ -1663,7 +1720,6 @@ class DFD_BinClassifier_v5(BinaryClassifier):
         # valid and test
         test_dataset        = CDDB_binary_Partial(scenario = self.scenario, train = False, ood = False, augment= False)
         self.valid_dataset, self.test_dataset = sampleValidSet(trainset= self.train_dataset, testset= test_dataset, useOnlyTest = True, verbose = True)
-        
         
     def _check_parameters(self):
         if not(self.early_stopping_trigger in ["loss", "acc"]):
@@ -1693,17 +1749,24 @@ class DFD_BinClassifier_v5(BinaryClassifier):
             d_out = self.model.decoder_out_fn.__class__.__name__
         except:
             d_out = "empty"
+            
         try:
             flag = self.model.residual2conv
             if flag: residual_connection = "Conv_layer"
             else: residual_connection = "Pooling_layer"
         except:
             residual_connection = "empty"
+            
         try:
             input_shape = str(self.model.input_shape)
         except:
             input_shape = "empty"
         
+        try:
+            weights_classes = self.weights_labels
+        except: 
+            weights_classes = "empty"
+            
         return {
             "date_training": date.today().strftime("%d-%m-%Y"),
             "model": self.model_type,
@@ -1719,9 +1782,9 @@ class DFD_BinClassifier_v5(BinaryClassifier):
             "cutmix": self.use_cutmix,            
             "grad_scaler": True,                # always true
             "features_exp_order": self.model.features_order,
-            "Residual_connection": residual_connection
+            "Residual_connection": residual_connection,
+            "labels weights": weights_classes
             }
-    
     
     def valid(self, epoch, valid_dataloader):
         """
@@ -1748,17 +1811,16 @@ class DFD_BinClassifier_v5(BinaryClassifier):
             with T.no_grad():
                 with autocast():
                     
-                    logits, _, _ = self.model.forward(x) 
+                    logits, _, _, _ = self.model.forward(x) 
+                    pred = self.sigmoid(logits)
                     
                     if self.early_stopping_trigger == "loss":
-                        loss = self.bce(input=logits, target=y)   # logits bce version
+                        loss = self.bce(input=pred, target=y)   # logits bce version
                         losses.append(loss.item())
                         
                     elif self.early_stopping_trigger == "acc":
-                        probs = self.sigmoid(logits)
- 
                         # prepare predictions and targets
-                        y_pred  = T.argmax(probs, -1).cpu().numpy()  # both are list of int (indices)
+                        y_pred  = T.argmax(pred, -1).cpu().numpy()  # both are list of int (indices)
                         y       = T.argmax(y, -1).cpu().numpy()
                         
                         # update counters
@@ -1785,7 +1847,6 @@ class DFD_BinClassifier_v5(BinaryClassifier):
         Args:
             name_train (str) should include the scenario selected and the model name (i.e. ResNet50), keep this convention {scenario}_{model_name}
         """
-        self._load_data()
         
         # set the full current model name 
         self.classifier_name = name_train
@@ -1885,10 +1946,10 @@ class DFD_BinClassifier_v5(BinaryClassifier):
                 self.optimizer.zero_grad()
                 
                 # model forward and loss computation
-                # with autocast():
+                
+                # with autocast():   
+                
                 logits, reconstruction, _, confidence = self.model.forward(x) 
-                
-                
                 
                 # to avoid any numerical instability clip confidence
                 confidence = T.clamp(confidence, 0. + 1e-12, 1. - 1e-12)
@@ -1905,7 +1966,6 @@ class DFD_BinClassifier_v5(BinaryClassifier):
                 # compute the prediction as combination of classification prediciton and confidence 
                 pred_prime = pred * confidence + y * (1 - confidence)
                                     
-
                 # compute the 3 losses and mix 
                 class_loss      = self.bce(input=pred_prime, target=y)   # classic bce               
                 rec_loss        = self.reconstruction_loss(target = x, reconstruction = reconstruction, use_abs = self.use_MAE)
@@ -1917,7 +1977,7 @@ class DFD_BinClassifier_v5(BinaryClassifier):
                 # print(rec_loss.shape, rec_loss)
                 # print(confidence_loss.shape, confidence_loss)
                 # print(loss.shape, loss)
-                
+
                 # update lambda weight
                 
                 if self.confidence_budget > confidence_loss.item():
@@ -2026,6 +2086,10 @@ class DFD_BinClassifier_v5(BinaryClassifier):
         # terminate the logger
         logger.end_log()
 
+    def test(self):
+        # call same test function but don't load again the data
+        super().test(load_data=False)
+    
     # Override of superclass forward method
     def forward(self, x):
         """ network forward
@@ -2237,7 +2301,6 @@ if __name__ == "__main__":
         print(logits)
         showImage(rec_img, save_image=save) 
      
-
     # ________________________________ v5  ________________________________
     
     def train_v5_content_scenario(model_type, add_name =""):

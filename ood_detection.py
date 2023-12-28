@@ -54,7 +54,7 @@ class OOD_Classifier(object):
     def compute_class_weights(self, verbose = False, positive = "ood"):
         """ positive (str), if ood is used 1 to represent ood labels and 0 for id. The opposite behavior is obtained using "id" """
         
-        print("Computing class weights for the training set")
+        print("\n\t\t[Computing class weights for the training set]\n")
         
         # set modality to load just the label
         self.dataset_train.set_only_labels(True)
