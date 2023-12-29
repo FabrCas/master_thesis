@@ -335,7 +335,8 @@ class OOD_Classifier(object):
             
         
         if train_name is not None:
-            path_results_folder = check_folder(path_results_folder, force = True) #$
+            # path_results_folder = check_folder(path_results_folder, force = True) #$
+            check_folder(path_results_folder, force = False) #$
             return path_results_folder
         else:
             return path_results_classifier
@@ -358,7 +359,8 @@ class OOD_Classifier(object):
         check_folder(path_models_classifier)
         
         if train_name is not None:
-            path_models_folder = check_folder(path_models_folder, force = True)  #$
+            # path_models_folder = check_folder(path_models_folder, force = True)  #$
+            check_folder(path_models_folder, force = False)  #$
             return path_models_folder
         else:
             return path_models_classifier
@@ -1158,6 +1160,8 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         
         # compute the weights for the labels
         self.weights_labels = self.compute_class_weights(verbose=True, positive="ood")
+        # self.weights_labels = [2,2]
+        # self.samples_train = 1
             
         # configuration variables
         self.augment_data_train = False
@@ -1514,9 +1518,11 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         self.train_name     = train_name
         
         # get paths to save files on model and results
-        path_save_model     = self.get_path2SaveModels(train_name  =train_name)   # specify train_name for an additional depth layer in the models file system
-        path_save_results   = self.get_path2SaveResults(train_name =train_name)
+        path_save_model     = self.get_path2SaveModels(train_name  = train_name)   # specify train_name for an additional depth layer in the models file system
+        path_save_results   = self.get_path2SaveResults(train_name = train_name)
 
+        print(path_save_model)
+        print(path_save_results)
         # 2) prepare the training components
         self.model.train()
         
@@ -2042,10 +2048,6 @@ if __name__ == "__main__":
         abn.test_risk()
    
 
-    # train_full_extended_abn_encoder("encoder_v2")
-    # train_full_extended_abn_encoder("encoder_v3")
-    # train_full_extended_abn_encoder("encoder_v4")
-    
     pass
     #                           [End test section] 
    
@@ -2104,7 +2106,13 @@ if __name__ == "__main__":
 
                                     ABNORMALITY MODULE ENCODER  (Synthetic ood data, + extension, all merging)
         train_full_extended_abn_encoder("encoder")
+        train_full_extended_abn_encoder("encoder_v2")
+        train_full_extended_abn_encoder("encoder_v3")
+        train_full_extended_abn_encoder("encoder_v4")
     
-    
+        test_abn_content_faces("Abnormality_module_encoder_112p_fullExtendedOOD_27-12-2023",50, "encoder")
+        test_abn_content_faces("Abnormality_module_encoder_v2_112p_fullExtendedOOD_28-12-2023",50, "encoder_v2")
+        test_abn_content_faces("Abnormality_module_encoder_v3_112p_fullExtendedOOD_28-12-2023",50, "encoder_v3")
+        test_abn_content_faces("Abnormality_module_encoder_v4_112p_fullExtendedOOD_29-12-2023",50, "encoder_v4")
     
     """

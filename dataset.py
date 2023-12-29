@@ -27,7 +27,7 @@ w = input_config['width']
 h = input_config['height']
 c = input_config['channels']
 
-# dictionary to explicit the content in each model folder of the dataset, DON'T MODIFY
+# DON'T MODIFY. dictionary to explicit the content in each model folder of the dataset
 DF_GROUP_CONTENT    = {
                         "virtual_environment":["crn", "imle"],
                         # "faces": ["deepfake", "glow/black_hair", "glow/blond_hair", "glow/brown_hair",
@@ -46,7 +46,7 @@ DF_GROUP_CONTENT    = {
                         "mix":      ["biggan","gaugan","san"],
                        }
 
-# dictionary to separate the 3 main groups of the CDDB dataset, DON'T MODIFY
+# DON'T MODIFY. dictionary to separate the 3 main groups of the CDDB dataset with the corresponding models,
 DF_GROUP_CLASSES    = {
                         "deepfake sources": ["biggan","cyclegan","gaugan","stargan_gf","stylegan"],  # GAN models
                         "non-deepfake sources": ["glow", "crn", "imle", "san", "deepfake"],          # NON-GAN models
@@ -54,12 +54,41 @@ DF_GROUP_CLASSES    = {
                     }
 
 
-# dictionary which defines what content/class use in the different scenarios, this can be modified changing the scenarios' settings 
+# functions to specify how each scenario is composed and what represents 
+
+def content2groupContent(type_content:str):
+    if type_content.lower().strip() == "faces":
+        return ["faces"]
+    
+def modelCategory2groupClasses(category:str):
+    if category.lower().strip() == "gan":
+        return ["deepfake sources"]
+    if category.lower().strip() == "known":
+        return ["deepfake sources", "non-deepfake sources"]
+    
+def mixID2models(id: int):
+    if id == 0:
+        ["biggan","gaugan","stargan_gf", "deepfake", "glow", "crn","wild"] 
+
+""" 
+                                            *** MODIFY HERE *** 
+to specify how each scenario is composed, i.e what kind of content or what kind of Deepfake group include.
+"""
+type_content = "faces"
+type_group   = "gan"
+id_mix       = 0
+
+        
+# # DON'T MODIFY. This dictionary which defines what content/class use in the different scenarios,
+
 CATEGORIES_SCENARIOS_ID = {
-                        "content": ["faces"],                                                               # DF_GROUP_CONTENT keys
-                        "group":  ["deepfake sources", "non-deepfake sources"],                             # DF_GROUP_CLASSES keys
-                        "mix": ["biggan","gaugan","stargan_gf", "deepfake", "glow", "crn","wild"]           # models In-Distribution names
+                        "content":  content2groupContent(type_content),                         # DF_GROUP_CONTENT keys
+                        "group":    modelCategory2groupClasses(type_group),                     # DF_GROUP_CLASSES keys
+                        "mix":      mixID2models(id_mix)                                        # models In-Distribution names
                         }
+# 
+
+
 
 
 ##################################################### [Project dataset superclass]#####################################################################
@@ -100,6 +129,11 @@ class ProjectDataset(Dataset):
         self.x = None
         self.y = None
         
+        # boolean flag for load just labels (used for class weights computation)
+        self.only_labels = False
+
+    def set_only_labels(self, flag_value):
+        self.only_labels = flag_value
         
     def _transform(self,x):
         return self.transform_ops(x)
@@ -272,31 +306,44 @@ class CDDB_binary(ProjectDataset):
         return len(self.y)
     
     def __getitem__(self, idx):
-        img_path = self.x[idx]
-        # print(img_path)
-        img = Image.open(img_path)
         
-        if self.transform2ood:
-            img = self._ood_distortion(img, idx)
-        
-        img = self._transform(img)
-        
-        # check whether grayscale image, perform pseudocolor inversion 
-        if img.shape[0] == 1:
-            img = img.expand(3, -1, -1)
-
-        label = self.y[idx]
-        
-        # binary encoding to compute BCE (one-hot)
-        if self.label_vector:
-            label_vector = [0,0]
-            label_vector[label] = 1
-            label_vector = T.tensor(label_vector)     
-        
-            return img, label_vector
-
+        if self.only_labels:
+            
+            label = self.y[idx]
+            
+            # binary encoding to compute BCE (one-hot)
+            if self.label_vector:
+                label_vector = [0,0]
+                label_vector[label] = 1
+                label = T.tensor(label_vector)     
+            
+            return label
         else:
-            return img, label
+            img_path = self.x[idx]
+            # print(img_path)
+            img = Image.open(img_path)
+            
+            if self.transform2ood:
+                img = self._ood_distortion(img, idx)
+            
+            img = self._transform(img)
+            
+            # check whether grayscale image, perform pseudocolor inversion 
+            if img.shape[0] == 1:
+                img = img.expand(3, -1, -1)
+
+            label = self.y[idx]
+            
+            # binary encoding to compute BCE (one-hot)
+            if self.label_vector:
+                label_vector = [0,0]
+                label_vector[label] = 1
+                label_vector = T.tensor(label_vector)     
+            
+                return img, label_vector
+
+            else:
+                return img, label
 
 class CDDB_binary_Partial(ProjectDataset):
     """_
@@ -463,31 +510,44 @@ class CDDB_binary_Partial(ProjectDataset):
         return len(self.y)
     
     def __getitem__(self, idx):
-        img_path = self.x[idx]
-        # print(img_path)
-        img = Image.open(img_path)
-                
-        if self.transform2ood:
-            # print("------------- ao {}".format(idx))
-            img = self._ood_distortion(img, idx)   # out np.ndarray
-                    
-        img = self._transform(img)    #dtype = float32
         
-        # check whether grayscale image, perform pseudocolor inversion 
-        if img.shape[0] == 1:
-            img = img.expand(3, -1, -1)
-
-        label = self.y[idx]
-        
-        # binary encoding to compute BCE (one-hot)
-        if self.label_vector:
-            label_vector = [0,0]
-            label_vector[label] = 1
-            label_vector = T.tensor(label_vector)     
+        if self.only_labels:
             
-            return img, label_vector
+            label = self.y[idx]
+            
+            # binary encoding to compute BCE (one-hot)
+            if self.label_vector:
+                label_vector = [0,0]
+                label_vector[label] = 1
+                label = T.tensor(label_vector)     
+            
+            return label
         else:
-            return img, label
+            img_path = self.x[idx]
+            # print(img_path)
+            img = Image.open(img_path)
+                    
+            if self.transform2ood:
+                # print("------------- ao {}".format(idx))
+                img = self._ood_distortion(img, idx)   # out np.ndarray
+                        
+            img = self._transform(img)    #dtype = float32
+            
+            # check whether grayscale image, perform pseudocolor inversion 
+            if img.shape[0] == 1:
+                img = img.expand(3, -1, -1)
+
+            label = self.y[idx]
+            
+            # binary encoding to compute BCE (one-hot)
+            if self.label_vector:
+                label_vector = [0,0]
+                label_vector[label] = 1
+                label_vector = T.tensor(label_vector)     
+                
+                return img, label_vector
+            else:
+                return img, label
 
 ##################################################### [Multi-Class Deepfake classification] ###########################################################
 class CDDB(ProjectDataset):
@@ -855,28 +915,38 @@ class CDDB(ProjectDataset):
         return len(self.y)
     
     def __getitem__(self, idx):
-        img_path = self.x[idx]
-        # print(img_path)
-        img = Image.open(img_path)
-        
-        if self.transform2ood:
-            img = self._ood_distortion(img, idx)
-        
-        img = self._transform(img)    #dtype = float32
-        
-        
-        # check whether grayscale image, perform pseudocolor inversion 
-        if img.shape[0] == 1:
-            img = img.expand(3, -1, -1)
-
-        # sample the label
-        label = self.y[idx]    # if it's necessary the encoding, use self._one_hot_encoding(self.y[idx])
-        
-        if self.label_vector:
-            label_vector = self._one_hot_encoding(label)
-            return img, label_vector
+        if self.only_labels:
+            
+            label = self.y[idx]
+            
+            # binary encoding to compute BCE (one-hot)
+            if self.label_vector:
+                label = self._one_hot_encoding(label)
+            
+            return label
         else:
-            return img, label
+            img_path = self.x[idx]
+            # print(img_path)
+            img = Image.open(img_path)
+            
+            if self.transform2ood:
+                img = self._ood_distortion(img, idx)
+            
+            img = self._transform(img)    #dtype = float32
+            
+            
+            # check whether grayscale image, perform pseudocolor inversion 
+            if img.shape[0] == 1:
+                img = img.expand(3, -1, -1)
+
+            # sample the label
+            label = self.y[idx]    # if it's necessary the encoding, use self._one_hot_encoding(self.y[idx])
+            
+            if self.label_vector:
+                label_vector = self._one_hot_encoding(label)
+                return img, label_vector
+            else:
+                return img, label
 
 class CDDB_Partial(ProjectDataset):
     """_
@@ -1464,28 +1534,41 @@ class CDDB_Partial(ProjectDataset):
         return len(self.y)
     
     def __getitem__(self, idx):
-        img_path = self.x[idx]
-        # print(img_path)
-        img = Image.open(img_path)
         
-        if self.transform2ood:
-            img = self._ood_distortion(img, idx)
+        if self.only_labels:
+            
+            label = self.y[idx]
+            
+            # binary encoding to compute BCE (one-hot)
+            if self.label_vector:
+                label = self._one_hot_encoding(label)
+            
+            return label
         
-        img = self._transform(img)    #dtype = float32
-        
-        
-        # check whether grayscale image, perform pseudocolor inversion 
-        if img.shape[0] == 1:
-            img = img.expand(3, -1, -1)
-
-        # sample the label
-        label = self.y[idx]    # if it's necessary the encoding, use self._one_hot_encoding(self.y[idx])
-        
-        if self.label_vector:
-            label_vector = self._one_hot_encoding(label)
-            return img, label_vector
         else:
-            return img, label
+            
+            img_path = self.x[idx]
+            # print(img_path)
+            img = Image.open(img_path)
+            
+            if self.transform2ood:
+                img = self._ood_distortion(img, idx)
+            
+            img = self._transform(img)    #dtype = float32
+            
+            
+            # check whether grayscale image, perform pseudocolor inversion 
+            if img.shape[0] == 1:
+                img = img.expand(3, -1, -1)
+
+            # sample the label
+            label = self.y[idx]    # if it's necessary the encoding, use self._one_hot_encoding(self.y[idx])
+            
+            if self.label_vector:
+                label_vector = self._one_hot_encoding(label)
+                return img, label_vector
+            else:
+                return img, label
 
 ##################################################### [Out-Of-Distribution Detection] #################################################################
 

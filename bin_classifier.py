@@ -245,12 +245,9 @@ class BinaryClassifier(object):
 
         print("\n\t\t[Computing class weights for the training set]\n")
         
-        #TODO optimize data load with just labels from CDDB datasets
-        
         # set modality to load just the label
-        # self.dataset_train.set_only_labels(True)
+        self.train_dataset.set_only_labels(True)
         loader =  DataLoader(self.train_dataset, batch_size= None, num_workers= 8)  # self.dataset_train is instance of OOD_dataset class
-
 
         # compute occurrences of labels
         class_freq={}
@@ -258,7 +255,7 @@ class BinaryClassifier(object):
         self.samples_train = total
 
     
-        for x,y in tqdm(loader, total = len(loader)):
+        for y in tqdm(loader, total = len(loader)):
             
             # print(y.shape)
             # print(y.shape)
@@ -288,7 +285,7 @@ class BinaryClassifier(object):
         
         
         # turn back in loading modality sample + label
-        # self.dataset_train.set_only_labels(False)
+        self.train_dataset.set_only_labels(False)
         
         return class_weights 
              
@@ -2309,6 +2306,7 @@ if __name__ == "__main__":
 
     
     train_v5_content_scenario(model_type = "Unet4_Scorer_Confidence", add_name="112p")
+    pass
     #                           [End test section] 
     """ 
             Past test/train launched: 

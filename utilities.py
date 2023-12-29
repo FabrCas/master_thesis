@@ -166,7 +166,6 @@ def balanceLabels(self, dataloader, verbose = False):
     max_freq = max(class_freq.items(), key= lambda x: x[1])
     if verbose: print("maximum frequency ->", max_freq)
     
-    # indices for each label (#TODO edit and generalize)
     indices_0 = [idx for idx, val in enumerate(labels) if val == 0]
     indices_1 = [idx for idx, val in enumerate(labels) if val == 1]
     indices_2 = [idx for idx, val in enumerate(labels) if val == 2]
