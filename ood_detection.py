@@ -12,7 +12,7 @@ from    sklearn.metrics     import precision_recall_curve, auc, roc_auc_score
 from    torch.optim         import Adam, lr_scheduler
 from    torch.cuda.amp      import GradScaler, autocast
 # local import
-from    dataset             import CDDB_binary_Partial, CDDB_Partial, OOD_dataset, getCIFAR100_dataset, getMNIST_dataset, getFMNIST_dataset
+from    dataset             import getScenarioSetting, CDDB_binary_Partial, CDDB_Partial, OOD_dataset, getCIFAR100_dataset, getMNIST_dataset, getFMNIST_dataset
 from    experiments         import MNISTClassifier_keras
 from    bin_classifier      import DFD_BinClassifier_v4
 from    models              import Abnormality_module_Basic, Abnormality_module_Encoder_v1, Abnormality_module_Encoder_v2,\
@@ -1209,10 +1209,18 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             else:
                 task_type_prog = 1  # multi-class 
         self.task_type_prog = task_type_prog 
-        if self.scenario == "content":
-            self.name_ood_data  = "CDDB_" + self.scenario + "_faces_scenario"
-        else:
-            self.name_ood_data  = "CDDB_" + self.scenario + "_scenario"
+        
+        try:
+            setting = getScenarioSetting()[self.scenario]
+        except:
+            ValueError("wrong selection for the scenario, is not possible to retrieve the setting")
+        
+        # if self.scenario == "content":
+        #     self.name_ood_data  = "CDDB_" + self.scenario + "_faces_scenario"
+        # else:
+        #     self.name_ood_data  = "CDDB_" + self.scenario + "_scenario"
+        
+        self.name_ood_data  = "CDDB_" + self.scenario + "_" + setting + "_scenario"
         
     def _prepare_data_synt(self,verbose = False):
         """ method used to prepare Dataset class used for both training and testing, synthetizing OOD data for training

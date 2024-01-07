@@ -89,7 +89,12 @@ CATEGORIES_SCENARIOS_ID = {
 # 
 
 
-
+def getScenarioSetting():
+    return {
+        "content":type_content,
+        "group": type_group,
+        "mix": id_mix
+    }
 
 ##################################################### [Project dataset superclass]#####################################################################
 class ProjectDataset(Dataset):
@@ -1953,8 +1958,8 @@ if __name__ == "__main__":
         showImage(img)
         print(sample[1])
     
-    def test_partial_bin_cddb():
-        data = CDDB_binary_Partial(scenario="content", ood = True, train = True)
+    def test_partial_bin_cddb(scenario = "content"):
+        data = CDDB_binary_Partial(scenario = scenario, ood = False, train = True)
         x,y = data.__getitem__(0)
         print(x)
         showImage(x)
@@ -1992,6 +1997,8 @@ if __name__ == "__main__":
         x,_ = dt.__getitem__(7)
         showImage(x, name="ood_synthesis_JPEG10_compression",save_image=True)
         # showImage(x)
-        
+    
+    
+    test_partial_bin_cddb(scenario = "group")
     # test_distortions()
     #                           [End test section] 

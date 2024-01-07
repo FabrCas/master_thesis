@@ -27,7 +27,7 @@ from    sklearn.metrics     import  auc, roc_curve, average_precision_score, pre
 
 ################################################## Settings ###########################################################################
 
-def get_inputConfig(spatial_dim = 112):
+def get_inputConfig(spatial_dim = 224):
     # choose between images of spatial dimensions 224p of 112p, always squared resolution
     return {
         "width"     : spatial_dim,
@@ -540,7 +540,7 @@ def plot_loss(loss_array, title_plot = None, path_save = None, duration_timer = 
         timer.add_callback(close_event)
         timer.start()
     if show:
-        plt.show()
+        plt.show(block = True)
     
     plt.clf()  # clear plot data
         
@@ -588,7 +588,7 @@ def plot_valid(valid_history, title_plot = None, path_save = None, duration_time
         timer.add_callback(close_event)
         timer.start()
     if show:
-        plt.show()
+        plt.show(block = True)
         
     plt.clf()  # clear plot data
 
@@ -607,11 +607,6 @@ def plot_cm(cm, labels, title_plot = None, path_save = None, duration_timer = 25
         plt.close()
 
     fig, ax = plt.subplots(figsize=(6, 6))
-    
-    # initialize timer to close plot
-    if duration_timer is not None: 
-        timer = fig.canvas.new_timer(interval = duration_timer) # timer object with time interval in ms
-        timer.add_callback(close_event)
     
     ax.matshow(cm, cmap=plt.cm.Greens, alpha=0.5)
     for i in range(cm.shape[0]):
@@ -634,15 +629,24 @@ def plot_cm(cm, labels, title_plot = None, path_save = None, duration_timer = 25
         
     if path_save is not None:
         plt.savefig(os.path.join(path_save, "confusion_matrix.png"))
-        
-    if duration_timer is not None: timer.start()
     
+
+    # initialize timer to close plot
+    if duration_timer is not None: 
+        timer = fig.canvas.new_timer(interval = duration_timer) # timer object with time interval in ms
+        timer.add_callback(close_event)
+        timer.start()
+        
     plt.show()
-    plt.clf()   # clear plot data
+        
+    # if duration_timer is not None: timer.start()
+    # else:
+    #    
     
 def plot_ROC_curve(fpr, tpr, path_save = None, duration_timer = 2500):
     def close_event():
         plt.close()
+        # plt.clf()  # clear plot data
     
     plt.figure()
     plt.plot(fpr, tpr, color='lime', lw=2, label=f'ROC curve)')
@@ -663,13 +667,17 @@ def plot_ROC_curve(fpr, tpr, path_save = None, duration_timer = 2500):
         timer = fig.canvas.new_timer(interval=duration_timer)
         timer.add_callback(close_event)
         timer.start()
+
+    plt.show()
+    # plt.clf()  # clear plot data
     
-    plt.clf()  # clear plot data
+    
 
 def plot_PR_curve(recalls, precisions, path_save = None, duration_timer = 2500):
    
     def close_event():
         plt.close()
+        # plt.clf()  # clear plot data
     
     plt.figure()
     plt.plot(recalls, precisions, color='mediumblue', lw=2, label=f'PR curve)')
@@ -689,8 +697,11 @@ def plot_PR_curve(recalls, precisions, path_save = None, duration_timer = 2500):
         timer = fig.canvas.new_timer(interval=duration_timer)
         timer.add_callback(close_event)
         timer.start()
+    # else:
+    #     plt.clf()  # clear plot data
+    plt.show()
         
-    plt.clf()  # clear plot data
+    
 
 ##################################################  Metrics functions #################################################################
 

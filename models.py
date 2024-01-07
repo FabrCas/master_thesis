@@ -3137,7 +3137,7 @@ if __name__ == "__main__":
         input("press enter to exit ")
 
     def test_UnetScorer():
-        unet = Unet6L_Scorer(n_classes=2, large_encoding=True)
+        unet = Unet4_Scorer(n_classes=2, large_encoding=True)
         unet.to_device(device)
         print(unet.bottleneck_size)
         # unet.getSummary()
@@ -3146,7 +3146,7 @@ if __name__ == "__main__":
         # print(x.shape)
         logits, rec, enc = unet.forward(x)
         print(enc.shape)
-        # input("press enter to exit ")
+        input("press enter to exit ")
     
     def test_UnetResidualScorer():
         # test residual conv block
@@ -3245,8 +3245,8 @@ if __name__ == "__main__":
         abnorm_module.forward(probs_softmax=softmax_prob, residual=residual, encoding=encoding)
         # input("press enter to exit ")
     
-    test_UnetScorerConfidence()
-        
+    # test_UnetScorerConfidence()
+    # test_UnetScorer()
     
     #                           [End test section] 
     

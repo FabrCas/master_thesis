@@ -17,9 +17,9 @@ from    torch.utils.data                    import default_collate
 
 # Local imports
 
-from    utilities                           import plot_loss, saveModel, metrics_binClass, loadModel, test_num_workers, sampleValidSet, \
+from    utilities                           import plot_loss, plot_valid, saveModel, metrics_binClass, loadModel, test_num_workers, sampleValidSet, \
                                             duration, check_folder, cutmix_image, showImage, image2int, ExpLogger
-from    dataset                             import CDDB_binary, CDDB_binary_Partial
+from    dataset                             import getScenarioSetting, CDDB_binary, CDDB_binary_Partial
 from    models                              import ResNet_ImageNet, ResNet, ResNet_EDS, Unet4_Scorer, Unet5_Scorer, Unet6_Scorer, Unet6L_Scorer, \
                                             Unet4_ResidualScorer, Unet5_ResidualScorer, Unet6_ResidualScorer, Unet6L_ResidualScorer, \
                                             Unet4_Scorer_Confidence
@@ -1173,9 +1173,15 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         - faces_Unet5_Residual_Scorer+_v4_27-11-2023
         - faces_Unet5_Residual_Scorer+MSE_v4_27-11-2023
         
+        - gan_Unet4_Scorer_112p_v4_04-01-2024
+        - gan_Unet4_Residual_Scorer_112p_v4_04-01-2024
+        - gan_Unet5_Scorer_112p_v4_04-01-2024
+        - gan_Unet5_Residual_Scorer_112p_v4_04-01-2024
+        - gan_Unet5_Scorer__v4_07-01-2024
+        
 
     """
-    def __init__(self, scenario, useGPU = True, batch_size = 64, model_type = "Unet5_Residual_Scorer"):
+    def __init__(self, scenario, useGPU = True, batch_size = 32, model_type = "Unet5_Residual_Scorer"):
         """ init classifier
 
         Args:
@@ -1571,6 +1577,7 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         path_results_folder     = os.path.join(self.path_results, name_train + "_v{}_".format(str(self.version)) + current_date)
         check_folder(path_results_folder)       # create if doesn't exist
         name_loss_file          = 'loss_'+ str(last_epoch) +'.png'
+        name_valid_file         = "valid_{}_{}.png".format(self.early_stopping_trigger, str(last_epoch))
         path_lossPlot_save      = os.path.join(path_results_folder, name_loss_file)
         
         # save info for the new model trained
@@ -1580,9 +1587,12 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         # save loss plot
         if test_loop:
             plot_loss(loss_epochs, title_plot= name_train, path_save = None)
+            plot_valid(valid_history, title_plot= name_train, path_save = None)
         else: 
             plot_loss(loss_epochs, title_plot= name_train, path_save = path_lossPlot_save)
             plot_loss(loss_epochs, title_plot= name_train, path_save = os.path.join(path_model_folder,name_loss_file), show=False)
+            plot_valid(valid_history, title_plot= name_train, path_save = os.path.join(path_results_folder, name_valid_file))
+            plot_valid(valid_history, title_plot= name_train, path_save = os.path.join(path_model_folder,name_valid_file), show=False)
         
         # save model
         saveModel(self.model, path_model_save)
@@ -1684,11 +1694,11 @@ class DFD_BinClassifier_v5(BinaryClassifier):
         
         # learning hyperparameters (default)
         self.lr                     = 1e-3     # 1e-4
-        self.n_epochs               = 50 * 2
+        self.n_epochs               = 70 * 2
         self.start_early_stopping   = int(self.n_epochs/2)  # epoch to start early stopping
         self.weight_decay           = 0.001                 # L2 regularization term 
         self.patience               = 5 * 2                 # early stopping patience
-        self.early_stopping_trigger = "acc"                 # values "acc" or "loss"
+        self.early_stopping_trigger = "loss"                 # values "acc" or "loss"
         
         # loss definition + interpolation values for the new loss
         self.loss_name              = "weighted bce + reconstruction + confidence loss"
@@ -1806,23 +1816,21 @@ class DFD_BinClassifier_v5(BinaryClassifier):
             y = y.to(self.device).to(T.float32)
             
             with T.no_grad():
-                with autocast():
+                logits, _, _, _ = self.model.forward(x) 
+                pred = self.sigmoid(logits)
+                
+                if self.early_stopping_trigger == "loss":
+                    loss = self.bce(input=pred, target=y)   # logits bce version
+                    losses.append(loss.item())
                     
-                    logits, _, _, _ = self.model.forward(x) 
-                    pred = self.sigmoid(logits)
+                elif self.early_stopping_trigger == "acc":
+                    # prepare predictions and targets
+                    y_pred  = T.argmax(pred, -1).cpu().numpy()  # both are list of int (indices)
+                    y       = T.argmax(y, -1).cpu().numpy()
                     
-                    if self.early_stopping_trigger == "loss":
-                        loss = self.bce(input=pred, target=y)   # logits bce version
-                        losses.append(loss.item())
-                        
-                    elif self.early_stopping_trigger == "acc":
-                        # prepare predictions and targets
-                        y_pred  = T.argmax(pred, -1).cpu().numpy()  # both are list of int (indices)
-                        y       = T.argmax(y, -1).cpu().numpy()
-                        
-                        # update counters
-                        correct_predictions += (y_pred == y).sum()
-                        num_predictions += y_pred.shape[0]
+                    # update counters
+                    correct_predictions += (y_pred == y).sum()
+                    num_predictions += y_pred.shape[0]
                         
         # go back to train mode 
         self.model.train()
@@ -1964,7 +1972,7 @@ class DFD_BinClassifier_v5(BinaryClassifier):
                 pred_prime = pred * confidence + y * (1 - confidence)
                                     
                 # compute the 3 losses and mix 
-                class_loss      = self.bce(input=pred_prime, target=y)   # classic bce               
+                class_loss      = self.bce(input=pred_prime, target=y)   # classic bce with "probabilities"           
                 rec_loss        = self.reconstruction_loss(target = x, reconstruction = reconstruction, use_abs = self.use_MAE)
                 confidence_loss = T.mean(-T.log(confidence))
                 
@@ -2064,6 +2072,7 @@ class DFD_BinClassifier_v5(BinaryClassifier):
         path_results_folder     = os.path.join(self.path_results, name_train + "_v{}_".format(str(self.version)) + current_date)
         check_folder(path_results_folder)       # create if doesn't exist
         name_loss_file          = 'loss_'+ str(last_epoch) +'.png'
+        name_valid_file         = "valid_{}_{}.png".format(self.early_stopping_trigger, str(last_epoch))
         path_lossPlot_save      = os.path.join(path_results_folder, name_loss_file)
         
         # save info for the new model trained
@@ -2073,9 +2082,12 @@ class DFD_BinClassifier_v5(BinaryClassifier):
         # save loss plot
         if test_loop:
             plot_loss(loss_epochs, title_plot= name_train, path_save = None)
+            plot_valid(valid_history, title_plot= name_train, path_save = None)
         else: 
             plot_loss(loss_epochs, title_plot= name_train, path_save = path_lossPlot_save)
             plot_loss(loss_epochs, title_plot= name_train, path_save = os.path.join(path_model_folder,name_loss_file), show=False)
+            plot_valid(valid_history, title_plot= name_train, path_save = os.path.join(path_results_folder, name_valid_file))
+            plot_valid(valid_history, title_plot= name_train, path_save = os.path.join(path_model_folder,name_valid_file), show=False)
         
         # save model
         saveModel(self.model, path_model_save)
@@ -2125,6 +2137,14 @@ class DFD_BinClassifier_v5(BinaryClassifier):
 
 if __name__ == "__main__":
     #                           [Start test section] 
+    
+    # data_scenario = "content"
+    # scenario_setting = "faces"
+    
+    data_scenario = "group"
+    scenario_setting = getScenarioSetting()[data_scenario]
+    
+    
     def test_workers_dl():                
         dataset = CDDB_binary()
         test_num_workers(dataset, batch_size  =32)   # use n_workers = 8
@@ -2220,7 +2240,7 @@ if __name__ == "__main__":
     def train_v2_content_scenario():
         bin_classifier = DFD_BinClassifier_v2(scenario = "content", useGPU= True, model_type="resnet_pretrained")
         bin_classifier.early_stopping_trigger = "acc"
-        bin_classifier.train(name_train="faces_resnet_50ImageNet")   #name with the pattern {data scenario}_{model name}, the algorithm include other name decorations
+        bin_classifier.train(name_train= "faces_resnet_50ImageNet")   #name with the pattern {data scenario}_{model name}, the algorithm include other name decorations
             
     def train_v2_group_scenario():
         bin_classifier = DFD_BinClassifier_v2(scenario = "group", useGPU= True, model_type="resnet_pretrained")
@@ -2243,17 +2263,17 @@ if __name__ == "__main__":
         bin_classifier = DFD_BinClassifier_v3(scenario = "content", useGPU= True)
         # bin_classifier.train(name_train= "faces_resnet50EDS")
 
-    def train_v3_content_scenario():
-        bin_classifier = DFD_BinClassifier_v3(scenario = "content", useGPU= True)
-        bin_classifier.train(name_train= "faces_resnet50EDS")
+    def train_v3_scenario():
+        bin_classifier = DFD_BinClassifier_v3(scenario = data_scenario, useGPU= True)
+        bin_classifier.train(name_train= scenario_setting + "_resnet50EDS")
     
-    def test_v3_metrics(name_model, epoch, scenario):
-        bin_classifier = DFD_BinClassifier_v3(scenario = scenario, useGPU= True)
+    def test_v3_metrics(name_model, epoch):
+        bin_classifier = DFD_BinClassifier_v3(scenario = data_scenario, useGPU= True)
         bin_classifier.load(name_model, epoch)
         bin_classifier.test()  
     
-    def showReconstruction_v3(name_model, epoch, scenario):
-        bin_classifier = DFD_BinClassifier_v3(scenario = scenario, useGPU= True)
+    def showReconstruction_v3(name_model, epoch):
+        bin_classifier = DFD_BinClassifier_v3(scenario = data_scenario, useGPU= True)
         bin_classifier.load(name_model, epoch)
         img, _ = bin_classifier.test_dataset.__getitem__(300)
         print(img.shape)
@@ -2269,24 +2289,24 @@ if __name__ == "__main__":
     
     # ________________________________ v4  ________________________________
     
-    def train_v4_content_scenario(model_type, add_name =""):
-        bin_classifier = DFD_BinClassifier_v4(scenario = "content", useGPU= True, model_type=model_type)
-        bin_classifier.train(name_train= "faces_" + model_type + "_" + add_name, test_loop = False)
+    def train_v4_scenario(model_type, add_name =""):
+        bin_classifier = DFD_BinClassifier_v4(scenario = data_scenario, useGPU= True, model_type=model_type)
+        bin_classifier.train(name_train= scenario_setting + "_" + model_type + "_" + add_name, test_loop = False)
     
-    def test_v4_metrics(name_model, epoch, scenario, model_type):
-        bin_classifier = DFD_BinClassifier_v4(scenario = scenario, useGPU= True, model_type= model_type)
+    def test_v4_metrics(name_model, epoch, model_type):
+        bin_classifier = DFD_BinClassifier_v4(scenario = data_scenario, useGPU= True, model_type= model_type)
         bin_classifier.load(name_model, epoch)
         bin_classifier.test()
     
-    def train_test_v4_content_scenario(model_type, add_name =""):
-        bin_classifier = DFD_BinClassifier_v4(scenario = "content", useGPU= True, model_type=model_type)
-        bin_classifier.train_and_test(name_train= "faces_" + model_type + add_name)
+    def train_test_v4_scenario(model_type, add_name =""):
+        bin_classifier = DFD_BinClassifier_v4(scenario = data_scenario, useGPU= True, model_type=model_type)
+        bin_classifier.train_and_test(name_train= scenario_setting + "_" + model_type + add_name)
     
-    def showReconstruction_v4(name_model, epoch, scenario, model_type, save = False):
+    def showReconstruction_v4(name_model, epoch, model_type, save = False):
         
         random.seed(datetime.now().timestamp())
         
-        bin_classifier = DFD_BinClassifier_v4(scenario = scenario, useGPU= True,  model_type = model_type)
+        bin_classifier = DFD_BinClassifier_v4(scenario = data_scenario, useGPU= True,  model_type = model_type)
         bin_classifier.load(name_model, epoch)
         idx = random.randint(0, len(bin_classifier.test_dataset))
         img, _ = bin_classifier.test_dataset.__getitem__(idx)
@@ -2300,62 +2320,76 @@ if __name__ == "__main__":
      
     # ________________________________ v5  ________________________________
     
-    def train_v5_content_scenario(model_type, add_name =""):
-        bin_classifier = DFD_BinClassifier_v5(scenario = "content", useGPU= True, model_type=model_type)
-        bin_classifier.train(name_train= "faces_" + model_type + "_" + add_name, test_loop = False)
+    def train_v5_scenario(model_type, add_name =""):
+        bin_classifier = DFD_BinClassifier_v5(scenario = data_scenario, useGPU= True, model_type=model_type)
+        bin_classifier.train(name_train= scenario_setting  + "_" + model_type + "_" + add_name, test_loop = False)
 
+    def test_v5_metrics(name_model, epoch, model_type):
+        bin_classifier = DFD_BinClassifier_v5(scenario = data_scenario, useGPU= True, model_type= model_type)
+        bin_classifier.load(name_model, epoch)
+        bin_classifier.test()
     
-    train_v5_content_scenario(model_type = "Unet4_Scorer_Confidence", add_name="112p")
-    pass
+    train_v4_scenario(model_type="Unet5_Scorer") 
     #                           [End test section] 
     """ 
             Past test/train launched: 
-    #                                           v1
-    train_v1()
-    test_v1_metrics()
-    
-    #                                           v2
-    train_v2_content_scenario()
-    train_v2_group_scenario()
-    train_v2_mix_scenario()
-    test_v2_metrics(name_model = "faces_resnet50_ImageNet_v2_04-11-2023", epoch = 24 , scenario = "content")
-    test_v2_metrics(name_model = "group_resnet50_ImageNet_v2_05-11-2023", epoch = 26 , scenario = "group")
-    test_v2_metrics(name_model = "mix_resnet50_ImageNet_v2_05-11-2023", epoch = 21 ,    scenario = "mix")
-    
-    #                                           v3
-    train_v3_content_scenario()
-    test_v3_metrics(name_model = "faces_resnet50EDS_v3_.17-11-2023", epoch = 20, scenario = "content")
-    
-    #                                           v4
-    train_v4_content_scenario()
-    test_v4_metrics(name_model = "faces_Unet4_Scorer_v4_21-11-2023", epoch = 12, scenario = "content")
-    train_v4_content_scenario(model_type="Unet4_Residual_Scorer")
-    train_v4_content_scenario(model_type="Unet5_Residual_Scorer")
-    train_v4_content_scenario(model_type="Unet5_Scorer")
-    test_v4_metrics(name_model = "faces_Unet4_Residual_Scorer_v4_24-11-2023", epoch = 32, scenario = "content", model_type="Unet4_Residual_Scorer")
-    test_v4_metrics(name_model = "faces_Unet5_Residual_Scorer_v4_25-11-2023", epoch = 30, scenario = "content", model_type = "Unet5_Residual_Scorer")
-    test_v4_metrics(name_model = "faces_Unet5_Scorer_v4_25-11-2023", epoch = 32, scenario = "content",  model_type = "Unet5_Scorer")
-    train_test_v4_content_scenario(model_type="Unet6_Scorer")
-    train_test_v4_content_scenario(model_type="Unet6_Residual_Scorer")
-    train_test_v4_content_scenario(model_type="Unet6L_Residual_Scorer")
-    train_v4_content_scenario(model_type="Unet5_Scorer", add_name="+") # more fc layers
-    train_v4_content_scenario(model_type="Unet5_Residual_Scorer", add_name="+")    # more fc layers
-    train_v4_content_scenario(model_type="Unet5_Residual_Scorer", add_name="+MSE") # MSE instead of MAE
-    test_v4_metrics("faces_Unet5_Scorer+_v4_27-11-2023", 39, "content", "Unet5_Scorer")
-    test_v4_metrics("faces_Unet5_Residual_Scorer+_v4_27-11-2023", 37, "content", "Unet5_Residual_Scorer")
-    test_v4_metrics("faces_Unet5_Residual_Scorer+MSE_v4_27-11-2023", 36, "content", "Unet5_Residual_Scorer")
-    
-    #                        changed dimension for the input from 224x224 to 112x112
-    train_test_v4_content_scenario(model_type="Unet5_Scorer", add_name="112p")
-    train_test_v4_content_scenario(model_type="Unet5_Residual_Scorer", add_name="112p")
-    train_test_v4_content_scenario(model_type="Unet6_Scorer", add_name="112p")
-    train_test_v4_content_scenario(model_type="Unet6_Residual_Scorer", add_name="112p")
-    train_test_v4_content_scenario(model_type="Unet4_Scorer", add_name="112p")
-    train_test_v4_content_scenario(model_type="Unet4_Residual_Scorer", add_name="112p")
-    
+    # faces: 
+        #                                           v1
+        train_v1()
+        test_v1_metrics()
+        
+        #                                           v2
+        train_v2_content_scenario()
+        train_v2_group_scenario()
+        train_v2_mix_scenario()
+        test_v2_metrics(name_model = "faces_resnet50_ImageNet_v2_04-11-2023", epoch = 24 , scenario = "content")
+        test_v2_metrics(name_model = "group_resnet50_ImageNet_v2_05-11-2023", epoch = 26 , scenario = "group")
+        test_v2_metrics(name_model = "mix_resnet50_ImageNet_v2_05-11-2023", epoch = 21 ,    scenario = "mix")
+        
+        #                                           v3
+        train_v3_content_scenario()
+        test_v3_metrics(name_model = "faces_resnet50EDS_v3_.17-11-2023", epoch = 20, scenario = "content")
+        
+        #                                           v4
+        train_v4_content_scenario()
+        test_v4_metrics(name_model = "faces_Unet4_Scorer_v4_21-11-2023", epoch = 12, scenario = "content")
+        train_v4_content_scenario(model_type="Unet4_Residual_Scorer")
+        train_v4_content_scenario(model_type="Unet5_Residual_Scorer")
+        train_v4_content_scenario(model_type="Unet5_Scorer")
+        test_v4_metrics(name_model = "faces_Unet4_Residual_Scorer_v4_24-11-2023", epoch = 32, scenario = "content", model_type="Unet4_Residual_Scorer")
+        test_v4_metrics(name_model = "faces_Unet5_Residual_Scorer_v4_25-11-2023", epoch = 30, scenario = "content", model_type = "Unet5_Residual_Scorer")
+        test_v4_metrics(name_model = "faces_Unet5_Scorer_v4_25-11-2023", epoch = 32, scenario = "content",  model_type = "Unet5_Scorer")
+        train_test_v4_content_scenario(model_type="Unet6_Scorer")
+        train_test_v4_content_scenario(model_type="Unet6_Residual_Scorer")
+        train_test_v4_content_scenario(model_type="Unet6L_Residual_Scorer")
+        train_v4_content_scenario(model_type="Unet5_Scorer", add_name="+") # more fc layers
+        train_v4_content_scenario(model_type="Unet5_Residual_Scorer", add_name="+")    # more fc layers
+        train_v4_content_scenario(model_type="Unet5_Residual_Scorer", add_name="+MSE") # MSE instead of MAE
+        test_v4_metrics("faces_Unet5_Scorer+_v4_27-11-2023", 39, "content", "Unet5_Scorer")
+        test_v4_metrics("faces_Unet5_Residual_Scorer+_v4_27-11-2023", 37, "content", "Unet5_Residual_Scorer")
+        test_v4_metrics("faces_Unet5_Residual_Scorer+MSE_v4_27-11-2023", 36, "content", "Unet5_Residual_Scorer")
+        
+        #                        changed dimension for the input from 224x224 to 112x112
+        train_test_v4_content_scenario(model_type="Unet5_Scorer", add_name="112p")
+        train_test_v4_content_scenario(model_type="Unet5_Residual_Scorer", add_name="112p")
+        train_test_v4_content_scenario(model_type="Unet6_Scorer", add_name="112p")
+        train_test_v4_content_scenario(model_type="Unet6_Residual_Scorer", add_name="112p")
+        train_test_v4_content_scenario(model_type="Unet4_Scorer", add_name="112p")
+        train_test_v4_content_scenario(model_type="Unet4_Residual_Scorer", add_name="112p")
+        
         #                                           v5
-    
-    
+        train_v5_content_scenario(model_type = "Unet4_Scorer_Confidence", add_name="112p")
+        train_v5_content_scenario(model_type = "Unet4_Scorer_Confidence", add_name="112p")
+
+        test_v5_metrics("faces_Unet4_Scorer_Confidence_112p_v5_29-12-2023", 71, "content", "Unet4_Scorer_Confidence")
+        test_v5_metrics("faces_Unet4_Scorer_Confidence_112p_v5_02-01-2024", 98, "content", "Unet4_Scorer_Confidence")
+        
+    # GAN:
+        train_v4_scenario(model_type="Unet4_Scorer", add_name="112p") 
+        train_v4_scenario(model_type="Unet4_Residual_Scorer", add_name="112p")
+        train_v4_scenario(model_type="Unet5_Scorer", add_name="112p") 
+        train_v4_scenario(model_type="Unet5_Residual_Scorer", add_name="112p")
+    #                                           v4
     
     """
 
