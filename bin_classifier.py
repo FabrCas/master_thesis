@@ -1003,7 +1003,7 @@ class DFD_BinClassifier_v3(BinaryClassifier):
                 
                 # adjust labels if cutmix has been not applied (from indices to one-hot encoding)
                 if len(y.shape) == 1:
-                    y = T.nn.functional.one_hot(y)
+                    y = T.nn.functional.one_hot(y, num_classes = 2)
                 
                 # prepare samples/targets batches 
                 x = x.to(self.device)
@@ -1476,8 +1476,8 @@ class DFD_BinClassifier_v4(BinaryClassifier):
                 
                 # adjust labels if cutmix has been not applied (from indices to one-hot encoding)
                 if len(y.shape) == 1:
-                    y = T.nn.functional.one_hot(y)
-                
+                    y = T.nn.functional.one_hot(y, num_classes = 2)
+            
                 # prepare samples/targets batches 
                 x = x.to(self.device)
                 x.requires_grad_(True)
@@ -1939,7 +1939,7 @@ class DFD_BinClassifier_v5(BinaryClassifier):
                 
                 # adjust labels if cutmix has been not applied (from indices to one-hot encoding)
                 if len(y.shape) == 1:
-                    y = T.nn.functional.one_hot(y)
+                    y = T.nn.functional.one_hot(y, num_classes= 2)
                 
                 # prepare samples/targets batches 
                 x = x.to(self.device)
@@ -2291,7 +2291,10 @@ if __name__ == "__main__":
     
     def train_v4_scenario(model_type, add_name =""):
         bin_classifier = DFD_BinClassifier_v4(scenario = data_scenario, useGPU= True, model_type=model_type)
-        bin_classifier.train(name_train= scenario_setting + "_" + model_type + "_" + add_name, test_loop = False)
+        if add_name != "":
+            bin_classifier.train(name_train= scenario_setting + "_" + model_type + "_" + add_name, test_loop = False)
+        else:
+            bin_classifier.train(name_train= scenario_setting + "_" + model_type, test_loop = False)
     
     def test_v4_metrics(name_model, epoch, model_type):
         bin_classifier = DFD_BinClassifier_v4(scenario = data_scenario, useGPU= True, model_type= model_type)
@@ -2300,7 +2303,10 @@ if __name__ == "__main__":
     
     def train_test_v4_scenario(model_type, add_name =""):
         bin_classifier = DFD_BinClassifier_v4(scenario = data_scenario, useGPU= True, model_type=model_type)
-        bin_classifier.train_and_test(name_train= scenario_setting + "_" + model_type + add_name)
+        if add_name != "":
+            bin_classifier.train(name_train= scenario_setting + "_" + model_type + "_" + add_name, test_loop = False)
+        else:
+            bin_classifier.train(name_train= scenario_setting + "_" + model_type, test_loop = False)
     
     def showReconstruction_v4(name_model, epoch, model_type, save = False):
         
@@ -2318,18 +2324,22 @@ if __name__ == "__main__":
         print(logits)
         showImage(rec_img, save_image=save) 
      
-    # ________________________________ v5  ________________________________
+    # ________________________________ v5  ________________________________ confidence
     
     def train_v5_scenario(model_type, add_name =""):
         bin_classifier = DFD_BinClassifier_v5(scenario = data_scenario, useGPU= True, model_type=model_type)
-        bin_classifier.train(name_train= scenario_setting  + "_" + model_type + "_" + add_name, test_loop = False)
+        if add_name != "":
+            bin_classifier.train(name_train= scenario_setting + "_" + model_type + "_" + add_name, test_loop = False)
+        else:
+            bin_classifier.train(name_train= scenario_setting + "_" + model_type, test_loop = False)
 
     def test_v5_metrics(name_model, epoch, model_type):
         bin_classifier = DFD_BinClassifier_v5(scenario = data_scenario, useGPU= True, model_type= model_type)
         bin_classifier.load(name_model, epoch)
         bin_classifier.test()
     
-    train_v4_scenario(model_type="Unet5_Scorer") 
+
+    test_v4_metrics("gan_Unet5_Scorer_v4_07-01-2024", 71, "Unet5_Scorer")
     #                           [End test section] 
     """ 
             Past test/train launched: 
@@ -2385,11 +2395,19 @@ if __name__ == "__main__":
         test_v5_metrics("faces_Unet4_Scorer_Confidence_112p_v5_02-01-2024", 98, "content", "Unet4_Scorer_Confidence")
         
     # GAN:
+        #                                           v4
         train_v4_scenario(model_type="Unet4_Scorer", add_name="112p") 
         train_v4_scenario(model_type="Unet4_Residual_Scorer", add_name="112p")
         train_v4_scenario(model_type="Unet5_Scorer", add_name="112p") 
         train_v4_scenario(model_type="Unet5_Residual_Scorer", add_name="112p")
-    #                                           v4
+        train_v4_scenario(model_type="Unet5_Scorer")  #224p
+        
+        test_v4_metrics("gan_Unet4_Scorer_112p_v4_04-01-2024", 71, "Unet4_Scorer")
+        test_v4_metrics("gan_Unet4_Residual_Scorer_112p_v4_04-01-2024", 73, "Unet4_Residual_Scorer")
+        test_v4_metrics("gan_Unet5_Scorer_112p_v4_04-01-2024", 71, "Unet5_Scorer")
+        test_v4_metrics("gan_Unet5_Residual_Scorer_112p_v4_04-01-2024", 75, "Unet5_Residual_Scorer")
+        test_v4_metrics("gan_Unet5_Scorer_v4_07-01-2024", 71, "Unet5_Scorer")
+
     
     """
 
