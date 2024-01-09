@@ -1057,11 +1057,18 @@ class LargeConv_block(nn.Module):
     def __init__(self, in_c, out_c):
         super().__init__()
         
-        self.conv1 = nn.Conv2d(in_c, in_c, kernel_size=1, padding=0)
+        # self.conv1 = nn.Conv2d(in_c, in_c, kernel_size=1, padding=0)
+        # self.bn1 = nn.BatchNorm2d(in_c)
+        # self.conv2 = nn.Conv2d(in_c, out_c, kernel_size=3, padding=1)
+        # self.bn2 = nn.BatchNorm2d(out_c)
+        # self.conv3 = nn.Conv2d(out_c, out_c, kernel_size=1, padding=0)
+        # self.bn3 = nn.BatchNorm2d(out_c)
+        
+        self.conv1 = nn.Conv2d(in_c, in_c, kernel_size=3, padding=1)
         self.bn1 = nn.BatchNorm2d(in_c)
         self.conv2 = nn.Conv2d(in_c, out_c, kernel_size=3, padding=1)
         self.bn2 = nn.BatchNorm2d(out_c)
-        self.conv3 = nn.Conv2d(out_c, out_c, kernel_size=1, padding=0)
+        self.conv3 = nn.Conv2d(out_c, out_c, kernel_size=3, padding=1)
         self.bn3 = nn.BatchNorm2d(out_c)
         
         
@@ -2365,6 +2372,146 @@ class Unet4_Scorer_Confidence(Project_conv_model):
         
         # reconstuction
         rec = self.decoder_out_fn(self.out(d4))  # check sigmoid vs tanh
+        return logits, rec, encoding, confidence
+
+class Unet5_Scorer_Confidence(Project_conv_model):
+    """
+        U-net 5 + Scorer + Confidence, 5 encoders and 5 decoders
+    """
+
+    def __init__(self, n_classes= 10, large_encoding = True):
+        super(Unet5_Scorer_Confidence,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = n_classes)
+        print("Initializing {} ...".format(self.__class__.__name__))
+
+        self.features_order = UNET_EXP_FMS   # orders greater and equal than 5 saturates the GPU!
+        self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
+        self.bottleneck_size = int(self.feature_maps(5)*math.floor(self.width/32)**2)  
+        self.n_levels = 5
+        self.large_encoding = large_encoding       
+        
+        # create net and initialize
+        self._createNet()
+        
+        # initialize conv layers
+        self._init_weights_kaimingNormal()
+        
+        # initialize FC layer
+        self._init_weights_normal_module(self.fc1)
+        self._init_weights_normal_module(self.fc2)
+        self._init_weights_normal_module(self.fc3)
+        self._init_weights_normal_module(self.fc4)
+        self._init_weights_normal_module(self.fc5)
+    
+    def _createNet(self):
+        
+        # encoder
+        self.e1 = Encoder_block(self.n_channels, self.feature_maps(0))
+        self.e2 = Encoder_block(self.feature_maps(0) , self.feature_maps(1))
+        self.e3 = Encoder_block(self.feature_maps(1) , self.feature_maps(2))
+        self.e4 = Encoder_block(self.feature_maps(2) , self.feature_maps(3))
+        self.e5 = Encoder_block(self.feature_maps(3) , self.feature_maps(4))
+        
+        # bottlenech (encoding)
+        self.b = Conv_block(self.feature_maps(4) , self.feature_maps(5))
+        
+        # Flatten the encoding
+        self.flatten = nn.Flatten()
+        
+        # classification branch
+        self.do     = nn.Dropout(p=0.3)
+        self.relu   = nn.ReLU()
+                
+        self.fc1 = nn.Linear(self.bottleneck_size, int(self.bottleneck_size/8))
+        self.bn1 = nn.BatchNorm1d(int(self.bottleneck_size/8))
+        self.fc2 = nn.Linear(int(self.bottleneck_size/8), int(self.bottleneck_size/32))
+        self.bn2 = nn.BatchNorm1d(int(self.bottleneck_size/32))
+        self.fc3 = nn.Linear(int(self.bottleneck_size/32), int(self.bottleneck_size/64))
+        self.bn3 = nn.BatchNorm1d(int(self.bottleneck_size/64))
+        self.fc4 = nn.Linear(int(self.bottleneck_size/64), int(self.bottleneck_size/128))
+        self.bn4 = nn.BatchNorm1d(int(self.bottleneck_size/128))
+        self.fc5 = nn.Linear(int(self.bottleneck_size/128), int(self.n_classes))
+        
+        # confidence branch
+        self.sigmoid = nn.Sigmoid()
+        self.conf_layer = nn.Linear(int(self.bottleneck_size/128), 1)
+        
+        
+        # decoder 
+        
+        # define conditions for padding, considering downsampling of odd dimensions
+        c = INPUT_WIDTH/(math.pow(2,self.n_levels))
+        
+        if c%1!=0:
+            self.d1 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1) # 112x112 addition
+        else:
+            self.d1 = Decoder_block(self.feature_maps(5) , self.feature_maps(4))
+        self.d2 = Decoder_block(self.feature_maps(4) , self.feature_maps(3))
+        self.d3 = Decoder_block(self.feature_maps(3) , self.feature_maps(2))
+        self.d4 = Decoder_block(self.feature_maps(2) , self.feature_maps(1))
+        self.d5 = Decoder_block(self.feature_maps(1) , self.feature_maps(0))
+            
+        # self.out= decoder_block(64, self.n_channels)
+        self.out = nn.Conv2d(self.feature_maps(0), self.n_channels, kernel_size=1, padding=0)
+        self.decoder_out_fn = nn.Sigmoid()
+            
+        # self.model = nn.Sequential(self.encoder, self.decoder)
+
+    def forward(self, x, verbose = False):
+        """
+            Returns: logits, reconstruction, encoding
+        """
+        
+        # encoder
+        s1, p1 = self.e1(x)
+        s2, p2 = self.e2(p1)
+        s3, p3 = self.e3(p2)
+        s4, p4 = self.e4(p3)
+        s5, p5 = self.e5(p4)
+    
+        # bottleneck (encoding)
+        bottleneck  = self.b(p5)
+        enc         = self.flatten(bottleneck)
+        
+        if verbose: print ("enc shape ", enc.shape)
+        
+        # classification
+        c1          = self.relu(self.bn1(self.fc1(enc)))
+        c1d         = self.do(c1)
+        
+        c2          = self.relu(self.bn2(self.fc2(c1d)))
+        c2d         = self.do(c2)
+        
+        c3          = self.relu(self.bn3(self.fc3(c2d)))
+        c3d         = self.do(c3)
+        
+        c4          = self.relu(self.bn4(self.fc4(c3d)))
+        c4d         = self.do(c4)
+        
+        logits      = self.fc5(c4d)
+        
+        
+        if verbose:
+            print("c1 shape ", c1.shape, "\n", "c2 shape ", c2.shape, "\n", "c3 shape ", c3.shape, "\n","c4 shape ", c4.shape, "\n")
+            
+        # select large or small encoding for the forward 
+        if self.large_encoding:
+            encoding = enc
+        else:
+            encoding = c1
+        
+        
+        # confidence logit
+        confidence = self.sigmoid(self.conf_layer(c4))
+        
+        # decoder 
+        d1 = self.d1(bottleneck, s5)
+        d2 = self.d2(d1, s4)
+        d3 = self.d3(d2, s3)
+        d4 = self.d4(d3, s2)
+        d5 = self.d5(d4, s1)
+        
+        # reconstuction
+        rec = self.decoder_out_fn(self.out(d5))  # check sigmoid vs tanh
         return logits, rec, encoding, confidence
 
 

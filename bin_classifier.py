@@ -22,7 +22,7 @@ from    utilities                           import plot_loss, plot_valid, saveMo
 from    dataset                             import getScenarioSetting, CDDB_binary, CDDB_binary_Partial
 from    models                              import ResNet_ImageNet, ResNet, ResNet_EDS, Unet4_Scorer, Unet5_Scorer, Unet6_Scorer, Unet6L_Scorer, \
                                             Unet4_ResidualScorer, Unet5_ResidualScorer, Unet6_ResidualScorer, Unet6L_ResidualScorer, \
-                                            Unet4_Scorer_Confidence
+                                            Unet4_Scorer_Confidence, Unet5_Scorer_Confidence \
 
 
 """
@@ -243,7 +243,7 @@ class BinaryClassifier(object):
     
     def compute_class_weights(self, verbose = False):
 
-        print("\n\t\t[Computing class weights for the training set]\n")
+        print("\n\t\t[Computing Real/Fake class weights]\n")
         
         # set modality to load just the label
         self.train_dataset.set_only_labels(True)
@@ -1676,6 +1676,8 @@ class DFD_BinClassifier_v5(BinaryClassifier):
         # load model
         if model_type == "Unet4_Scorer_Confidence":
             self.model = Unet4_Scorer_Confidence(n_classes=2)
+        elif model_type == "Unet5_Scorer_Confidence":
+            self.model == Unet5_Scorer_Confidence(n_classes=2)
         else:
             raise ValueError("The model type is not a Unet model")
         
@@ -1683,15 +1685,10 @@ class DFD_BinClassifier_v5(BinaryClassifier):
         self.model.eval()
         
         self._load_data()
-        
-        # compute labels weights
-        self.weights_labels = self.compute_class_weights()
-        
-        # define loss and final activation function
+    
+        # activation function for logits
         self.sigmoid    = T.nn.Sigmoid().cuda()
-        # self.bce     = F.binary_cross_entropy_with_logits
-        self.bce        = T.nn.BCELoss(weight = T.tensor(self.weights_labels)).cuda()   # to apply after sigmodi 
-        
+
         # learning hyperparameters (default)
         self.lr                     = 1e-3     # 1e-4
         self.n_epochs               = 70 * 2
@@ -1897,6 +1894,14 @@ class DFD_BinClassifier_v5(BinaryClassifier):
         
         # define the optimization algorithm
         self.optimizer =  Adam(self.model.parameters(), lr = self.lr, weight_decay =  self.weight_decay)
+        
+        # define the loss function and class weights
+        
+        # compute labels weights
+        self.weights_labels = self.compute_class_weights()
+        
+        # self.bce     = F.binary_cross_entropy_with_logits
+        self.bce        = T.nn.BCELoss(weight = T.tensor(self.weights_labels)).cuda()   # to apply after sigmodid 
         
         # learning rate scheduler
         if self.early_stopping_trigger == "loss":
@@ -2138,11 +2143,16 @@ class DFD_BinClassifier_v5(BinaryClassifier):
 if __name__ == "__main__":
     #                           [Start test section] 
     
-    # data_scenario = "content"
-    # scenario_setting = "faces"
+    scenario_prog       = 1
+    data_scenario       = None
+    scenario_setting    = None
     
-    data_scenario = "group"
-    scenario_setting = getScenarioSetting()[data_scenario]
+    if scenario_prog == 1: 
+        data_scenario = "content"
+    elif scenario_prog == 1:
+        data_scenario = "group"
+    
+    scenario_setting = getScenarioSetting()[data_scenario]    # type of content/group
     
     
     def test_workers_dl():                
@@ -2338,8 +2348,7 @@ if __name__ == "__main__":
         bin_classifier.load(name_model, epoch)
         bin_classifier.test()
     
-
-    test_v4_metrics("gan_Unet5_Scorer_v4_07-01-2024", 71, "Unet5_Scorer")
+    
     #                           [End test section] 
     """ 
             Past test/train launched: 

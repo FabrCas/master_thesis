@@ -14,7 +14,7 @@ from    torch.cuda.amp      import GradScaler, autocast
 # local import
 from    dataset             import getScenarioSetting, CDDB_binary_Partial, CDDB_Partial, OOD_dataset, getCIFAR100_dataset, getMNIST_dataset, getFMNIST_dataset
 from    experiments         import MNISTClassifier_keras
-from    bin_classifier      import DFD_BinClassifier_v4
+from    bin_classifier      import DFD_BinClassifier_v4, DFD_BinClassifier_v5
 from    models              import Abnormality_module_Basic, Abnormality_module_Encoder_v1, Abnormality_module_Encoder_v2,\
                             Abnormality_module_Encoder_v3, Abnormality_module_Encoder_v4
 from    utilities           import saveJson, loadJson, metrics_binClass, metrics_OOD, print_dict, showImage, check_folder, sampleValidSet, \
@@ -1084,7 +1084,7 @@ class Baseline_ODIN(OOD_Classifier):        # No model training necessary (Empty
             pred = np.where(condition= maximum_prob < threshold, x=1, y=0)  # if true set x otherwise set y
         return pred
         
-class Abnormality_module(OOD_Classifier):   # model training necessary 
+class Abnormality_module(OOD_Classifier):   # model to train necessary 
     """ Custom implementation of the abnormality module using ResNet, look https://arxiv.org/abs/1610.02136 chapter 4"
     
     model_type (str): choose between: "basic", 
@@ -1127,6 +1127,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         self._meta_data()
         
         # abnormality module (module B) definition
+        self.use_confidence = False    # as default setting, the confidence is not expected, this is modified by _build_model() if confidence is present
         self._build_model()
             
         # training parameters  
@@ -1158,11 +1159,6 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         else:
             self._prepare_data(verbose=True)
         
-        # compute the weights for the labels
-        self.weights_labels = self.compute_class_weights(verbose=True, positive="ood")
-        # self.weights_labels = [2,2]
-        # self.samples_train = 1
-            
         # configuration variables
         self.augment_data_train = False
         self.loss_name          = "weighted bce"   # binary cross entropy or sigmoid cross entropy (weighted)
@@ -1173,7 +1169,11 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         self.sigmoid = F.sigmoid
         self.softmax = F.softmax
         
+            
     def _build_model(self):
+        
+        if "confidence" in self.name_classifier.lower().strip():
+            self.use_confidence = True 
         
         # select the type of encoding, encoder_v3 is a smaller dimensionality
         if self.model_type in ["basic", "encoder", "encoder_v2", "encoder_v4"]:
@@ -1184,7 +1184,19 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         # compute shapes for the input
         x_shape = (1, *self.classifier.model.input_shape)
         x = T.rand(x_shape).to(self.device)
-        probs_softmax, encoding, residual_flatten = self._forward_A(x)
+        out = self._forward_A(x)
+        
+
+        probs_softmax       = out[0]
+        encoding            = out[1]
+        residual_flatten    = out[2]
+        
+        
+        # if is the case concat confidence as last value of prob vector (this in order to don't change the whole strcuture of abnorom module)
+        if self.use_confidence:
+            confidence = out[3]
+            probs_softmax = T.cat((probs_softmax, confidence),dim = 1)
+        
         
         if self.model_type == "basic":
             self.model = Abnormality_module_Basic(probs_softmax.shape, encoding.shape, residual_flatten.shape)
@@ -1344,6 +1356,7 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             "model": "Abnormality module " + self.model_type,
             "large_encoding_classifier": large_encoding_classifier,
             "input_shape": input_shape,
+            "use confidence": self.use_confidence,
             "data_scenario": self.scenario,
             "optimizer": self.optimizer.__class__.__name__,
             "scheduler": self.scheduler.__class__.__name__,
@@ -1390,11 +1403,22 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
     
     def _forward_A(self, x, verbose = False):
 
-        logits, reconstruction, encoding = self.classifier.model.forward(x)
-        prob_softmax = T.nn.functional.softmax(logits, dim=1)
+        # logits, reconstruction, encoding = self.classifier.model.forward(x)
+        
+        output_classifier = self.classifier.model.forward(x)
+        
+        # unpack the output based on the model
+        logits          = output_classifier[0]
+        reconstruction  = output_classifier[1]
+        encoding        = output_classifier[2]
+        
+        if self.use_confidence:
+            confidence = output_classifier[3]
+        
+        probs_softmax = T.nn.functional.softmax(logits, dim=1)
         
         if verbose: 
-            print("prob shape -> ", prob_softmax.shape)
+            print("prob shape -> ", probs_softmax.shape)
             print("encoding shape -> ",encoding.shape)
         
         # from reconstuction to residual
@@ -1403,11 +1427,17 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         
         if verbose: 
             print("residual shape ->", reconstruction.shape)
-        
-        return prob_softmax, encoding, residual
+            
+        if self.use_confidence:
+            return probs_softmax, encoding, residual, confidence
+        else:
+            return probs_softmax, encoding, residual
 
-    def _forward_B(self, prob_softmax, encoding, residual, verbose = False):
-        y = self.model.forward(prob_softmax, encoding, residual)
+    def _forward_B(self, probs_softmax, encoding, residual, verbose = False):
+        """ if self.use_confidence is True probs_softmax should include the confidence value (Stacked) """
+        
+        
+        y = self.model.forward(probs_softmax, encoding, residual)
         if verbose: print("y shape", y.shape)
         return y
         
@@ -1430,9 +1460,18 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
          
         x = x.to(self.device)
         
-        prob_softmax, encoding, residual = self._forward_A(x)
+        out = self._forward_A(x)
+
+        probs_softmax       = out[0]
+        encoding            = out[1]
+        residual            = out[2]
         
-        logit = self._forward_B(prob_softmax, encoding, residual)
+        if self.use_confidence:
+            confidence = out[3]
+            probs_softmax = T.cat((probs_softmax, confidence),dim = 1)
+        
+        
+        logit = self._forward_B(probs_softmax, encoding, residual)
         
         out   = self.sigmoid(logit)
         
@@ -1490,12 +1529,20 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             with T.no_grad():
                 with autocast():
                     
-                    prob_softmax, encoding, residual = self._forward_A(x)
+                    out = self._forward_A(x)
+
+                    probs_softmax       = out[0]
+                    encoding            = out[1]
+                    residual            = out[2]
+                    
+                    if self.use_confidence:
+                        confidence = out[3]
+                        probs_softmax = T.cat((probs_softmax, confidence),dim = 1)
                     
                     if self.model_type == "basic" or "encoder" in self.model_type:
                         # logit = self._forward_B(prob_softmax, encoding, residual)
                         # logit = T.squeeze(logit)
-                        logit = T.squeeze(self.model.forward(prob_softmax, encoding, residual))
+                        logit = T.squeeze(self.model.forward(probs_softmax, encoding, residual))
                     else:
                         raise ValueError("Forward not defined in valid function for model: {}".format(self.model_type))
                     
@@ -1507,7 +1554,6 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         # go back to train mode 
         self.model.train()
         
-
         # return the average loss
         loss_valid = sum(losses)/len(losses)
         print(f"Loss from validation: {loss_valid}")
@@ -1533,6 +1579,9 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         print(path_save_results)
         # 2) prepare the training components
         self.model.train()
+        
+        # compute the weights for the labels
+        self.weights_labels = self.compute_class_weights(verbose=True, positive="ood")
         
         train_dl = DataLoader(self.dataset_train, batch_size= self.batch_size,  num_workers = 8,  shuffle= True,   pin_memory= False)
         valid_dl = DataLoader(self.dataset_valid, batch_size= self.batch_size,  num_workers = 8, shuffle = False,  pin_memory= False) 
@@ -1605,14 +1654,22 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
                 
                 s_1 = time()
                 with T.no_grad():  # avoid storage gradient for the classifier
-                        prob_softmax, encoding, residual = self._forward_A(x)
+                    out = self._forward_A(x)
+
+                    probs_softmax       = out[0]
+                    encoding            = out[1]
+                    residual            = out[2]
+                    
+                    if self.use_confidence:
+                        confidence = out[3]
+                        probs_softmax = T.cat((probs_softmax, confidence),dim = 1)
                 
                 time1.append(time()- s_1) 
                 
                 with autocast():
                     s_2 = time()
                                        
-                    prob_softmax.requires_grad_(True)
+                    probs_softmax.requires_grad_(True)
                     encoding.requires_grad_(True)
                     residual.requires_grad_(True)
                     
@@ -1621,13 +1678,12 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
                         pass
                         # logit = self._forward_B(prob_softmax, encoding, residual)
                         # logit = T.squeeze(self.model.forward(residual))
-                        logit = T.squeeze(self.model.forward(prob_softmax, encoding, residual))
+                        logit = T.squeeze(self.model.forward(probs_softmax, encoding, residual))
                     else:
                         raise ValueError("Forward not defined in train function for model: {}".format(self.model_type))
                     # print(logit.shape)
                     time2.append(time()- s_2)
 
-                    
                     # print(logit.shape)
                     # print(y.shape)
                 
@@ -1746,11 +1802,19 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
             with T.no_grad():
                 with autocast():
                     
-                    prob_softmax, encoding, residual = self._forward_A(x)
+                    out = self._forward_A(x)
+
+                    probs_softmax       = out[0]
+                    encoding            = out[1]
+                    residual            = out[2]
+                    
+                    if self.use_confidence:
+                        confidence = out[3]
+                        probs_softmax = T.cat((probs_softmax, confidence),dim = 1)
                                         
                     # if not basic Abnromality model, do recuction here
                     
-                    logit = self._forward_B(prob_softmax, encoding, residual)
+                    logit = self._forward_B(probs_softmax, encoding, residual)
                     # risk = T.squeeze(risk)
                     risk =self.sigmoid(logit)
                     
@@ -1881,17 +1945,18 @@ class Abnormality_module(OOD_Classifier):   # model training necessary
         self.model.eval()
         raise NotImplementedError
     
-        
+    
+    
+    
 if __name__ == "__main__":
     #                           [Start test section] 
     
-    # choose classifier model has module A
-    classifier_model = 0
-    
     # [1] load deep fake classifier
-    
-    # common classifier model definition
+    # choose classifier model has module A
+    classifier_model = 1
+
     if classifier_model == 0:
+        
         classifier_name = "faces_Unet4_Scorer112p_v4_03-12-2023"
         classifier_type = "Unet4_Scorer"
         classifier_epoch = 73
@@ -1899,6 +1964,14 @@ if __name__ == "__main__":
         classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
         classifier.load(classifier_name, classifier_epoch)
     
+    elif classifier_model == 1:
+        
+        classifier_name = "faces_Unet4_Scorer_Confidence_112p_v5_02-01-2024"
+        classifier_type = "Unet4_Scorer_Confidence"
+        classifier_epoch = 98
+        scenario = "content"
+        classifier = DFD_BinClassifier_v5(scenario="content", model_type=classifier_type)
+        classifier.load(classifier_name, classifier_epoch)
     
     
     
@@ -1989,36 +2062,36 @@ if __name__ == "__main__":
     # ________________________________ abnormality module  _____________________________
     
     def train_abn_basic():        
-        abn = Abnormality_module(classifier, scenario="content", model_type="basic")
+        abn = Abnormality_module(classifier, scenario = "content", model_type="basic")
         abn.train(additional_name="112p", test_loop=True)
         
         # x = T.rand((1,3,112,112)).to(abn.device)
         # y = abn.forward(x)
         # print(y)
     
-    def train_abn_encoder(type_encoder = "encoder"):
-        abn = Abnormality_module(classifier, scenario="content", model_type= type_encoder)
-        abn.train(additional_name="112p", test_loop=False)
+    def train_abn_encoder(type_encoder = "encoder", resolution = "112p"):
+        abn = Abnormality_module(classifier, scenario = scenario, model_type= type_encoder)
+        abn.train(additional_name= resolution , test_loop=False)
         
-    def train_extended_abn_encoder(type_encoder = "encoder"):
+    def train_extended_abn_encoder(type_encoder = "encoder", resolution = "112p"):
         """ uses extended OOD data"""
-        abn = Abnormality_module(classifier, scenario="content", model_type= type_encoder, extended_ood = True)
-        abn.train(additional_name="112p_extendedOOD", test_loop=False)
+        abn = Abnormality_module(classifier, scenario = scenario, model_type= type_encoder, extended_ood = True)
+        abn.train(additional_name= resolution + "_extendedOOD", test_loop=False)
         
-    def train_nosynt_abn_encoder(type_encoder = "encoder"):
+    def train_nosynt_abn_encoder(type_encoder = "encoder", resolution = "112p"):
         """ uses extended OOD data"""
         
-        abn = Abnormality_module(classifier, scenario="content", model_type=type_encoder, use_synthetic= False)
-        abn.train(additional_name="112p_nosynt", test_loop=False)
+        abn = Abnormality_module(classifier, scenario = scenario, model_type=type_encoder, use_synthetic= False)
+        abn.train(additional_name= resolution + "_nosynt", test_loop=False)
     
-    def train_full_extended_abn_encoder(type_encoder = "encoder"):
+    def train_full_extended_abn_encoder(type_encoder = "encoder", resolution = "112p"):
         
         """ uses extended OOD data"""
         
-        abn = Abnormality_module(classifier, scenario="content", model_type= type_encoder, extended_ood = True, balancing_mode="all")
-        abn.train(additional_name="112p_fullExtendedOOD", test_loop=False)
+        abn = Abnormality_module(classifier, scenario = scenario, model_type= type_encoder, extended_ood = True, balancing_mode="all")
+        abn.train(additional_name = resolution + "_fullExtendedOOD", test_loop=False)
     
-    def test_abn_content_faces(name_model, epoch, type_model):
+    def test_abn(name_model, epoch, type_encoder):
         
         def test_forward():
             dl =  DataLoader(abn.dataset_train, batch_size = 16,  num_workers = 8,  shuffle= True,   pin_memory= False)
@@ -2047,15 +2120,14 @@ if __name__ == "__main__":
                 break
         
         # load model
-        abn = Abnormality_module(classifier, scenario=scenario, model_type=type_model)
+        abn = Abnormality_module(classifier, scenario=scenario, model_type=type_encoder)
         abn.load(name_model, epoch)
         
         # test_forward()
     
         # launch test with non-thr metrics
         abn.test_risk()
-   
-
+    
     pass
     #                           [End test section] 
    
@@ -2122,5 +2194,31 @@ if __name__ == "__main__":
         test_abn_content_faces("Abnormality_module_encoder_v2_112p_fullExtendedOOD_28-12-2023",50, "encoder_v2")
         test_abn_content_faces("Abnormality_module_encoder_v3_112p_fullExtendedOOD_28-12-2023",50, "encoder_v3")
         test_abn_content_faces("Abnormality_module_encoder_v4_112p_fullExtendedOOD_29-12-2023",50, "encoder_v4")
+    
+    classifier: faces_Unet4_Scorer_Confidence_112p_v5_02-01-2024
+    
+                                    ABNORMALITY MODULE ENCODER  (Synthetic ood data, no extension)
+        train_abn_encoder(type_encoder= "encoder")
+        train_abn_encoder(type_encoder= "encoder_v3")
+        
+        test_abn("Abnormality_module_encoder_112p_09-01-2024", 50, "encoder")
+        test_abn("Abnormality_module_encoder_v3_112p_09-01-2024", 50, "encoder_v3")
+                                    
+                                    ABNORMALITY MODULE ENCODER  (Synthetic ood data, + extension, max merging)
+        train_extended_abn_encoder(type_encoder= "encoder_v3")
+        
+        test_abn("Abnormality_module_encoder_v3_112p_extendedOOD_09-01-2024", 50, "encoder_v3")
+                                    
+                                    ABNORMALITY MODULE ENCODER  (CDDB OOD data)
+        train_nosynt_abn_encoder(type_encoder= "encoder_v3")
+        
+        test_abn("Abnormality_module_encoder_v3_112p_nosynt_09-01-2024", 50, "encoder_v3")
+                                
+                                    ABNORMALITY MODULE ENCODER  (Synthetic ood data, + extension, all merging)
+        train_full_extended_abn_encoder(type_encoder= "encoder_v3")
+        
+        test_abn("Abnormality_module_encoder_v3_112p_fullExtendedOOD_09-01-2024", 50, "encoder_v3")
+    
+    
     
     """
