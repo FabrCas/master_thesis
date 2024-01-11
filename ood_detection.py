@@ -1084,11 +1084,325 @@ class Baseline_ODIN(OOD_Classifier):        # No model training necessary (Empty
             pred = np.where(condition= maximum_prob < threshold, x=1, y=0)  # if true set x otherwise set y
         return pred
 
-class Detector_Confidence(OOD_Classifier):
-    pass
+class Confidence_Detector(OOD_Classifier):
+    """
+        OOD detection using confidence estimation from the model
+        
+        *** Required confidence computation ***
+        
+    """
+    def __init__(self, classifier,  task_type_prog, name_ood_data, id_data_test , ood_data_test , id_data_train = None, ood_data_train = None, useGPU = True):
+        """
+        OOD_Baseline instantiation 
+
+        Args:
+            classifier (DFD_BinClassifier): classifier used for the main Deepfake detection task, required confidence computation for the model 
+            ood_data_test (torch.utils.data.Dataset): test set out of distribution
+            ood_data_train (torch.utils.data.Dataset): train set out of distribution
+            useGPU (bool, optional): flag to enable usage of GPU. Defaults to True.
+            task_type_prog (int): 3 possible values: 0 for binary classification, 1 for multi-class classificaiton, 2 multi-label classification
+            name_ood_data (str): name of the dataset used as ood data, is is a partition of CDDB specify the scenario: "content","group","mix", Default is None. 
+                if None, the results will be not saved
+        """
+        super(Confidence_Detector, self).__init__(id_data_test = id_data_test, ood_data_test = ood_data_test,                  \
+                                           id_data_train = id_data_train, ood_data_train = ood_data_train, useGPU = useGPU)
+        # set the classifier
+        self.classifier  = classifier
+        self.name_classifier = self.classifier.classifier_name
+        self.check_classifier()
+        
+        self.task_type_prog = task_type_prog
+        self.name_ood_data  = name_ood_data
+        
+        # load the Pytorch dataset here
+        try:
+            self.dataset_test  = OOD_dataset(self.id_data_test, self.ood_data_test, balancing_mode = "max")
+        except:
+            print("Dataset data is not valid, please use instances of class torch.Dataset")
+        
+        # name of the classifier
+        self.name = "confidenceDetector"
     
     
+    def check_classifier(self):
+        try:
+            assert "confidence" in self.classifier.model_type.lower().strip()
+        except Exception as e:
+            raise ValueError("The classifier model does not provide a confidence estimation")  
+    #                                       testing functions
+    def test_confidence(self):
+        """
+            testing function using probabilty-based metrics, computing OOD metrics that are not threshold related
+        """
+        
+        # saving folder path
+        path_results_folder         = self.get_path2SaveResults()
+        
+        # define the dataloader 
+        id_ood_dataloader   = DataLoader(self.dataset_test,  batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
+        
+        # use model on selected device
+        self.classifier.model.to(self.device)
+        
+        # define empty list to store outcomes
+        confidences = np.empty((0,1), dtype= np.float32)
+        dl_labels = np.empty((0,2), dtype= np.int32)            # dataloader labels, binary one-hot encoding, ID -> [1,0], OOD -> [0,1]
+        
+        for idx, (x,y) in tqdm(enumerate(id_ood_dataloader), total= len(id_ood_dataloader)):
+            
+            # to test
+            # if idx >= 10: break
+            
+            x = x.to(self.device)
+            with T.no_grad():
+                with autocast():
+                    # _ ,_, logits =self.classifier.forward(x)
+                    out = self.classifier.model.forward(x)
+                    confidence = out[3]
+                    
+            # to numpy array
+            confidence  = confidence.cpu().numpy()
+            y       = y.numpy()
+                
+            confidences = np.append(confidences, confidence, axis= 0)
+            dl_labels = np.append(dl_labels, y, axis= 0)
+            
+
+        # separation of id/ood labels and probabilities
+        id_labels  =  dl_labels[:,0]                # filter by label column
+        ood_labels =  dl_labels[:,1]
+        confidences_id     = confidences[id_labels == 1]         # split forward probabilites between ID adn OOD, still a list of probabilities for each class learned by the model
+        confidences_ood    = confidences[ood_labels == 1]
+        
+
+        # compute confidence (all)
+        conf_all = round(np.average(confidences),3)
+        print("Confidence ID+OOD\t{}".format(conf_all))
+        
+        conf_id_mean    = np.mean(confidences_id);     conf_id_std     = np.std(confidences_id)
+        conf_ood_mean   = np.mean(confidences_ood);    conf_ood_std    = np.std(confidences_ood)
+        
+        
+        # in-out of distribution moments
+        print("In-Distribution confidence        [mean (confidence ID),std]  -> ", conf_id_mean, conf_id_std)
+        print("Out-Of-Distribution confidence     [mean (confidence OOD),std] -> ", conf_ood_mean, conf_ood_std)
+        
+        # normality detection
+        print("Normality detection:")   # positive label -> ID data
+        norm_base_rate = round(100*(confidences_id.shape[0]/(confidences_id.shape[0] + confidences_ood.shape[0])),2)
+        print("\tbase rate(%): {}".format(norm_base_rate))
+        print("\tPrediction confidence")
+        p_norm_aupr, p_norm_auroc = self.compute_curves(confidences_id, confidences_ood)
+
+        
+        # abnormality detection
+        print("Abnormality detection:")   # positive label -> OOD data
+        abnorm_base_rate = round(100*(confidences_ood.shape[0]/(confidences_id.shape[0] + confidences_ood.shape[0])),2)
+        print("\tbase rate(%): {}".format(abnorm_base_rate))
+        print("\tPrediction confidence")
+        p_abnorm_aupr, p_abnorm_auroc = self.compute_curves(1-confidences_id, 1-confidences_ood, positive_reversed= True)
+        # p_abnorm_aupr, p_abnorm_auroc = self.compute_curves(1-maximum_prob_id, 1-maximum_prob_ood, positive_reversed= True)
+
+        # compute fpr95, detection_error and threshold_error 
+        metrics_norm = self.compute_metrics_ood(confidences_id, confidences_ood, path_save = path_results_folder)
+        print("OOD metrics:\n", metrics_norm)  
+        metrics_abnorm = self.compute_metrics_ood(1-confidences_id, 1-confidences_ood, positive_reversed= True)
+        print("OOD metrics:\n", metrics_abnorm)   
+                     
+        # store statistics/metrics in a dictionary
+        data = {
+            "ID_confidence": {
+                "mean":  float(conf_id_mean), 
+                "var":   float(conf_id_std)
+            },
+            "OOD_confidence": {
+                "mean": float(conf_ood_mean), 
+                "var":  float(conf_ood_std) 
+            },
+            
+            "normality": {
+                "base_rate":                float(norm_base_rate),
+                "Confidence_AUPR":          float(p_norm_aupr),   
+                "Confidence_AUROC":         float(p_norm_auroc)
+            },
+            "abnormality":{
+                "base_rate":                float(abnorm_base_rate),
+                "Confidence_AUPR":          float(p_abnorm_aupr),   
+                "Confidence_AUROC":         float(p_abnorm_auroc),
+
+            },
+            "avg_confidence":               float(conf_all),
+            "fpr95_normality":              float(metrics_norm['fpr95']),
+            "detection_error_normality":    float(metrics_norm['detection_error']),
+            "threshold_normality":          float(metrics_norm['thr_de']),
+            "fpr95_abnormality":            float(metrics_abnorm['fpr95']),
+            "detection_error_abnormality":  float(metrics_abnorm['detection_error']),
+            "threshold_abnormality":        float(metrics_abnorm['thr_de'])
+              
+        }
+        
+        # save data (JSON)
+        if self.name_ood_data is not None:
+            path_results_folder         = self.get_path2SaveResults()
+            name_result_file            = 'metrics_ood_{}.json'.format(self.name_ood_data)
+            path_result_save            = os.path.join(path_results_folder, name_result_file)   # full path to json file
+            
+            print(path_result_save)
+                  
+            saveJson(path_file = path_result_save, data = data)
     
+    def test_threshold(self, thr_type = "fpr95_normality", normality_setting = True):
+        """
+            This function compute metrics (binary classification ID/OOD) that are threshold related (discriminator)
+            
+                Args:
+            x (torch.Tensor): input image to be discriminated (real/fake)
+
+            name_classifier (str): deepfake detection model used (name from models folder)
+            task_type_prog (int): 3 possible values: 0 for binary classification, 1 for multi-class classificaiton, 2 multi-label classification
+            name_ood_data (str): name of the dataset used as ood data, is is a partition of CDDB specify the scenario: "content","group","mix", Default is None. 
+            thr_type (str): choose which kind of threhsold use between "fpr95_normality" or "fpr95_abnormality" (fpr at tpr 95%) or "avg_confidence",
+            "threshold_normality" or "threshold_abnormality",  Default is "fpr95_normality".
+            normality setting" (str, optional): used to define positive label, in normality is ID data, in abnormality is OOD data. Default is True
+            
+        """
+        
+        # load data from analyze
+        path_results_folder         = self.get_path2SaveResults()
+        name_result_file            = 'metrics_ood_{}.json'.format(self.name_ood_data)
+        path_result_save            = os.path.join(path_results_folder, name_result_file)   # full path to json file
+        
+        
+        try:
+            data = loadJson(path_result_save)
+        except Exception as e:
+            print(e)
+            print("No data found at path {}".format(path_result_save))
+        
+        # choose the threshold to use for the discrimination ID/OOD
+        if thr_type == "fpr95_normality":
+            threshold = data['fpr95_normality']         # normality, positive label ID 
+        elif thr_type == "threshold_normality":
+            threshold = data['threshold_normality']
+            
+        elif thr_type == "fpr95_abnormality":
+            threshold = data['fpr95_abnormality']       # abnormality, positive label OOD 
+        elif thr_type == "threshold_abnormality":
+            threshold = data['threshold_abnormality']
+            
+        else:   # for the normality setting                                      
+            threshold = data['avg_confidence']          # normality, use avg max prob confidence as thr (proven to be misleading)
+        
+        id_ood_dataloader   = DataLoader(self.dataset_test,  batch_size= self.batch_size, num_workers= 8, shuffle= False, pin_memory= True)
+        
+        # use model on selected device
+        self.classifier.model.to(self.device)
+        
+        # define empty lsit to store outcomes
+        test_confidences = np.empty((0,1), dtype= np.float32)
+        test_labels     = np.empty((0,2), dtype= np.int32)
+        
+        for idx, (x,y) in tqdm(enumerate(id_ood_dataloader), total= len(id_ood_dataloader)):
+            # to test
+            # if idx >= 5: break
+            
+            x = x.to(self.device)
+            with T.no_grad():
+                with autocast():
+                    out = self.classifier.model.forward(x)
+                    confidence = out[3]
+                    
+            # to numpy array
+            confidence  = confidence.cpu().numpy()
+            y       = y.numpy()
+                
+            test_confidences = np.append(test_confidences, confidence, axis= 0)
+            test_labels = np.append(test_labels, y, axis= 0)
+        
+        
+        test_confidences = np.squeeze(test_confidences) 
+        pred = []
+        for prob in test_confidences:
+            if prob < threshold: pred.append(0)     
+            else: pred.append(1)                   
+        
+        # get the list with the binary labels
+        pred = np.array(pred)
+        
+        if normality_setting:
+            target = test_labels[:,0]   # if normal_setting, positive label is ID
+        else:
+            target = test_labels[:,1]    # if normal_setting, positive label is OOD 
+        # compute and save metrics 
+        name_resultClass_file  = 'metrics_ood_classification_{}.json'.format(self.name_ood_data)
+        metrics_class =  metrics_binClass(preds = pred, targets= target, pred_probs = None, path_save = path_results_folder, name_ood_file = name_resultClass_file)
+        
+        print(metrics_class)
+
+    def forward(self, x, thr_type = "fpr95_normality", normality_setting = True):
+        """ discriminator forward
+
+        Args:
+            x (torch.Tensor): input image to be discriminated (real/fake)
+
+            name_classifier (str): deepfake detection model used (name from models folder)
+            task_type_prog (int): 3 possible values: 0 for binary classification, 1 for multi-class classificaiton, 2 multi-label classification
+            name_ood_data (str): name of the dataset/CDDB scenario used as ood data, if is a partition of CDDB specify the scenario: "content","group","mix", Default is None. 
+            thr_type (str): choose which kind of threhsold use between "fpr95_normality" (fpr at tpr 95%) or "avg_confidence",
+            "threshold_normality",  Default is "fpr95_normality".
+            normality setting" (str, optional): used to define positive label, in normality is ID data, in abnormality is OOD data. Default is True
+        """        
+        if not(isinstance(x, T.Tensor)):
+            x = T.tensor(x)
+            
+        # adjust to handle single image, increasing dimensions for batch
+        if len(x.shape) == 3:
+            x = x.expand(1,-1,-1,-1)
+        
+        path_results_folder         = self.get_path2SaveResults(self)
+        name_result_file            = 'metrics_ood_{}.json'.format(self.name_ood_data)
+        path_result_save            = os.path.join(path_results_folder, name_result_file)   # full path to json file
+        
+        
+        # load the threshold
+        try:
+            data = loadJson(path_result_save)
+        except Exception as e:
+            print(e)
+            print("No data found at path {}".format(path_result_save))
+            
+        if thr_type == "fpr95_normality":
+            threshold = data['fpr95_normality']         # normality, positive label ID 
+        elif thr_type == "threshold_normality":
+            threshold = data['threshold_normality']
+            
+        # elif thr_type == "fpr95_abnormality":
+        #     threshold = data['fpr95_abnormality']       # abnormality, positive label OOD 
+        # elif thr_type == "threshold_abnormality":
+        #     threshold = data['threshold_abnormality']
+            
+        else:   # for the normality setting                                      
+            threshold = data['avg_confidence']          # normality, use avg max prob confidence as thr (proven to be misleading)
+        
+        # compute mx prob 
+        x = x.to(self.device)
+        with T.no_grad():
+             with autocast():
+                    out = self.classifier.model.forward(x)
+                    confidence = out[3]
+                    
+        # to numpy array
+        confidence  = confidence.cpu().numpy()
+        confidence  = np.squeeze(confidence) 
+        
+        # apply binary threshold
+        if normality_setting:
+            pred = np.where(condition= confidence < threshold, x=0, y=1)  # if true set x otherwise set y
+        else:
+            pred = np.where(condition= confidence < threshold, x=1, y=0)  # if true set x otherwise set y
+        return pred
+    
+
 class Abnormality_module(OOD_Classifier):   # model to train necessary 
     """ Custom implementation of the abnormality module using ResNet, look https://arxiv.org/abs/1610.02136 chapter 4"
     
@@ -1839,13 +2153,16 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
                     
                     out = self._forward_A(x)
 
-                    probs_softmax       = out[0]
-                    encoding            = out[1]
-                    residual            = out[2]
+                    probs_softmax       = out["probabilities"]
+                    encoding            = out["encoding"]
+                    residual            = out["residual"]
                     
                     if self.use_confidence:
-                        confidence = out[3]
-                        probs_softmax = T.cat((probs_softmax, confidence),dim = 1)
+                        confidence = out["confidence"]
+                        if self.conf_usage_mode.lower().strip() == "merge":
+                            probs_softmax = T.cat((probs_softmax, confidence),dim = 1)
+                        elif self.conf_usage_mode.lower().strip() == "alone":
+                            probs_softmax = confidence
                                         
                     # if not basic Abnromality model, do recuction here
                     
@@ -1981,8 +2298,6 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
         raise NotImplementedError
     
     
-    
-    
 if __name__ == "__main__":
     #                           [Start test section] 
     
@@ -2007,6 +2322,7 @@ if __name__ == "__main__":
         scenario = "content"
         classifier = DFD_BinClassifier_v5(scenario="content", model_type=classifier_type)
         classifier.load(classifier_name, classifier_epoch)
+        conf_usage_mode = "ignore" # ignore, merge or alone
     
     
     
@@ -2093,6 +2409,39 @@ if __name__ == "__main__":
         
         ood_detector.test_probabilties()
     
+    # ______________________________ confidence detector  _______________________________
+    def test_confidenceDetector_facesCDDB_CIFAR():
+
+        # [2] define the id/ood data
+        
+        # id_data_train    = CDDB_binary(train = True, augment = False
+        # laod id data test
+        id_data_train      = CDDB_binary_Partial(scenario = "content", train = True,  ood = False, augment = False)
+        id_data_test       = CDDB_binary_Partial(scenario = "content", train = False, ood = False, augment = False)
+        _ , id_data_test   = sampleValidSet(trainset = id_data_train, testset= id_data_test, useOnlyTest = True, verbose = True)
+        # ood_data_train   = getCIFAR100_dataset(train = True)
+        ood_data_test    = getCIFAR100_dataset(train = False)
+        
+        # [3] define the detector
+        ood_detector = Confidence_Detector(classifier=classifier, task_type_prog= 0, name_ood_data="cifar100", id_data_test = id_data_test, ood_data_test = ood_data_test, useGPU= True)
+        
+        # [4] launch analyzer/training
+        ood_detector.test_confidence()
+    
+    def test_confidenceDetector_content_faces():
+        name_ood_data_content  = "CDDB_content_faces_scenario"
+
+        # laod id data test
+        id_data_train      = CDDB_binary_Partial(scenario = "content", train = True,  ood = False, augment = False)
+        id_data_test       = CDDB_binary_Partial(scenario = "content", train = False, ood = False, augment = False)
+        _ , id_data_test   = sampleValidSet(trainset = id_data_train, testset= id_data_test, useOnlyTest = True, verbose = True)
+        
+        # load ood data test
+        ood_data_test  = CDDB_binary_Partial(scenario = "content", train = False,  ood = True, augment = False)
+        
+        ood_detector = Confidence_Detector(classifier=classifier, task_type_prog = 0, name_ood_data = name_ood_data_content ,  id_data_test = id_data_test, ood_data_test = ood_data_test, useGPU= True)
+        
+        ood_detector.test_confidence()
 
     # ________________________________ abnormality module  _____________________________
     
@@ -2105,25 +2454,26 @@ if __name__ == "__main__":
         # print(y)
     
     def train_abn_encoder(type_encoder = "encoder", resolution = "112p"):
-        abn = Abnormality_module(classifier, scenario = scenario, model_type= type_encoder, conf_usage_mode = "alone")
-        abn.train(additional_name= resolution , test_loop=False)
+        abn = Abnormality_module(classifier, scenario = scenario, model_type= type_encoder, conf_usage_mode = conf_usage_mode)
+        # abn.train(additional_name= resolution + "_ignored_confidence" , test_loop=False)
+        abn.train(additional_name= resolution, test_loop=False)
         
     def train_extended_abn_encoder(type_encoder = "encoder", resolution = "112p"):
         """ uses extended OOD data"""
-        abn = Abnormality_module(classifier, scenario = scenario, model_type= type_encoder, extended_ood = True)
+        abn = Abnormality_module(classifier, scenario = scenario, model_type= type_encoder, extended_ood = True,  conf_usage_mode = conf_usage_mode)
         abn.train(additional_name= resolution + "_extendedOOD", test_loop=False)
         
     def train_nosynt_abn_encoder(type_encoder = "encoder", resolution = "112p"):
         """ uses extended OOD data"""
         
-        abn = Abnormality_module(classifier, scenario = scenario, model_type=type_encoder, use_synthetic= False)
+        abn = Abnormality_module(classifier, scenario = scenario, model_type=type_encoder, use_synthetic= False,  conf_usage_mode = conf_usage_mode)
         abn.train(additional_name= resolution + "_nosynt", test_loop=False)
     
     def train_full_extended_abn_encoder(type_encoder = "encoder", resolution = "112p"):
         
         """ uses extended OOD data"""
         
-        abn = Abnormality_module(classifier, scenario = scenario, model_type= type_encoder, extended_ood = True, balancing_mode="all")
+        abn = Abnormality_module(classifier, scenario = scenario, model_type= type_encoder, extended_ood = True, balancing_mode="all",  conf_usage_mode = conf_usage_mode)
         abn.train(additional_name = resolution + "_fullExtendedOOD", test_loop=False)
     
     def test_abn(name_model, epoch, type_encoder):
@@ -2155,7 +2505,7 @@ if __name__ == "__main__":
                 break
         
         # load model
-        abn = Abnormality_module(classifier, scenario=scenario, model_type=type_encoder)
+        abn = Abnormality_module(classifier, scenario=scenario, model_type=type_encoder,  conf_usage_mode = conf_usage_mode)
         abn.load(name_model, epoch)
         
         # test_forward()
@@ -2163,7 +2513,7 @@ if __name__ == "__main__":
         # launch test with non-thr metrics
         abn.test_risk()
     
-    train_abn_encoder(type_encoder="encoder_v3")
+    pass
     #                           [End test section] 
    
     """ 
@@ -2179,7 +2529,7 @@ if __name__ == "__main__":
                                     BASELINE + ODIN
         test_baselineOdin_facesCDDB_CIFAR()
         test_baselineOdin_content_faces()
-        
+                                    
                                     ABNORMALITY MODULE BASIC  (Synthetic ood data, no extension)
         train_abn_basic()
         
@@ -2195,7 +2545,6 @@ if __name__ == "__main__":
         test_abn_content_faces("Abnormality_module_encoder_v2_112p_19-12-2023", 50,"encoder_v2")
         test_abn_content_faces("Abnormality_module_encoder_v3_112p_19-12-2023", 50,"encoder_v3")
         test_abn_content_faces("Abnormality_module_encoder_v4_112p_19-12-2023", 50,"encoder_v4")
-        
         
                                     ABNORMALITY MODULE ENCODER  (Synthetic ood data, + extension, max merging)
         train_extended_abn_encoder(type_encoder = encoder_v4)
@@ -2230,14 +2579,23 @@ if __name__ == "__main__":
         test_abn_content_faces("Abnormality_module_encoder_v3_112p_fullExtendedOOD_28-12-2023",50, "encoder_v3")
         test_abn_content_faces("Abnormality_module_encoder_v4_112p_fullExtendedOOD_29-12-2023",50, "encoder_v4")
     
-    classifier: faces_Unet4_Scorer_Confidence_112p_v5_02-01-2024
+    classifier: faces_Unet4_Scorer_Confidence_112p_v5_02-01-2024:
     
+                                    CONFIDENCE DETECTOR
+        test_confidenceDetector_facesCDDB_CIFAR()
+        
+        
+        
                                     ABNORMALITY MODULE ENCODER  (Synthetic ood data, no extension)
         train_abn_encoder(type_encoder= "encoder")
         train_abn_encoder(type_encoder= "encoder_v3")
+        train_abn_encoder(type_encoder="encoder_v3")   # conf_usage_mode = "alone"
+        train_abn_encoder(type_encoder= "encoder_v3")  
         
         test_abn("Abnormality_module_encoder_112p_09-01-2024", 50, "encoder")
         test_abn("Abnormality_module_encoder_v3_112p_09-01-2024", 50, "encoder_v3")
+        test_abn("Abnormality_module_encoder_v3_112p_11-01-2024",50,"encoder_v3")                        # conf_usage_mode = "alone"
+        test_abn("Abnormality_module_encoder_v3_112p_ignored_confidence_11-01-2024",50,"encoder_v3")     # conf_usage_mode = "ignore"
                                     
                                     ABNORMALITY MODULE ENCODER  (Synthetic ood data, + extension, max merging)
         train_extended_abn_encoder(type_encoder= "encoder_v3")

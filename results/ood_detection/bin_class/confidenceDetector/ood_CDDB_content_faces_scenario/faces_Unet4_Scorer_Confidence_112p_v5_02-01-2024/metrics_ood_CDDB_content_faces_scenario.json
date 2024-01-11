@@ -1,0 +1,27 @@
+{
+    "ID_confidence": {
+        "mean": 0.680899441242218,
+        "var": 0.17751632630825043
+    },
+    "OOD_confidence": {
+        "mean": 0.5047645568847656,
+        "var": 0.14515310525894165
+    },
+    "normality": {
+        "base_rate": 50.0,
+        "Confidence_AUPR": 81.64,
+        "Confidence_AUROC": 78.38
+    },
+    "abnormality": {
+        "base_rate": 50.0,
+        "Confidence_AUPR": 68.17,
+        "Confidence_AUROC": 78.38
+    },
+    "avg_confidence": 0.5929999947547913,
+    "fpr95_normality": 0.946756419845425,
+    "detection_error_normality": 0.4989404138618799,
+    "threshold_normality": 0.307861328125,
+    "fpr95_abnormality": 0.6107828471702816,
+    "detection_error_abnormality": 0.3306532036898529,
+    "threshold_abnormality": 0.248046875
+}
