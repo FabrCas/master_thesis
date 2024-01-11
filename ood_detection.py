@@ -1083,7 +1083,12 @@ class Baseline_ODIN(OOD_Classifier):        # No model training necessary (Empty
         else:
             pred = np.where(condition= maximum_prob < threshold, x=1, y=0)  # if true set x otherwise set y
         return pred
-        
+
+class Detector_Confidence(OOD_Classifier):
+    pass
+    
+    
+    
 class Abnormality_module(OOD_Classifier):   # model to train necessary 
     """ Custom implementation of the abnormality module using ResNet, look https://arxiv.org/abs/1610.02136 chapter 4"
     
@@ -1097,7 +1102,7 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
     
     def __init__(self, classifier, scenario:str, model_type: str, useGPU: bool= True, binary_dataset: bool = True,
                  batch_size = "dafault", use_synthetic:bool = True, extended_ood: bool = False, blind_test: bool = True,
-                 balancing_mode: str = "max"):
+                 balancing_mode: str = "max", conf_usage_mode: str = "merge"):
         """ 
             ARGS:
             - classifier (T.nn.Module): the classifier (Module A) that produces the input for Module B (abnormality module)
@@ -1109,8 +1114,10 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
             - extended_ood (boolean, optional): This has sense if use_synthetic is set to True. Select if extend the ood data for training, using not only synthetic data. Default is True
             - blind_test (boolean, optional): This has sense if use_synthetic is set to True. Select if use real ood data (True) or synthetized one from In distributiion data. Default is True
             - balancing_mode (string,optinal): This has sense if use_synthethid is set to True and extended_ood is set to True.
-            Choose between "max and "all", max mode give a balance number of OOD same as ID, while, all produces more OOD samples than ID.
-            . Default is "max"
+            Choose between "max and "all", max mode give a balance number of OOD same as ID, while, all produces more OOD samples than ID. Default is "max"
+            - conf_usage_mode (string, optional): This has sense only if model include confidence inference. Choose how use the confidence model. "merge" mode
+            combine (stack) the confidence with the probabilities vector, "ignore" avoid the use of confidence for the ood detection, "alone" exchange the probability
+            vector with the confidence degree.
             
         """
         super(Abnormality_module, self).__init__(useGPU=useGPU)
@@ -1126,8 +1133,17 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
         self.train_name         = None
         self._meta_data()
         
-        # abnormality module (module B) definition
-        self.use_confidence = False    # as default setting, the confidence is not expected, this is modified by _build_model() if confidence is present
+        # configuration variables for abnormality module (module B)
+        self.use_confidence     = False            # as default setting, the confidence is not expected, this is modified by _build_model() if confidence is present
+        self.augment_data_train = False
+        self.loss_name          = "weighted bce"   # binary cross entropy or sigmoid cross entropy (weighted)
+        self.conf_usage_mode    = conf_usage_mode  # define how use confidence whether is present
+        
+        # instantiation aux elements
+        self.bce     = F.binary_cross_entropy_with_logits   # performs sigmoid internally
+        # self.ce      = F.cross_entropy()
+        self.sigmoid = F.sigmoid
+        self.softmax = F.softmax
         self._build_model()
             
         # training parameters  
@@ -1159,20 +1175,12 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
         else:
             self._prepare_data(verbose=True)
         
-        # configuration variables
-        self.augment_data_train = False
-        self.loss_name          = "weighted bce"   # binary cross entropy or sigmoid cross entropy (weighted)
-        
-        # instantiation aux elements
-        self.bce     = F.binary_cross_entropy_with_logits   # performs sigmoid internally
-        # self.ce      = F.cross_entropy()
-        self.sigmoid = F.sigmoid
-        self.softmax = F.softmax
-        
-            
+
+           
     def _build_model(self):
         
-        if "confidence" in self.name_classifier.lower().strip():
+        # check if the model estimate the confidence and if should be not ignored 
+        if ("confidence" in self.name_classifier.lower().strip()) and (self.conf_usage_mode.lower().strip() != "ignore") :
             self.use_confidence = True 
         
         # select the type of encoding, encoder_v3 is a smaller dimensionality
@@ -1187,15 +1195,20 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
         out = self._forward_A(x)
         
 
-        probs_softmax       = out[0]
-        encoding            = out[1]
-        residual_flatten    = out[2]
+        probs_softmax       = out["probabilities"]
+        encoding            = out["encoding"]
+        residual_flatten    = out["residual"]
         
         
-        # if is the case concat confidence as last value of prob vector (this in order to don't change the whole strcuture of abnorom module)
+        # include confidence directly in the probs_softmax according to the mode choosen in self.conf_usage_mode (this in order to don't change the whole strcuture of abnorom module)
         if self.use_confidence:
-            confidence = out[3]
-            probs_softmax = T.cat((probs_softmax, confidence),dim = 1)
+            confidence = out["confidence"]
+            if self.conf_usage_mode.lower().strip() == "merge":
+                probs_softmax = T.cat((probs_softmax, confidence),dim = 1)
+            elif self.conf_usage_mode.lower().strip() == "alone":
+                probs_softmax = confidence
+            else: 
+                raise ValueError('invalid modality for the confidence usage, chosen: {}, valid are: "merge","alone","ignore"'.format(self.conf_usage_mode))
         
         
         if self.model_type == "basic":
@@ -1357,6 +1370,7 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
             "large_encoding_classifier": large_encoding_classifier,
             "input_shape": input_shape,
             "use confidence": self.use_confidence,
+            "confidence usage mode": self.conf_usage_mode,
             "data_scenario": self.scenario,
             "optimizer": self.optimizer.__class__.__name__,
             "scheduler": self.scheduler.__class__.__name__,
@@ -1402,18 +1416,25 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
         return logger
     
     def _forward_A(self, x, verbose = False):
+        """ this method return a dictionary with the all the outputs from the model branches
+            keys: "probabilities", "encding", "residual", "confidence"
+            the confidence key-value pair is present if and only if is a confidence model (check the name)
+        """
 
         # logits, reconstruction, encoding = self.classifier.model.forward(x)
         
-        output_classifier = self.classifier.model.forward(x)
+        output_model = self.classifier.model.forward(x)
         
         # unpack the output based on the model
-        logits          = output_classifier[0]
-        reconstruction  = output_classifier[1]
-        encoding        = output_classifier[2]
+        logits          = output_model[0]
+        reconstruction  = output_model[1]
+        encoding        = output_model[2]
+        
+        output = {"encoding": encoding}
         
         if self.use_confidence:
-            confidence = output_classifier[3]
+            confidence = output_model[3]
+            output["confidence"] = confidence
         
         probs_softmax = T.nn.functional.softmax(logits, dim=1)
         
@@ -1425,13 +1446,18 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
         residual = T.square(reconstruction - x)
         # residual_flatten = T.flatten(residual, start_dim=1)
         
+        output["probabilities"] = probs_softmax
+        output["residual"]      = residual
+        
         if verbose: 
             print("residual shape ->", reconstruction.shape)
-            
-        if self.use_confidence:
-            return probs_softmax, encoding, residual, confidence
-        else:
-            return probs_softmax, encoding, residual
+        
+        return output
+                
+        # if self.use_confidence:
+        #     return probs_softmax, encoding, residual, confidence
+        # else:
+        #     return probs_softmax, encoding, residual
 
     def _forward_B(self, probs_softmax, encoding, residual, verbose = False):
         """ if self.use_confidence is True probs_softmax should include the confidence value (Stacked) """
@@ -1462,13 +1488,16 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
         
         out = self._forward_A(x)
 
-        probs_softmax       = out[0]
-        encoding            = out[1]
-        residual            = out[2]
+        probs_softmax       = out["probabilities"]
+        encoding            = out["encoding"]
+        residual            = out["residual"]
         
         if self.use_confidence:
-            confidence = out[3]
-            probs_softmax = T.cat((probs_softmax, confidence),dim = 1)
+            confidence = out["confidence"]
+            if self.conf_usage_mode.lower().strip() == "merge":
+                probs_softmax = T.cat((probs_softmax, confidence),dim = 1)
+            elif self.conf_usage_mode.lower().strip() == "alone":
+                probs_softmax = confidence
         
         
         logit = self._forward_B(probs_softmax, encoding, residual)
@@ -1520,7 +1549,7 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
             # take only label for the positive class (fake)
             y = y[:,1]
             
-            # compute weights for the full batch
+            # compute monodimensional weights for the full batch
             weights = T.tensor([self.weights_labels[elem] for elem in y ]).to(self.device)
             
             y = y.to(self.device).to(T.float32)
@@ -1531,14 +1560,17 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
                     
                     out = self._forward_A(x)
 
-                    probs_softmax       = out[0]
-                    encoding            = out[1]
-                    residual            = out[2]
+                    probs_softmax       = out["probabilities"]
+                    encoding            = out["encoding"]
+                    residual            = out["residual"]
                     
                     if self.use_confidence:
-                        confidence = out[3]
-                        probs_softmax = T.cat((probs_softmax, confidence),dim = 1)
-                    
+                        confidence = out["confidence"]
+                        if self.conf_usage_mode.lower().strip() == "merge":
+                            probs_softmax = T.cat((probs_softmax, confidence),dim = 1)
+                        elif self.conf_usage_mode.lower().strip() == "alone":
+                            probs_softmax = confidence
+
                     if self.model_type == "basic" or "encoder" in self.model_type:
                         # logit = self._forward_B(prob_softmax, encoding, residual)
                         # logit = T.squeeze(logit)
@@ -1656,14 +1688,17 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
                 with T.no_grad():  # avoid storage gradient for the classifier
                     out = self._forward_A(x)
 
-                    probs_softmax       = out[0]
-                    encoding            = out[1]
-                    residual            = out[2]
+                    probs_softmax       = out["probabilities"]
+                    encoding            = out["encoding"]
+                    residual            = out["residual"]
                     
-                    if self.use_confidence:
-                        confidence = out[3]
+                if self.use_confidence:
+                    confidence = out["confidence"]
+                    if self.conf_usage_mode.lower().strip() == "merge":
                         probs_softmax = T.cat((probs_softmax, confidence),dim = 1)
-                
+                    elif self.conf_usage_mode.lower().strip() == "alone":
+                        probs_softmax = confidence
+
                 time1.append(time()- s_1) 
                 
                 with autocast():
@@ -1952,7 +1987,7 @@ if __name__ == "__main__":
     #                           [Start test section] 
     
     # [1] load deep fake classifier
-    # choose classifier model has module A
+    # choose classifier model as module A associated with a certain scenario
     classifier_model = 1
 
     if classifier_model == 0:
@@ -2070,7 +2105,7 @@ if __name__ == "__main__":
         # print(y)
     
     def train_abn_encoder(type_encoder = "encoder", resolution = "112p"):
-        abn = Abnormality_module(classifier, scenario = scenario, model_type= type_encoder)
+        abn = Abnormality_module(classifier, scenario = scenario, model_type= type_encoder, conf_usage_mode = "alone")
         abn.train(additional_name= resolution , test_loop=False)
         
     def train_extended_abn_encoder(type_encoder = "encoder", resolution = "112p"):
@@ -2128,7 +2163,7 @@ if __name__ == "__main__":
         # launch test with non-thr metrics
         abn.test_risk()
     
-    pass
+    train_abn_encoder(type_encoder="encoder_v3")
     #                           [End test section] 
    
     """ 
