@@ -9,6 +9,10 @@ from    torchsummary                    import summary
 from    torchvision                     import models
 from    torchvision.models              import ResNet50_Weights
 from    utilities                       import print_dict, print_list, expand_encoding, convTranspose2d_shapes, get_inputConfig
+from    einops.layers.torch             import Rearrange
+from    einops                          import repeat
+
+T.manual_seed(seed=22)
 
 # input settigs:
 config = get_inputConfig()
@@ -19,11 +23,11 @@ INPUT_CHANNELS  = config['channels']
 UNET_EXP_FMS    = 4    # U-net power of 2 exponent for feature maps (starting)
 
 
-# 1st models superclass
-class Project_conv_model(nn.Module):
+# 1st models superclass for deepfake detection
+class Project_DFD_model(nn.Module):
     
     def __init__(self, c,h,w, n_classes):
-        super(Project_conv_model,self).__init__()
+        super(Project_DFD_model,self).__init__()
         
         # initialize the model to None        
         self.input_dim  = (INPUT_CHANNELS, INPUT_HEIGHT, INPUT_WIDTH)
@@ -225,7 +229,7 @@ class Bottleneck_block2D_s(nn.Module):
         
         return x
       
-class ResNet(Project_conv_model):
+class ResNet(Project_DFD_model):
     # channel -> colors image
     # classes -> unique labels for the classification
     
@@ -343,7 +347,7 @@ class ResNet(Project_conv_model):
     
 #_____________________________________ResNet 50 ImageNet___________________________________________
 
-class ResNet_ImageNet(Project_conv_model):   # not nn.Module subclass, but still implement forward method calling the one of the model
+class ResNet_ImageNet(Project_DFD_model):   # not nn.Module subclass, but still implement forward method calling the one of the model
     """ 
     This is a wrap class for pretraiend Resnet use the getModel function to get the nn.module implementation.
     The model expects color images in RGB standard, of size 244x244
@@ -444,7 +448,7 @@ class Decoder_block(nn.Module):
         x = self.conv(x)
         return x
 
-class Unet4(Project_conv_model):
+class Unet4(Project_DFD_model):
     """
         U-net 4, 4 encoders and 4 decoders
     """
@@ -514,7 +518,7 @@ class Unet4(Project_conv_model):
     
         return rec, enc
 
-class Unet5(Project_conv_model):
+class Unet5(Project_DFD_model):
     """
         U-net 5, 5 encoders and 5 decoders
     """
@@ -604,7 +608,7 @@ class Unet5(Project_conv_model):
     
         return rec, enc
 
-class Unet6(Project_conv_model):
+class Unet6(Project_DFD_model):
     """
         U-net 6, 6 encoders and 6 decoders
     """
@@ -699,7 +703,7 @@ class Unet6(Project_conv_model):
 
 #                                       custom ResNet
 
-class ResNet_EDS(Project_conv_model): 
+class ResNet_EDS(Project_DFD_model): 
     """ ResNet multi head module with Encoder, Decoder and scorer (Classifier) """
     def __init__(self, n_classes = 10, use_upsample = False):               # expect image of shape 224x224
         super(ResNet_EDS,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = n_classes)
@@ -1146,7 +1150,7 @@ class LargeEncoder_block_residual(nn.Module):
         return x, p
 
 # -- Unet models 
-class Unet4_Scorer(Project_conv_model):
+class Unet4_Scorer(Project_DFD_model):
     """
         U-net 4 + Scorer, 4 encoders and 4 decoders
     """
@@ -1276,7 +1280,7 @@ class Unet4_Scorer(Project_conv_model):
         rec = self.decoder_out_fn(self.out(d4))  # check sigmoid vs tanh
         return logits, rec, encoding
 
-class Unet5_Scorer(Project_conv_model):
+class Unet5_Scorer(Project_DFD_model):
     """
         U-net 5 + Scorer, 5 encoders and 5 decoders
     """
@@ -1415,7 +1419,7 @@ class Unet5_Scorer(Project_conv_model):
         rec = self.decoder_out_fn(self.out(d5))  # check sigmoid vs tanh
         return logits, rec, encoding
 
-class Unet6_Scorer(Project_conv_model):
+class Unet6_Scorer(Project_DFD_model):
     """
         U-net 6 + Scorer, 6 encoders and 6 decoders.
         This version include an additional layer for the scorer
@@ -1554,7 +1558,7 @@ class Unet6_Scorer(Project_conv_model):
         rec = self.decoder_out_fn(self.out(d6))  # check sigmoid vs tanh
         return logits, rec, encoding
 
-class Unet6L_Scorer(Project_conv_model):
+class Unet6L_Scorer(Project_DFD_model):
     """
         U-net 6 + Scorer, 6 encoders and 6 decoders.
         This version include an additional layer for the scorer and LargeConv_block instead of Conv_blocks
@@ -1696,7 +1700,7 @@ class Unet6L_Scorer(Project_conv_model):
         rec = self.decoder_out_fn(self.out(d6))  # check sigmoid vs tanh
         return logits, rec, encoding
 
-class Unet4_ResidualScorer(Project_conv_model):
+class Unet4_ResidualScorer(Project_DFD_model):
     """
         U-net 4 with Resiudal Encoder + Scorer, 5 encoders and 5 decoders
     """
@@ -1823,7 +1827,7 @@ class Unet4_ResidualScorer(Project_conv_model):
         rec = self.decoder_out_fn(self.out(d4))  # check sigmoid vs tanh
         return logits, rec, encoding
 
-class Unet5_ResidualScorer(Project_conv_model):
+class Unet5_ResidualScorer(Project_DFD_model):
     """
         U-net 5 with Resiudal Encoder + Scorer, 5 encoders (residual) and 5 decoders
     """
@@ -1961,7 +1965,7 @@ class Unet5_ResidualScorer(Project_conv_model):
         rec = self.decoder_out_fn(self.out(d5))  # check sigmoid vs tanh
         return logits, rec, encoding
     
-class Unet6_ResidualScorer(Project_conv_model):
+class Unet6_ResidualScorer(Project_DFD_model):
     """
         U-net 6 + Scorer, 6 encoders (residual) and 6 decoders.
         This version include an additional layer for the scorer
@@ -2100,7 +2104,7 @@ class Unet6_ResidualScorer(Project_conv_model):
         rec = self.decoder_out_fn(self.out(d6))  # check sigmoid vs tanh
         return logits, rec, encoding
 
-class Unet6L_ResidualScorer(Project_conv_model):
+class Unet6L_ResidualScorer(Project_DFD_model):
     """
         U-net 6 + Scorer, 6 encoders (residual) and 6 decoders.
         This version include an additional layer for the scorer and LargeConv_block instead of Conv_blocks
@@ -2242,7 +2246,7 @@ class Unet6L_ResidualScorer(Project_conv_model):
 
 
 #                                       custom Unet + Confidence
-class Unet4_Scorer_Confidence(Project_conv_model):
+class Unet4_Scorer_Confidence(Project_DFD_model):
     """
         U-net 4 + Scorer, 4 encoders and 4 decoders + cponfidence estimantion.
         Confidence reflects the model's abiliy to produce a correct prediction for any given input
@@ -2374,7 +2378,7 @@ class Unet4_Scorer_Confidence(Project_conv_model):
         rec = self.decoder_out_fn(self.out(d4))  # check sigmoid vs tanh
         return logits, rec, encoding, confidence
 
-class Unet5_Scorer_Confidence(Project_conv_model):
+class Unet5_Scorer_Confidence(Project_DFD_model):
     """
         U-net 5 + Scorer + Confidence, 5 encoders and 5 decoders
     """
@@ -2515,9 +2519,9 @@ class Unet5_Scorer_Confidence(Project_conv_model):
         return logits, rec, encoding, confidence
 
 
-#                                       custom abnormality module
+#                                       custom abnormality modules
 
-# 2nd models superclass
+# 2nd models superclass for OOD detection
 class Project_abnorm_model(nn.Module): 
     def __init__(self):
         super(Project_abnorm_model, self).__init__()
@@ -3052,6 +3056,188 @@ class Abnormality_module_Encoder_v4(Project_abnorm_model):
 #_____________________________________Vision Transformer (ViT)_____________________________________        
 
 
+# general transformer model settings:
+
+PATCH_SIZE = 8
+# EMB_SIZE  = 128  # adjust based on patch dimension
+# EMB_SIZE = (PATCH_DIM**2)*2
+EMB_DIM = 32 
+
+
+
+class FCPatchEmbedding(nn.Module):
+    def __init__(self, in_channels = INPUT_CHANNELS, patch_size = PATCH_SIZE, emb_size = EMB_DIM):
+        """ FC linear projection
+        
+        
+        intended for squared patches of size in_channels x patch_size x patch_size
+        
+        """
+        super().__init__()
+        self.in_channels    = in_channels
+        self.patch_size     = patch_size
+        self.emb_size       = emb_size
+        self.projection     = nn.Sequential(
+            # break-down the image in s1 x s2 patches and flat them
+            Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1=self.patch_size, p2=self.patch_size),
+            nn.Linear(self.patch_size * self.patch_size * self.in_channels, self.emb_size)
+        )
+
+    def forward(self, x: T.Tensor) -> T.Tensor:
+        x = self.projection(x)
+        return x
+
+class Attention(nn.Module):
+    def __init__(self, dim, n_heads, dropout_percentage):
+        super(Attention, self).__init__()
+        self.dim                = dim
+        self.n_heads            = n_heads
+        self.dropout_percentage = dropout_percentage
+        self.multi_head         = T.nn.MultiheadAttention(
+            embed_dim   =   self.dim,
+            num_heads   =   self.n_heads,
+            dropout     =   self.dropout_percentage,
+            batch_first =   True)     # ??
+        self.q                  = T.nn.Linear(self.dim, self.dim)
+        self.k                  = T.nn.Linear(self.dim, self.dim)
+        self.v                  = T.nn.Linear(self.dim, self.dim)
+        
+    def forward(self, x):
+        q = self.q(x)
+        k = self.k(x)
+        v = self.v(x)
+        
+        out, _ = self.multi_head(q,k,v)
+        return out
+        
+class PreNorm(nn.Module):
+    """ a simple wrapper class that applies Layer normalization before forwarding a specified function fn """     
+    
+    def __init__(self, dim, fn):
+        super(PreNorm,self).__init__()
+        self.norm   = nn.LayerNorm(dim)
+        self.fn     = fn
+    
+    def forward(self,x, **kwargs):
+        return self.fn(self.norm(x), **kwargs)  
+
+class FeedForward(nn.Sequential):
+    def __init__(self, dim, hidden_dim, dropout_percentage = 0.0):
+        super(FeedForward, self).__init__(
+            nn.Linear(dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout_percentage),
+            nn.Linear(hidden_dim, dim),
+            nn.Dropout(dropout_percentage)     
+        )
+
+class ResidualBlock(nn.Module):
+    def __init__(self, fn):
+        super().__init__()
+        self.fn = fn
+    
+    def forwad(self, x, **kwargs):
+        res = x
+        x = self.fn(x, **kwargs)
+        x += res
+        return x 
+
+# TODO test inheriting Project_conv_model class
+class ViT_base(nn.Module):
+    
+    def __init__(self, n_channels = INPUT_CHANNELS, img_width = INPUT_WIDTH, img_height = INPUT_HEIGHT, 
+                 patch_size = PATCH_SIZE, emb_dim = EMB_DIM, n_layers = 4, n_classes = 10,
+                 dropout = 0.1, n_heads = 2):
+        super(ViT_base, self).__init__()
+        self.n_channels = n_channels
+        self.width      = img_width
+        self.height     = img_height
+        self.img_size   = img_height
+        self.patch_size = patch_size
+        self.emb_dim    = emb_dim
+        self.n_layers   = n_layers 
+        self.n_classes  = n_classes
+        self.dropout    = dropout
+        self.n_heads    = n_heads
+        
+        # compute the total number of patches for each image and the define the CLS token
+        self.n_patches = (self.img_size//self.patch_size)**2
+        self.cls_token = nn.Parameter(T.rand(1,1,self.emb_dim))
+        
+        # Embeddings
+        self.patch_embedding    = FCPatchEmbedding(in_channels= self.n_channels, patch_size= self.patch_size, emb_size= self.emb_dim)
+        self.pos_embedding      = nn.Parameter(T.rand(1, self.n_patches +1, self.emb_dim))                                             # +1 for [CLS] token
+        
+        # Transformer Encoder
+        self.layers = nn.ModuleList([])
+        for _ in range(self.n_layers):
+            transformer_block = nn.Sequential(
+                ResidualBlock(PreNorm(self.emb_dim, Attention(dim = self.emb_dim, n_heads= self.n_heads, dropout_percentage= self.dropout))),
+                ResidualBlock(PreNorm(self.emb_dim, FeedForward(dim = self.emb_dim, hidden_dim= self.emb_dim, dropout_percentage= self.dropout)))
+            )
+            self.layers.append(transformer_block)
+            
+        # Classification Head
+        self.head = nn.Sequential(nn.LayerNorm(self.emb_dim), nn.Linear(self.emb_dim, self.n_classes))
+        
+        self._init_weights_normal()
+
+    def _init_weights_normal(self):
+        print(f"Weights initialization using Gaussian distribution")
+        # Initialize the weights with Gaussian distribution
+        for param in self.parameters():
+            if len(param.shape) > 1:
+                T.nn.init.normal_(param, mean=0, std=0.01) 
+    
+    
+    def getSummary(self, input_shape = None, verbose = True):  #shape: color,width,height
+        """
+            input_shape -> tuple with simulated dimension used for the model summary
+            expected input of this type -> color,width,height
+        """
+        
+        
+        if input_shape is None:
+            input_shape = (self.n_channels, self.height, self.width)
+            
+        try:
+            model_stats = summary(self, input_shape, verbose = int(verbose))
+            return str(model_stats)
+        except Exception as e:
+            # print(e)
+            summ = ""
+            n_params = 0
+            for k,v in self.getLayers().items():
+                summ += "{:<50} -> {:<50}".format(k,str(tuple(v.shape))) + "\n"
+                n_params += T.numel(v)
+            summ += "Total number of parameters: {}\n".format(n_params)
+            if verbose: print(summ)
+            return summ
+    
+    def getLayers(self):
+        return dict(self.named_parameters())
+    
+    def forward(self, x):
+        # patch embedding 
+        x = self.patch_embedding(x)
+        # get shape data
+        b, n, _ = x.shape
+        
+        # include the CLS token to inputs, repeating for the number of batches
+        cls_token = repeat(self.cls_token, '1 1 d -> b 1 d', b = b)
+        x = T.cat((cls_token, x), dim = 1)
+        x += self.pos_embedding[:, :(n+1)]   # x += self.pos_embedding ? 
+        
+        # Forward thorugh Transformer layers
+        for i in range(self.n_layers):
+            x = self.layers[i](x)
+           
+        # classification head forward only for the cls token
+        logits = self.head(x[:, 0, :])
+        
+        return logits
+
+
 #_____________________________________Other models_________________________________________________ 
 
 class FC_classifier(nn.Module):
@@ -3241,6 +3427,8 @@ if __name__ == "__main__":
     device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
     input_resnet_example = T.rand(size=(INPUT_CHANNELS,INPUT_HEIGHT,INPUT_WIDTH))
     
+    # deepfake detection
+    
     def test_ResNet():
         resnet = ResNet()
         resnet.to(device)
@@ -3334,7 +3522,31 @@ if __name__ == "__main__":
         print(enc.shape)
         print(conf.shape)
         # input("press enter to exit ")
+    
+    def test_VIT():
         
+        # define test input
+        x = T.rand((32, 3, INPUT_HEIGHT, INPUT_WIDTH)).to(device)
+        
+        tests = [0, 1]
+        
+        # test patch embedding
+        if tests[0]:
+            emb = FCPatchEmbedding()
+            emb.to(device)
+            print("x : ",  x.shape)
+            x_prime = emb.forward(x)
+            print("x':", x_prime.shape)
+        
+        if tests[1]:
+            vit = ViT_base(n_classes=2)
+            vit.getSummary()
+            # logits = 
+        
+            input("press enter to exit ")
+    
+    # OOD detection
+    
     def test_abnorm_basic():
         from    bin_classifier                  import DFD_BinClassifier_v4
         classifier = DFD_BinClassifier_v4(scenario="content", model_type="Unet4_Scorer")
@@ -3392,8 +3604,11 @@ if __name__ == "__main__":
         abnorm_module.forward(probs_softmax=softmax_prob, residual=residual, encoding=encoding)
         # input("press enter to exit ")
     
+
+        
     # test_UnetScorerConfidence()
     # test_UnetScorer()
+    test_VIT()
     
     #                           [End test section] 
     
