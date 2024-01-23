@@ -1901,7 +1901,7 @@ class DFD_BinClassifier_v5(BinaryClassifier):
         self.weights_labels = self.compute_class_weights()
         
         # self.bce     = F.binary_cross_entropy_with_logits
-        self.bce        = T.nn.BCELoss(weight = T.tensor(self.weights_labels)).cuda()   # to apply after sigmodid 
+        self.bce        = T.nn.BCELoss(weight = T.tensor(self.weights_labels)).cuda()   # to apply after sigmoid 
         
         # learning rate scheduler
         if self.early_stopping_trigger == "loss":
@@ -2145,9 +2145,8 @@ if __name__ == "__main__":
     
     scenario_prog       = 1
     data_scenario       = None
-    scenario_setting    = None
     
-    if scenario_prog == 1: 
+    if scenario_prog == 0: 
         data_scenario = "content"
     elif scenario_prog == 1:
         data_scenario = "group"

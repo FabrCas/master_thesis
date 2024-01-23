@@ -3059,9 +3059,9 @@ class Abnormality_module_Encoder_v4(Project_abnorm_model):
 # general transformer model settings:
 
 PATCH_SIZE = 8
-# EMB_SIZE  = 128  # adjust based on patch dimension
-# EMB_SIZE = (PATCH_DIM**2)*2
-EMB_DIM = 32 
+EMB_DIM  = 128  # adjust based on patch dimension
+# EMB_DIM = (PATCH_DIM**2)*2
+# EMB_DIM = 32 
 
 
 
@@ -3136,7 +3136,7 @@ class ResidualBlock(nn.Module):
         super().__init__()
         self.fn = fn
     
-    def forwad(self, x, **kwargs):
+    def forward(self, x, **kwargs):
         res = x
         x = self.fn(x, **kwargs)
         x += res
@@ -3150,15 +3150,16 @@ class ViT_base(nn.Module):
                  dropout = 0.1, n_heads = 2):
         super(ViT_base, self).__init__()
         self.n_channels = n_channels
-        self.width      = img_width
-        self.height     = img_height
-        self.img_size   = img_height
-        self.patch_size = patch_size
-        self.emb_dim    = emb_dim
-        self.n_layers   = n_layers 
-        self.n_classes  = n_classes
-        self.dropout    = dropout
-        self.n_heads    = n_heads
+        self.width          = img_width
+        self.height         = img_height
+        self.img_size       = img_height   # supposing squred image take arbitrarily width or height
+        self.input_shape    = (self.n_channels, self.height, self.width)
+        self.patch_size     = patch_size
+        self.emb_dim        = emb_dim
+        self.n_layers       = n_layers 
+        self.n_classes      = n_classes
+        self.dropout        = dropout
+        self.n_heads        = n_heads
         
         # compute the total number of patches for each image and the define the CLS token
         self.n_patches = (self.img_size//self.patch_size)**2
@@ -3236,6 +3237,54 @@ class ViT_base(nn.Module):
         logits = self.head(x[:, 0, :])
         
         return logits
+
+
+# this is another implementation 
+
+class PatchEmbedding(nn.Module):
+    def __init__(self, img_size = INPUT_WIDTH, patch_size= PATCH_SIZE, in_channels= INPUT_CHANNELS, emb_size=768):
+        super(PatchEmbedding, self).__init__()
+        self.patch_embed = nn.Conv2d(in_channels, emb_size, kernel_size=patch_size, stride=patch_size)
+
+        self.img_size = img_size
+        
+    def forward(self, x):
+        x = self.patch_embed(x)
+        x = x.flatten(2).transpose(1, 2)
+
+        return x
+
+class ViT(nn.Module):
+    def __init__(self, img_size = INPUT_WIDTH, patch_size= PATCH_SIZE, in_channels= INPUT_CHANNELS, emb_size=768, num_heads=6, num_layers=6, n_classes=10):
+        super(ViT, self).__init__()
+        self.patch_embedding = PatchEmbedding(img_size, patch_size, in_channels, emb_size)
+        self.num_patches = (img_size // patch_size) ** 2
+        self.pos_embedding = nn.Parameter(T.randn(1, self.num_patches + 1, emb_size))  # +1 for [CLS] token
+        self.transformer = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(
+                d_model=emb_size,
+                nhead=num_heads,
+                dim_feedforward=4 * emb_size,
+                batch_first= True
+            ),
+            num_layers=num_layers,
+        )
+        self.head = nn.Linear(emb_size, n_classes)
+        self.cls_token = nn.Parameter(T.randn(1, 1, emb_size))
+
+    def forward(self, x):
+        x = self.patch_embedding(x)
+        cls_token = self.cls_token.expand(x.size(0), -1, -1)  # Expand cls_token to match batch size
+        x = T.cat((cls_token, x), dim=1)
+        
+        x = x + self.pos_embedding[:, :x.size(1)]  # Add positional encoding
+        x = self.transformer(x)
+        # x = x.mean(dim=1)  # Global average pooling
+        # x = self.fc(x)
+        logits = self.head(x[:, 0, :])
+
+        return logits
+
 
 
 #_____________________________________Other models_________________________________________________ 
@@ -3539,8 +3588,9 @@ if __name__ == "__main__":
             print("x':", x_prime.shape)
         
         if tests[1]:
-            vit = ViT_base(n_classes=2)
-            vit.getSummary()
+            # vit = ViT_base(n_classes=2)
+            vit = ViT(n_classes=2)
+            # vit.getSummary()
             # logits = 
         
             input("press enter to exit ")
