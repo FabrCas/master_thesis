@@ -7,7 +7,7 @@ import  math
 import  torch.nn                        as nn
 from    torchsummary                    import summary
 from    torchvision                     import models
-from    torchvision.models              import ResNet50_Weights
+from    torchvision.models              import ResNet50_Weights, ViT_B_16_Weights
 from    utilities                       import print_dict, print_list, expand_encoding, convTranspose2d_shapes, get_inputConfig
 from    einops.layers.torch             import Rearrange
 from    einops                          import repeat
@@ -57,7 +57,7 @@ class Project_DFD_model(nn.Module):
             summ = ""
             n_params = 0
             for k,v in self.getLayers().items():
-                summ += "{:<30} -> {:<30}".format(k,str(tuple(v.shape))) + "\n"
+                summ += "{:<50} -> {:<50}".format(k,str(tuple(v.shape))) + "\n"
                 n_params += T.numel(v)
             summ += "Total number of parameters: {}\n".format(n_params)
             if verbose: print(summ)
@@ -3058,8 +3058,8 @@ class Abnormality_module_Encoder_v4(Project_abnorm_model):
 
 # general transformer model settings:
 
-PATCH_SIZE = 8
-EMB_DIM  = 128  # adjust based on patch dimension
+PATCH_SIZE = 16
+EMB_DIM    = 768  # 128 adjust based on patch dimension
 # EMB_DIM = (PATCH_DIM**2)*2
 # EMB_DIM = 32 
 
@@ -3245,21 +3245,27 @@ class PatchEmbedding(nn.Module):
     def __init__(self, img_size = INPUT_WIDTH, patch_size= PATCH_SIZE, in_channels= INPUT_CHANNELS, emb_size=768):
         super(PatchEmbedding, self).__init__()
         self.patch_embed = nn.Conv2d(in_channels, emb_size, kernel_size=patch_size, stride=patch_size)
-
         self.img_size = img_size
         
     def forward(self, x):
+        # print(x.shape)
         x = self.patch_embed(x)
-        x = x.flatten(2).transpose(1, 2)
-
+        # print(x.shape)
+        x = x.flatten(2).transpose(1, 2)   # transpose change the dimension between encoding and sequence of patches
+        # print(x.shape)
         return x
 
-class ViT(nn.Module):
-    def __init__(self, img_size = INPUT_WIDTH, patch_size= PATCH_SIZE, in_channels= INPUT_CHANNELS, emb_size=768, num_heads=6, num_layers=6, n_classes=10):
-        super(ViT, self).__init__()
+class ViT_base_2(Project_DFD_model):
+    def __init__(self, img_size = INPUT_WIDTH, patch_size= PATCH_SIZE, in_channels= INPUT_CHANNELS, emb_size=768, num_heads=12, num_layers=12, n_classes=10):
+        super(ViT_base_2, self).__init__(c = in_channels,h = img_size,w = img_size, n_classes = n_classes)
+        
+        # 
         self.patch_embedding = PatchEmbedding(img_size, patch_size, in_channels, emb_size)
         self.num_patches = (img_size // patch_size) ** 2
-        self.pos_embedding = nn.Parameter(T.randn(1, self.num_patches + 1, emb_size))  # +1 for [CLS] token
+        # self.pos_embedding = nn.Parameter(T.randn(1, self.num_patches + 1, emb_size))  # +1 for [CLS] token
+        
+        
+        
         self.transformer = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(
                 d_model=emb_size,
@@ -3270,21 +3276,82 @@ class ViT(nn.Module):
             num_layers=num_layers,
         )
         self.head = nn.Linear(emb_size, n_classes)
-        self.cls_token = nn.Parameter(T.randn(1, 1, emb_size))
+        # self.cls_token = nn.Parameter(T.randn(1, 1, emb_size))
+        
+        self._init_weights_normal()
+        
+        self.pos_embedding = nn.Parameter(self._get_positional_encoding(emb_size, self.num_patches))
+
+
+    def _get_positional_encoding(self, emb_size, num_patches):
+        position = T.arange(0, num_patches).unsqueeze(1).float()
+        div_term = T.exp(T.arange(0, emb_size, 2).float() * -(math.log(10000.0) / emb_size))
+        pos_encoding = T.zeros(1, num_patches, emb_size)
+        pos_encoding[:, :, 0::2] = T.sin(position * div_term)
+        pos_encoding[:, :, 1::2] = T.cos(position * div_term)
+        return pos_encoding
+
 
     def forward(self, x):
         x = self.patch_embedding(x)
-        cls_token = self.cls_token.expand(x.size(0), -1, -1)  # Expand cls_token to match batch size
-        x = T.cat((cls_token, x), dim=1)
+        # cls_token = self.cls_token.expand(x.size(0), -1, -1)  # Expand cls_token to match batch size
+        # x = T.cat((cls_token, x), dim=1)
         
         x = x + self.pos_embedding[:, :x.size(1)]  # Add positional encoding
         x = self.transformer(x)
-        # x = x.mean(dim=1)  # Global average pooling
+        x = x.mean(dim=1)  # Global average pooling
         # x = self.fc(x)
-        logits = self.head(x[:, 0, :])
+        # logits = self.head(x[:, 0, :])
+        logits = self.head(x)
 
         return logits
 
+class ViT_b16_ImageNet(Project_DFD_model):   # not nn.Module subclass, but still implement forward method calling the one of the model
+    """ 
+    This is a wrap class for pretraiend Vision Transformer b16 use the getModel function to get the nn.module implementation.
+    The model expects color images in RGB standard, of size 244x244
+    """
+    
+    
+    def __init__(self, n_classes = 10):
+        super(ViT_b16_ImageNet,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = n_classes)
+        print("Initializing {} ...".format(self.__class__.__name__))
+
+        # self.weight_name =  ResNet50_Weights.IMAGENET1K_V2  # weights with accuracy 80.858% on ImageNet 
+        self.weight_name = ViT_B_16_Weights.IMAGENET1K_V1
+        self._create_net()
+        
+        
+    def _create_net(self):
+        # model = models.resnet50(weights= self.weight_name)
+        self.model = models.vit_b_16(weights = self.weight_name, progress = True)
+        
+        # pre-process to adapt image to the pre-trained model
+        self.pre_processing =  ViT_B_16_Weights.DEFAULT.transforms(antialias = True)
+            
+        # edit fully connected layer for the output
+        in_features = self.model.heads.head.in_features
+        self.model.heads.head = nn.Linear(in_features, self.n_classes)
+        
+        # turn on the fine-tuning
+        self.unfreeze()
+        
+    def getModel(self):
+        return self.model
+    
+    def freeze(self):
+        for name, param in self.model.named_parameters():
+            param.requires_grad = False
+            
+    def unfreeze(self):
+        for name, param in self.model.named_parameters():
+            param.requires_grad = True
+    
+    def forward(self, x):
+        x = self.pre_processing(x)
+        out = self.model(x)
+        return out
+  
 
 
 #_____________________________________Other models_________________________________________________ 
@@ -3468,13 +3535,12 @@ class TestAbnormModel(Project_abnorm_model):
         
         return x
 
-
 if __name__ == "__main__":
     #                           [Start test section] 
     
     # setUp test
     device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
-    input_resnet_example = T.rand(size=(INPUT_CHANNELS,INPUT_HEIGHT,INPUT_WIDTH))
+    input_example = T.rand(size=(INPUT_CHANNELS,INPUT_HEIGHT,INPUT_WIDTH))
     
     # deepfake detection
     
@@ -3484,19 +3550,19 @@ if __name__ == "__main__":
         print(resnet.isCuda())
         
        
-        batch_example = input_resnet_example.unsqueeze(0)
+        batch_example = input_example.unsqueeze(0)
         # print(batch_example.shape)
-        resnet.getSummary(input_shape= input_resnet_example.shape)
+        resnet.getSummary(input_shape= input_example.shape)
         
     def test_ResNet50ImageNet():
         resnet = ResNet_ImageNet()
         resnet.to(device)
-        resnet.getSummary(input_shape= input_resnet_example.shape)
+        resnet.getSummary(input_shape= input_example.shape)
         
     def test_simpleClassifier():
         classifier = FC_classifier(n_channel= 3, width = 256, height= 256)
         classifier.to(device)
-        classifier.getSummary(input_shape= input_resnet_example.shape)
+        classifier.getSummary(input_shape= input_example.shape)
         
     def test_ResNet_Encoder_Decoder():
         
@@ -3589,8 +3655,11 @@ if __name__ == "__main__":
         
         if tests[1]:
             # vit = ViT_base(n_classes=2)
-            vit = ViT(n_classes=2)
+            # vit = ViT(n_classes=2)
+            vit = ViT_b16_ImageNet().to(device=device)
             # vit.getSummary()
+            out = vit.forward(x)
+            print(out.shape)
             # logits = 
         
             input("press enter to exit ")

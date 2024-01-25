@@ -15,6 +15,8 @@ The dataset can be downloaded at the following [link](https://drive.google.com/f
 [paper](https://arxiv.org/abs/1512.03385v1)
 - **U-net**: Convolutional Networks for Biomedical Image Segmentation.
 [paper](https://arxiv.org/abs/1505.04597)
+- **ViT (Vision Transformer): An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale
+[paper](https://arxiv.org/abs/2010.11929)
 
 ## OOD resources
 

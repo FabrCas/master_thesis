@@ -20,7 +20,7 @@ from    torch.utils.data                    import default_collate
 from    utilities                           import plot_loss, plot_valid, saveModel, metrics_binClass, loadModel, test_num_workers, sampleValidSet, \
                                             duration, check_folder, cutmix_image, showImage, image2int, ExpLogger
 from    dataset                             import getScenarioSetting, CDDB_binary, CDDB_binary_Partial
-from    models                              import ViT_base, ViT
+from    models                              import ViT_base, ViT_base_2, ViT_b16_ImageNet
 from    bin_classifier                      import BinaryClassifier
 
 
@@ -35,7 +35,7 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
         
 
     """
-    def __init__(self, scenario, useGPU = True, batch_size = 64, model_type = "ViT_base"):
+    def __init__(self, scenario, useGPU = True, batch_size = 32, model_type = "ViT_base"):
         """ init classifier
 
         Args:
@@ -51,6 +51,7 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
             batch_size (int, optional): batch size used by dataloaders, Usually 32 or 64 (for lighter models). Defaults is 32.
             model_type (str, optional): choose the Unet architecture between :
                 - "ViT_base"
+                - "ViT_b16_pretrained"   (imagenet)
             Defaults is "ViT_base". 
         """
         super(DFD_BinViTClassifier_v6, self).__init__(useGPU = useGPU, batch_size = batch_size, model_type = model_type)
@@ -65,10 +66,13 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
                 # self.model = ViT_base(n_classes = 2, n_layers = 4, n_heads = 2)
                 
                 # self.model = ViT_base(n_classes = 2, n_layers = 10, n_heads = 4)
-                self.model = ViT(n_classes=2)
+                self.model = ViT_base_2(n_classes=2)
             # TODO other dimensionality here
             else:
                 raise ValueError("specify the dimension of the ViT_base model")
+            
+        elif "vit_b16_pretrained" in model_type.lower().strip():
+            self.model = ViT_b16_ImageNet(n_classes=2)
         else:
             raise ValueError("The model type is not a Unet model")
         
@@ -82,12 +86,15 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
         # bce defined in the training since is necessary to compute the labels weights 
 
         # learning hyperparameters (default)
+        
+        self.learning_coeff = 1
+        
         self.lr                     = 1e-3     # 1e-4
-        self.n_epochs               = 70 * 2
-        self.start_early_stopping   = int(self.n_epochs/2)  # epoch to start early stopping
-        self.weight_decay           = 0.001                 # L2 regularization term 
-        self.patience               = 5 * 2                 # early stopping patience
-        self.early_stopping_trigger = "loss"                 # values "acc" or "loss"
+        self.n_epochs               = 50 * self.learning_coeff
+        self.start_early_stopping   = int(self.n_epochs/2)          # epoch to start early stopping
+        self.weight_decay           = 0.001                         # L2 regularization term 
+        self.patience               = 5 * self.learning_coeff       # early stopping patience
+        self.early_stopping_trigger = "loss"                        # values "acc" or "loss"
         
         # loss definition + interpolation values for the new loss
         self.loss_name              = "weighted bce"
@@ -544,7 +551,8 @@ if __name__ == "__main__":
     
     
     
-    train_v6_scenario(model_type="ViT_base_xs", add_name="112p")
+    # train_v6_scenario(model_type="ViT_base_xs", add_name="112p")
+    train_v6_scenario(model_type="vit_b16_pretrained", add_name="112p")   # even though the Imagenet pretrained version transform the image from 112p to 224p (so using directly 224p images has no computationl effort due to later upscaling)
     
     #                           [End test section] 
     """ 
