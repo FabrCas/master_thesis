@@ -126,11 +126,18 @@ class BinaryClassifier(object):
     
     @duration    
     def test(self, load_data = True):
+        """
+            Void function that computes the binary classification metrics
+
+            Params:
+            load_data (boolean): parameter used to specify if is required to load data or has been already done, Default is True
+            
+            Returns:
+            None 
+        """
         
         if load_data: 
             self._load_data()
-        
-        
         
         # define test dataloader
         test_dataloader = DataLoader(self.test_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= False, pin_memory= True)

@@ -671,8 +671,6 @@ def plot_ROC_curve(fpr, tpr, path_save = None, duration_timer = 2500):
     plt.show()
     # plt.clf()  # clear plot data
     
-    
-
 def plot_PR_curve(recalls, precisions, path_save = None, duration_timer = 2500):
    
     def close_event():
@@ -1085,6 +1083,8 @@ def pool2d_out_shape(input_shape, kernel_size, stride):
 
 # custom modules/functions
 class expand_encoding(T.nn.Module):
+    """ expand the encoding vector using the specified shape"""
+    
     def __init__(self, shape = (-1, 2048, 1, 1)):
         super(expand_encoding,self).__init__()
         self.shape = shape
@@ -1109,6 +1109,7 @@ class ExpLogger(object):
         self.delimiter_name = lambda x: "#"*self.delimiter_len +"{:^35}".format(x) + "#"*self.delimiter_len
         self.delimiter_line = "#"*(self.delimiter_len*2 + 35)
         self.train_lines    = []   # one line for each epoch
+        self.start_time     = time()
         self.open_logger()
         
     def write_hyper(self, hyper_dict, name_section = "Hyperparameters"):
@@ -1157,6 +1158,7 @@ class ExpLogger(object):
         self.train_lines.append(text)
     
     def log_mem(self, mem_summ):
+        # self.write_logger(self.delimiter_line)
         self.write_logger(self.delimiter_line)
         self.write_logger(self.delimiter_name("Memory usage"))
         self.write_logger(mem_summ)
@@ -1164,7 +1166,8 @@ class ExpLogger(object):
         self.flush()
     
     def end_log(self):
-        # self.write_logger(self.delimiter_line)  # close section training for each epoch
+        # end saving information about training duration
+        self.write_logger("\nTotal model training time: "+ self.get_TrainingTime())
         self.close_logger()
      
     def open_logger(self):
@@ -1178,6 +1181,25 @@ class ExpLogger(object):
     
     def flush(self):
         self.file.flush()
+    
+    def get_TrainingTime(self):
+        """
+            simple function that returns the time elapsed from the Logger instantiation 
+            and the ending of logging (training time), in format %h:%m:%s
+        """
+        
+        train_time = time() - self.start_time
+        
+        # compute hours, minuts and rest seconds
+        hours, rest_seconds = divmod(train_time, 3600)
+        minutes, seconds    = divmod(rest_seconds, 60)
+
+        # Format the result
+        formatted_time = "{:02}:{:02}:{:02}".format(int(hours), int(minutes), int(seconds))
+        
+        print(f"Logger: training time -> {formatted_time}")
+        
+        return formatted_time
         
     def close_logger(self):
         self.write_logger("\n\n\n\n*** Ended model training log ***")

@@ -1,0 +1,23 @@
+{
+    "accuracy": 0.49742489270386264,
+    "precision": 1.0,
+    "recall": 0.0,
+    "f1-score": 0.0,
+    "average_precision": [
+        0.5043683061018349
+    ],
+    "ROC_AUC": 0.5029317259792115,
+    "PR_AUC": 0.5250719944978243,
+    "hamming_loss": 0.5025751072961373,
+    "jaccard_score": 0.0,
+    "confusion_matrix": [
+        [
+            1.0,
+            0.0
+        ],
+        [
+            1.0,
+            0.0
+        ]
+    ]
+}

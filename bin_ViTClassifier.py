@@ -6,6 +6,7 @@ import  math
 import  torch                               as T
 import  numpy                               as np
 import  os              
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
 from    torch.nn                            import functional as F
 from    torch.optim                         import Adam, lr_scheduler
@@ -59,6 +60,7 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
         self.scenario = scenario
         self.augment_data_train = True
         self.use_cutmix         = True
+        self.n_classes          = 2
             
         # load model
         if "vit_base" in model_type.lower().strip():
@@ -66,13 +68,13 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
                 # self.model = ViT_base(n_classes = 2, n_layers = 4, n_heads = 2)
                 
                 # self.model = ViT_base(n_classes = 2, n_layers = 10, n_heads = 4)
-                self.model = ViT_base_2(n_classes=2)
+                self.model = ViT_base_2(n_classes= self.n_classes)
             # TODO other dimensionality here
             else:
                 raise ValueError("specify the dimension of the ViT_base model")
             
         elif "vit_b16_pretrained" in model_type.lower().strip():
-            self.model = ViT_b16_ImageNet(n_classes=2)
+            self.model = ViT_b16_ImageNet(n_classes= self.n_classes)
         else:
             raise ValueError("The model type is not a Unet model")
         
@@ -87,14 +89,13 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
 
         # learning hyperparameters (default)
         
-        self.learning_coeff = 1
-        
+        self.learning_coeff         = 0.5                                       # multiplier that increases the training time
         self.lr                     = 1e-3     # 1e-4
-        self.n_epochs               = 50 * self.learning_coeff
-        self.start_early_stopping   = int(self.n_epochs/2)          # epoch to start early stopping
-        self.weight_decay           = 0.001                         # L2 regularization term 
-        self.patience               = 5 * self.learning_coeff       # early stopping patience
-        self.early_stopping_trigger = "loss"                        # values "acc" or "loss"
+        self.n_epochs               = math.floor(50 * self.learning_coeff)
+        self.start_early_stopping   = math.floor(self.n_epochs/2)               # epoch to start early stopping
+        self.weight_decay           = 0.001                                     # L2 regularization term 
+        self.patience               = math.floor(5 * self.learning_coeff)       # early stopping patience
+        self.early_stopping_trigger = "loss"                                    # values "acc" or "loss"
         
         # loss definition + interpolation values for the new loss
         self.loss_name              = "weighted bce"
@@ -228,7 +229,7 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
                 
                 if self.early_stopping_trigger == "loss":
                     loss = self.bce(input=pred, target=y)   # logits bce version
-                    losses.append(loss.item())
+                    losses.append(loss.cpu().item())
                     
                 elif self.early_stopping_trigger == "acc":
                     # prepare predictions and targets
@@ -274,7 +275,8 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
         if self.use_cutmix:
             # intiialize CutMix (data augmentation/regularization) module and collate function
             
-            cutmix = v2.CutMix(num_classes=2)                   # change for non-binary case!
+            cutmix = v2.CutMix(num_classes = self.n_classes)
+            
             def collate_cutmix(batch):
                 """
                 this function apply the CutMix technique with a certain probability (half probability). the batch should be
@@ -287,7 +289,6 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
                     return default_collate(batch) 
             
             
-           
             train_dataloader = DataLoader(self.train_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True, collate_fn = collate_cutmix)
         else:
             train_dataloader = DataLoader(self.train_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
@@ -340,6 +341,8 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
         for epoch_idx in range(self.n_epochs):
             print(f"\n             [Epoch {epoch_idx+1}]             \n")
             
+            # if epoch_idx != 2: continue
+            
             # define cumulative loss for the current epoch and max/min loss
             loss_epoch = 0; max_loss_epoch = 0; min_loss_epoch = math.inf
             
@@ -349,12 +352,15 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
             # loop over steps
             for step_idx,(x,y) in tqdm(enumerate(train_dataloader), total= n_steps):
                 
+                continue
+                # if epoch_idx <= 1: continue
+                
                 # test steps loop for debug
                 if test_loop and step_idx+1 == 5: break
                 
                 # adjust labels if cutmix has been not applied (from indices to one-hot encoding)
                 if len(y.shape) == 1:
-                    y = T.nn.functional.one_hot(y, num_classes= 2)
+                    y = T.nn.functional.one_hot(y, num_classes = self.n_classes)
                 
                 # prepare samples/targets batches 
                 x = x.to(self.device)
@@ -373,12 +379,30 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
                 
                 # apply activation function to logits
                 pred = self.sigmoid(logits)
-                       
+                    
+                print(pred.shape, y.shape)
+                
+                # if step_idx == 23:
+                #     print(pred)
+                #     print(y)
+                
                 # compute classification loss
-                loss      = self.bce(input=pred, target=y)   # classic bce with "probabilities"           
+                try:
+                    loss      = self.bce(input=pred, target=y)   # classic bce with "probabilities"
+                except:
+                    loss        = T.tensor(0)
                 
+                print(loss)
                 
-                loss_value = loss.item()
+                try:
+                    loss_value = loss.cpu().item()
+                except:
+                    print(loss.shape, loss)
+                    print(logits.shape)
+                    print(pred.shape)
+                    print(y.shape)
+                    raise ValueError("error converting tensor to scaler with .item() function")
+                
                 if loss_value>max_loss_epoch    : max_loss_epoch = round(loss_value,4)
                 if loss_value<min_loss_epoch    : min_loss_epoch = round(loss_value,4)
                 
@@ -437,6 +461,7 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
             # create dictionary with info frome epoch: loss + valid, and log it
             epoch_data = {"epoch": last_epoch, "avg_loss": avg_loss, "max_loss": max_loss_epoch, \
                           "min_loss": min_loss_epoch, self.early_stopping_trigger + "_valid": criterion}
+            
             logger.log(epoch_data)
             
             # test epochs loop for debug   
@@ -479,7 +504,7 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
         # save model
         saveModel(self.model, path_model_save)
     
-        # terminate the logger
+        # terminate the log session
         logger.end_log()
 
     def test(self):
@@ -552,7 +577,9 @@ if __name__ == "__main__":
     
     
     # train_v6_scenario(model_type="ViT_base_xs", add_name="112p")
-    train_v6_scenario(model_type="vit_b16_pretrained", add_name="112p")   # even though the Imagenet pretrained version transform the image from 112p to 224p (so using directly 224p images has no computationl effort due to later upscaling)
+    # train_v6_scenario(model_type="ViT_B16_pretrained", add_name="112p")   # even though the Imagenet pretrained version transform the image from 112p to 224p (so using directly 224p images has no computationl effort due to later upscaling)
+    
+    test_v6_metrics("faces_ViT_B16_pretrained_112p_v6_25-01-2024",25,model_type="ViT_B16_pretrained")
     
     #                           [End test section] 
     """ 

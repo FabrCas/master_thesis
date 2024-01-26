@@ -3306,7 +3306,7 @@ class ViT_base_2(Project_DFD_model):
 
         return logits
 
-class ViT_b16_ImageNet(Project_DFD_model):   # not nn.Module subclass, but still implement forward method calling the one of the model
+class ViT_b16_ImageNet(Project_DFD_model):
     """ 
     This is a wrap class for pretraiend Vision Transformer b16 use the getModel function to get the nn.module implementation.
     The model expects color images in RGB standard, of size 244x244
@@ -3340,11 +3340,11 @@ class ViT_b16_ImageNet(Project_DFD_model):   # not nn.Module subclass, but still
         return self.model
     
     def freeze(self):
-        for name, param in self.model.named_parameters():
+        for _ , param in self.model.named_parameters():
             param.requires_grad = False
             
     def unfreeze(self):
-        for name, param in self.model.named_parameters():
+        for _ , param in self.model.named_parameters():
             param.requires_grad = True
     
     def forward(self, x):
