@@ -786,7 +786,7 @@ class Decoder_Unet(object):
 
 class CIFAR100_ViT_Classifier(object):
     """ simple classifier for the MNIST dataset on handwritten digits, implemented using pytorch """
-    def __init__(self, batch_size = 64, useGPU = True):
+    def __init__(self, batch_size = 32, useGPU = True):
         super(CIFAR100_ViT_Classifier, self).__init__()
         self.useGPU         = useGPU
         if self.useGPU: self.device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
@@ -850,6 +850,10 @@ class CIFAR100_ViT_Classifier(object):
             # init loss over epoch
             loss_epoch = 0
             
+            # save model at half epochs
+            if (epoch_idx+1) == self.epochs//2:
+                self.save()
+            
             for step_idx,(x,y) in tqdm(enumerate(train_dataloader), total= len(train_dataloader)):
                 
                 x = x.to(self.device)
@@ -873,12 +877,13 @@ class CIFAR100_ViT_Classifier(object):
             # compute average loss for the epoch
             avg_loss = loss_epoch/len(train_dataloader)
             print("Average loss: {}".format(avg_loss))
-            
-        self.test_accuracy()
-                    
+        
+    
         # save the model
         self.save()
-            
+        
+        self.test_accuracy()
+                    
                 
     def test_accuracy(self):
         """
@@ -925,8 +930,9 @@ class CIFAR100_ViT_Classifier(object):
             raise ValueError("The input shape is not compatiple, expected a batch or a single image")
         
         x = x.to(self.device)
+        
         with T.no_grad():
-            logits      = self.model.forward(x)
+            logits = self.model.forward(x)
             probs       = self.softmax(logits, dim=1)
             pred        = T.argmax(probs, dim=1)
         
@@ -986,11 +992,13 @@ if __name__ == "__main__":
         
         showImage(rec_img, name="reconstructed_"+ str(n_picture) + "_decoding_" + name_model, save_image = True)
     
-    # train_ResNetED_content()        
-
-    # showReconstructionResnetED(name_model="faces_resnet50ED_21-11-2023", epoch= 40, scenario = "content")
-    # showReconstructionUnet(name_model="faces_Unet4_21-11-2023", epoch= 40, scenario = "content")
+    def train_ViT_Cifar():
+        classifier = CIFAR100_ViT_Classifier()
+        # classifier.train()
+        classifier.load()
+        classifier.test_accuracy()
     
+    train_ViT_Cifar()
     #                           [End test section] 
     
     """ 

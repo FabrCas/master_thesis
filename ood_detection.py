@@ -51,7 +51,12 @@ class OOD_Classifier(object):
         
     
     #                                      data aux functions
-    def compute_class_weights(self, verbose = False, positive = "ood"):
+    def compute_positiveClassWeight(self, verbose = False, positive = "ood", multiplier = 1):
+        
+        # TODO look https://pytorch.org/docs/stable/generated/torch.nn.BCEWithLogitsLoss.html#torch.nn.BCEWithLogitsLoss
+        # to implement just pos weight computation 
+        
+        
         """ positive (str), if ood is used 1 to represent ood labels and 0 for id. The opposite behavior is obtained using "id" """
         
         print("\n\t\t[Computing class weights for the training set]\n")
@@ -93,15 +98,20 @@ class OOD_Classifier(object):
             freq = class_freq[class_]
             class_weights.append(round(total/freq,5))
 
+        # normalize class weights with values between 0 and 1
+        max_value = max(class_weights)
+        class_weights /= max_value
+        
+        # proportional increase over the weights
+        class_weights *= multiplier
+        
         print("Class_weights-> ", class_weights)
-        
-        
+                
         # turn back in loading modality sample + label
         self.dataset_train.set_only_labels(False)
         
         return class_weights
 
-        
     #                                       math/statistics aux functions
     
     # def weighted_binary_cross_entropy(output, target, weights=None):
@@ -1402,7 +1412,6 @@ class Confidence_Detector(OOD_Classifier):
             pred = np.where(condition= confidence < threshold, x=1, y=0)  # if true set x otherwise set y
         return pred
     
-
 class Abnormality_module(OOD_Classifier):   # model to train necessary 
     """ Custom implementation of the abnormality module using ResNet, look https://arxiv.org/abs/1610.02136 chapter 4"
     
@@ -1927,7 +1936,7 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
         self.model.train()
         
         # compute the weights for the labels
-        self.weights_labels = self.compute_class_weights(verbose=True, positive="ood")
+        self.weights_labels = self.compute_positiveClassWeight(verbose=True, positive="ood")
         
         train_dl = DataLoader(self.dataset_train, batch_size= self.batch_size,  num_workers = 8,  shuffle= True,   pin_memory= False)
         valid_dl = DataLoader(self.dataset_valid, batch_size= self.batch_size,  num_workers = 8, shuffle = False,  pin_memory= False) 
@@ -1987,7 +1996,10 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
                 y = y[:,1]                           # take only label for the positive class (fake)
                 
                 # compute weights for the full batch
-                weights = T.tensor([self.weights_labels[elem] for elem in y ]).to(self.device)
+                # weights     = T.tensor([self.weights_labels[elem] for elem in y ]).to(self.device)   #TODO check this usage of the class weight, try pos_weight
+                
+                # compute weight for the positive class
+                pos_weight  = T.tensor([self.weights_labels[1]]).to(self.device)
 
                 # int2float and move data to GPU mem                
                 y = y.to(self.device).to(T.float32)               # binary int encoding for each sample
@@ -2036,7 +2048,7 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
                     # print(logit.shape)
                     # print(y.shape)
                 
-                    loss = self.bce(input=logit, target= y, pos_weight=weights)
+                    loss = self.bce(input=logit, target= y, pos_weight=pos_weight)
                     # print(loss)
     
                  

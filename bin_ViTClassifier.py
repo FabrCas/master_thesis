@@ -18,7 +18,7 @@ from    torch.utils.data                    import default_collate
 
 # Local imports
 
-from    utilities                           import plot_loss, plot_valid, saveModel, metrics_binClass, loadModel, test_num_workers, sampleValidSet, \
+from    utilities                           import plot_loss, plot_valid, saveModel, metrics_binClass, loadModel, sampleValidSet, \
                                             duration, check_folder, cutmix_image, showImage, image2int, ExpLogger
 from    dataset                             import getScenarioSetting, CDDB_binary, CDDB_binary_Partial
 from    models                              import ViT_base, ViT_base_2, ViT_b16_ImageNet
@@ -58,8 +58,8 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
         super(DFD_BinViTClassifier_v6, self).__init__(useGPU = useGPU, batch_size = batch_size, model_type = model_type)
         self.version = 6
         self.scenario = scenario
-        self.augment_data_train = True
-        self.use_cutmix         = True
+        self.augment_data_train = False
+        self.use_cutmix         = False     # problem when we are learning transformer over sequence of patches
         self.n_classes          = 2
             
         # load model
@@ -68,8 +68,9 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
                 # self.model = ViT_base(n_classes = 2, n_layers = 4, n_heads = 2)
                 
                 # self.model = ViT_base(n_classes = 2, n_layers = 10, n_heads = 4)
-                self.model = ViT_base_2(n_classes= self.n_classes)
-            # TODO other dimensionality here
+                self.model = ViT_base_2(n_classes= self.n_classes, n_layers= 10, n_heads=4)
+                
+            # TODO other specs for the network here: n layers, n heads, etc
             else:
                 raise ValueError("specify the dimension of the ViT_base model")
             
@@ -90,7 +91,7 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
         # learning hyperparameters (default)
         
         self.learning_coeff         = 0.5                                       # multiplier that increases the training time
-        self.lr                     = 1e-3     # 1e-4
+        self.lr                     = 1e-4     # 1e-3
         self.n_epochs               = math.floor(50 * self.learning_coeff)
         self.start_early_stopping   = math.floor(self.n_epochs/2)               # epoch to start early stopping
         self.weight_decay           = 0.001                                     # L2 regularization term 
@@ -111,10 +112,8 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
         
         # get train set
         print(f"\n\t\t[Loading CDDB binary partial ({self.scenario}) data]\n")
-        if self.use_cutmix:
-            self.train_dataset  = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False, augment= self.augment_data_train, label_vector= False)  # set label_vector = False for CutMix collate
-        else:
-             self.train_dataset  = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False, augment= self.augment_data_train, label_vector= True)
+
+        self.train_dataset  = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False, augment= self.augment_data_train, label_vector= True)
         
         # get valid and test sets
         test_dataset        = CDDB_binary_Partial(scenario = self.scenario, train = False, ood = False, augment= False)
@@ -153,7 +152,7 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
             n_channels = "empty"
         
         try:
-            emb_dim = str(self.model.emb_dim)
+            emb_dim = str(self.model.emb_size)
         except:
             emb_dim = "empty"
             
@@ -171,7 +170,6 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
             dropout_percentage= str(self.model.dropout)
         except:
             dropout_percentage = "empty"
-        
         
         try:
             weights_classes = self.weights_labels
@@ -225,14 +223,16 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
             
             with T.no_grad():
                 logits = self.model.forward(x) 
-                pred = self.sigmoid(logits)
+                # pred = self.sigmoid(logits)
                 
                 if self.early_stopping_trigger == "loss":
-                    loss = self.bce(input=pred, target=y)   # logits bce version
+                    # loss = self.bce(input=pred, target=y)   # pred bce version
+                    loss = self.bce(input=logits, target=y)   # logits bce version
                     losses.append(loss.cpu().item())
                     
                 elif self.early_stopping_trigger == "acc":
                     # prepare predictions and targets
+                    pred = self.sigmoid(logits)
                     y_pred  = T.argmax(pred, -1).cpu().numpy()  # both are list of int (indices)
                     y       = T.argmax(y, -1).cpu().numpy()
                     
@@ -271,27 +271,8 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
         
         # define train dataloader
         train_dataloader = None
-        
-        if self.use_cutmix:
-            # intiialize CutMix (data augmentation/regularization) module and collate function
-            
-            cutmix = v2.CutMix(num_classes = self.n_classes)
-            
-            def collate_cutmix(batch):
-                """
-                this function apply the CutMix technique with a certain probability (half probability). the batch should be
-                defined with idx labels, but cutmix returns a sequence of values (n classes) for each label based on the composition.
-                """
-                prob = 0.5
-                if random.random() < prob:
-                    return cutmix(*default_collate(batch))
-                else:
-                    return default_collate(batch) 
-            
-            
-            train_dataloader = DataLoader(self.train_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True, collate_fn = collate_cutmix)
-        else:
-            train_dataloader = DataLoader(self.train_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
+    
+        train_dataloader = DataLoader(self.train_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
         
         # define valid dataloader
         valid_dataloader = DataLoader(self.valid_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= False, pin_memory= True)
@@ -308,11 +289,11 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
         
         # define the loss function and class weights
         
-        # compute labels weights
+        # compute labels weights and cross entropy loss
         self.weights_labels = self.compute_class_weights()
         
-        # self.bce     = F.binary_cross_entropy_with_logits
-        self.bce        = T.nn.BCELoss(weight = T.tensor(self.weights_labels)).cuda()   # to apply after sigmodid 
+        self.bce          = T.nn.BCEWithLogitsLoss(weight=T.tensor(self.weights_labels)).to(device=self.device)
+        # self.bce        = T.nn.BCELoss(weight = T.tensor(self.weights_labels)).cuda()   # to apply after sigmodid 
         
         # learning rate scheduler
         if self.early_stopping_trigger == "loss":
@@ -352,15 +333,16 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
             # loop over steps
             for step_idx,(x,y) in tqdm(enumerate(train_dataloader), total= n_steps):
                 
-                continue
                 # if epoch_idx <= 1: continue
                 
                 # test steps loop for debug
                 if test_loop and step_idx+1 == 5: break
                 
                 # adjust labels if cutmix has been not applied (from indices to one-hot encoding)
-                if len(y.shape) == 1:
-                    y = T.nn.functional.one_hot(y, num_classes = self.n_classes)
+                # if len(y.shape) == 1 and self.use_cutmix:
+                #     y = T.nn.functional.one_hot(y, num_classes = self.n_classes)
+                
+                # showImage(x[0])
                 
                 # prepare samples/targets batches 
                 x = x.to(self.device)
@@ -378,9 +360,9 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
                 logits = self.model.forward(x) 
                 
                 # apply activation function to logits
-                pred = self.sigmoid(logits)
+                # pred = self.sigmoid(logits)
                     
-                print(pred.shape, y.shape)
+                # print(pred.shape, y.shape)
                 
                 # if step_idx == 23:
                 #     print(pred)
@@ -388,18 +370,19 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
                 
                 # compute classification loss
                 try:
-                    loss      = self.bce(input=pred, target=y)   # classic bce with "probabilities"
+                    loss      = self.bce(input=logits, target=y)   # bce from logits (no weights loaded)
+                    # loss      = self.bce(input=pred, target=y)   # classic bce with "probabilities"
                 except:
-                    loss        = T.tensor(0)
+                    # loss      = T.tensor(0)
+                    continue
                 
-                print(loss)
+                # print(loss)
                 
                 try:
                     loss_value = loss.cpu().item()
                 except:
                     print(loss.shape, loss)
                     print(logits.shape)
-                    print(pred.shape)
                     print(y.shape)
                     raise ValueError("error converting tensor to scaler with .item() function")
                 
@@ -529,6 +512,7 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
         # handle single image, increasing dimensions simulating a batch
         if len(x.shape) == 3:
             x = x.expand(1,-1,-1,-1)
+            
         elif len(x.shape) <= 2 or len(x.shape) >= 5:
             raise ValueError("The input shape is not compatiple, expected a batch or a single image")
         
@@ -579,7 +563,7 @@ if __name__ == "__main__":
     # train_v6_scenario(model_type="ViT_base_xs", add_name="112p")
     # train_v6_scenario(model_type="ViT_B16_pretrained", add_name="112p")   # even though the Imagenet pretrained version transform the image from 112p to 224p (so using directly 224p images has no computationl effort due to later upscaling)
     
-    test_v6_metrics("faces_ViT_B16_pretrained_112p_v6_25-01-2024",25,model_type="ViT_B16_pretrained")
+    train_v6_scenario(model_type="ViT_B16_pretrained")   #224
     
     #                           [End test section] 
     """ 

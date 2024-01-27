@@ -248,7 +248,7 @@ class BinaryClassifier(object):
     def zero_grad(self):
         self.optimizer.zero_grad()
     
-    def compute_class_weights(self, verbose = False):
+    def compute_class_weights(self, verbose = False, multiplier = 1):
 
         print("\n\t\t[Computing Real/Fake class weights]\n")
         
@@ -264,9 +264,7 @@ class BinaryClassifier(object):
     
         for y in tqdm(loader, total = len(loader)):
             
-            # print(y.shape)
-            # print(y.shape)
-            # l = y.item()
+
             try:                # encoding
                 y = y.detach().cpu().tolist()
                 
@@ -288,8 +286,15 @@ class BinaryClassifier(object):
             freq = class_freq[class_]
             class_weights.append(round(total/freq,5))
 
-        print("Class_weights-> ", class_weights)
         
+        # normalize class weights with values between 0 and 1
+        max_value = max(class_weights)
+        class_weights /= max_value
+        
+        # proportional increase over the weights
+        class_weights *= multiplier
+        
+        print("Class_weights-> ", class_weights)
         
         # turn back in loading modality sample + label
         self.train_dataset.set_only_labels(False)

@@ -3059,14 +3059,14 @@ class Abnormality_module_Encoder_v4(Project_abnorm_model):
 # general transformer model settings:
 
 PATCH_SIZE = 16
-EMB_DIM    = 768  # 128 adjust based on patch dimension
+EMB_SIZE    = 768  # 128 adjust based on patch dimension
 # EMB_DIM = (PATCH_DIM**2)*2
 # EMB_DIM = 32 
 
 
 
 class FCPatchEmbedding(nn.Module):
-    def __init__(self, in_channels = INPUT_CHANNELS, patch_size = PATCH_SIZE, emb_size = EMB_DIM):
+    def __init__(self, in_channels = INPUT_CHANNELS, patch_size = PATCH_SIZE, emb_size = EMB_SIZE):
         """ FC linear projection
         
         
@@ -3142,20 +3142,21 @@ class ResidualBlock(nn.Module):
         x += res
         return x 
 
-# TODO test inheriting Project_conv_model class
-class ViT_base(nn.Module):
+class ViT_base(Project_DFD_model):
     
     def __init__(self, n_channels = INPUT_CHANNELS, img_width = INPUT_WIDTH, img_height = INPUT_HEIGHT, 
-                 patch_size = PATCH_SIZE, emb_dim = EMB_DIM, n_layers = 4, n_classes = 10,
+                 patch_size = PATCH_SIZE, emb_size = EMB_SIZE, n_layers = 4, n_classes = 10,
                  dropout = 0.1, n_heads = 2):
-        super(ViT_base, self).__init__()
+        
+        super(ViT_base, self).__init__(c = n_channels,h = img_height,w = img_width, n_classes = n_classes)
+        
         self.n_channels = n_channels
         self.width          = img_width
         self.height         = img_height
         self.img_size       = img_height   # supposing squred image take arbitrarily width or height
         self.input_shape    = (self.n_channels, self.height, self.width)
         self.patch_size     = patch_size
-        self.emb_dim        = emb_dim
+        self.emb_size       = emb_size
         self.n_layers       = n_layers 
         self.n_classes      = n_classes
         self.dropout        = dropout
@@ -3182,42 +3183,8 @@ class ViT_base(nn.Module):
         self.head = nn.Sequential(nn.LayerNorm(self.emb_dim), nn.Linear(self.emb_dim, self.n_classes))
         
         self._init_weights_normal()
-
-    def _init_weights_normal(self):
-        print(f"Weights initialization using Gaussian distribution")
-        # Initialize the weights with Gaussian distribution
-        for param in self.parameters():
-            if len(param.shape) > 1:
-                T.nn.init.normal_(param, mean=0, std=0.01) 
     
-    
-    def getSummary(self, input_shape = None, verbose = True):  #shape: color,width,height
-        """
-            input_shape -> tuple with simulated dimension used for the model summary
-            expected input of this type -> color,width,height
-        """
         
-        
-        if input_shape is None:
-            input_shape = (self.n_channels, self.height, self.width)
-            
-        try:
-            model_stats = summary(self, input_shape, verbose = int(verbose))
-            return str(model_stats)
-        except Exception as e:
-            # print(e)
-            summ = ""
-            n_params = 0
-            for k,v in self.getLayers().items():
-                summ += "{:<50} -> {:<50}".format(k,str(tuple(v.shape))) + "\n"
-                n_params += T.numel(v)
-            summ += "Total number of parameters: {}\n".format(n_params)
-            if verbose: print(summ)
-            return summ
-    
-    def getLayers(self):
-        return dict(self.named_parameters())
-    
     def forward(self, x):
         # patch embedding 
         x = self.patch_embedding(x)
@@ -3241,9 +3208,9 @@ class ViT_base(nn.Module):
 
 # this is another implementation 
 
-class PatchEmbedding(nn.Module):
+class ConvPatchEmbedding(nn.Module):
     def __init__(self, img_size = INPUT_WIDTH, patch_size= PATCH_SIZE, in_channels= INPUT_CHANNELS, emb_size=768):
-        super(PatchEmbedding, self).__init__()
+        super(ConvPatchEmbedding, self).__init__()
         self.patch_embed = nn.Conv2d(in_channels, emb_size, kernel_size=patch_size, stride=patch_size)
         self.img_size = img_size
         
@@ -3256,11 +3223,15 @@ class PatchEmbedding(nn.Module):
         return x
 
 class ViT_base_2(Project_DFD_model):
-    def __init__(self, img_size = INPUT_WIDTH, patch_size= PATCH_SIZE, in_channels= INPUT_CHANNELS, emb_size=768, num_heads=12, num_layers=12, n_classes=10):
+    def __init__(self, img_size = INPUT_WIDTH, patch_size= PATCH_SIZE, in_channels= INPUT_CHANNELS, emb_size=768, n_heads=12, n_layers=12, n_classes=10):
         super(ViT_base_2, self).__init__(c = in_channels,h = img_size,w = img_size, n_classes = n_classes)
         
         # 
-        self.patch_embedding = PatchEmbedding(img_size, patch_size, in_channels, emb_size)
+        self.emb_size   = emb_size 
+        self.patch_size = patch_size
+        self.n_heads    = n_heads
+        self.n_layers   = n_layers
+        self.patch_embedding = ConvPatchEmbedding(img_size, patch_size, in_channels, emb_size)
         self.num_patches = (img_size // patch_size) ** 2
         # self.pos_embedding = nn.Parameter(T.randn(1, self.num_patches + 1, emb_size))  # +1 for [CLS] token
         
@@ -3269,11 +3240,11 @@ class ViT_base_2(Project_DFD_model):
         self.transformer = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(
                 d_model=emb_size,
-                nhead=num_heads,
+                nhead=n_heads,
                 dim_feedforward=4 * emb_size,
                 batch_first= True
             ),
-            num_layers=num_layers,
+            num_layers=n_layers,
         )
         self.head = nn.Linear(emb_size, n_classes)
         # self.cls_token = nn.Parameter(T.randn(1, 1, emb_size))
@@ -3318,6 +3289,10 @@ class ViT_b16_ImageNet(Project_DFD_model):
         print("Initializing {} ...".format(self.__class__.__name__))
 
         # self.weight_name =  ResNet50_Weights.IMAGENET1K_V2  # weights with accuracy 80.858% on ImageNet 
+        self.patch_size     = 16
+        self.emb_size       = 768 
+        self.n_heads        = 12
+        self.n_layers       = 12
         self.weight_name = ViT_B_16_Weights.IMAGENET1K_V1
         self._create_net()
         
@@ -3348,12 +3323,18 @@ class ViT_b16_ImageNet(Project_DFD_model):
             param.requires_grad = True
     
     def forward(self, x):
+        
+        if len(x.shape)==4 and x.shape[1] == 1:
+            x = x.expand(-1, 3, -1, -1)
+        
+        elif len(x.shape)==3 and x.shape[0] == 1:         
+            x = x.expand(3, -1, -1)
+        
         x = self.pre_processing(x)
         out = self.model(x)
         return out
   
-
-
+  
 #_____________________________________Other models_________________________________________________ 
 
 class FC_classifier(nn.Module):
