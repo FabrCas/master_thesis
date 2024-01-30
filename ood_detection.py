@@ -100,10 +100,10 @@ class OOD_Classifier(object):
 
         # normalize class weights with values between 0 and 1
         max_value = max(class_weights)
-        class_weights /= max_value
+        class_weights = [item/max_value for item in class_weights]
         
         # proportional increase over the weights
-        class_weights *= multiplier
+        class_weights = [item * multiplier for item in class_weights]
         
         print("Class_weights-> ", class_weights)
                 

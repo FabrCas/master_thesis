@@ -10,7 +10,7 @@ from    torchvision                     import models
 from    torchvision.models              import ResNet50_Weights, ViT_B_16_Weights
 from    utilities                       import print_dict, print_list, expand_encoding, convTranspose2d_shapes, get_inputConfig
 from    einops.layers.torch             import Rearrange
-from    einops                          import repeat
+from    einops                          import repeat, rearrange
 
 T.manual_seed(seed=22)
 
@@ -3058,12 +3058,16 @@ class Abnormality_module_Encoder_v4(Project_abnorm_model):
 
 # general transformer model settings:
 
-PATCH_SIZE = 16
-EMB_SIZE    = 768  # 128 adjust based on patch dimension
+# PATCH_SIZE = 16
+# EMB_SIZE    = 768  # 128 adjust based on patch dimension
+
+PATCH_SIZE = 32
+EMB_SIZE    = 1024  # 128 adjust based on patch dimension
+
 # EMB_DIM = (PATCH_DIM**2)*2
 # EMB_DIM = 32 
 
-
+# _____________________________ViT base: 1st implementation _______________________________________
 
 class FCPatchEmbedding(nn.Module):
     def __init__(self, in_channels = INPUT_CHANNELS, patch_size = PATCH_SIZE, emb_size = EMB_SIZE):
@@ -3206,7 +3210,7 @@ class ViT_base(Project_DFD_model):
         return logits
 
 
-# this is another implementation 
+# _____________________________ViT base: 2nd implementation _______________________________________
 
 class ConvPatchEmbedding(nn.Module):
     def __init__(self, img_size = INPUT_WIDTH, patch_size= PATCH_SIZE, in_channels= INPUT_CHANNELS, emb_size=768):
@@ -3277,6 +3281,144 @@ class ViT_base_2(Project_DFD_model):
 
         return logits
 
+# _____________________________ViT base: 3rd implementation _______________________________________
+
+def pair(t):
+    return t if isinstance(t, tuple) else (t, t)
+
+class FeedForward(nn.Module):
+    def __init__(self, dim, hidden_dim, dropout = 0.):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.LayerNorm(dim),
+            nn.Linear(dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, dim),
+            nn.Dropout(dropout)
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+class Attention(nn.Module):
+    def __init__(self, dim, heads = 8, dim_head = 64, dropout = 0.):
+        super().__init__()
+        inner_dim = dim_head *  heads
+        project_out = not (heads == 1 and dim_head == dim)
+
+        self.heads = heads
+        self.scale = dim_head ** -0.5
+
+        self.norm = nn.LayerNorm(dim)
+
+        self.attend = nn.Softmax(dim = -1)
+        self.dropout = nn.Dropout(dropout)
+
+        self.to_qkv = nn.Linear(dim, inner_dim * 3, bias = False)
+
+        self.to_out = nn.Sequential(
+            nn.Linear(inner_dim, dim),
+            nn.Dropout(dropout)
+        ) if project_out else nn.Identity()
+
+    def forward(self, x):
+        x = self.norm(x)
+
+        qkv = self.to_qkv(x).chunk(3, dim = -1)
+        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = self.heads), qkv)   # n length of the input sequence
+
+        dots = T.matmul(q, k.transpose(-1, -2)) * self.scale
+
+        attn = self.attend(dots)
+        attn = self.dropout(attn)
+
+        out = T.matmul(attn, v)
+        out = rearrange(out, 'b h n d -> b n (h d)')
+        return self.to_out(out)
+
+class Transformer(nn.Module):
+    def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout = 0.):
+        super().__init__()
+        self.norm = nn.LayerNorm(dim)
+        self.layers = nn.ModuleList([])
+        for _ in range(depth):
+            self.layers.append(nn.ModuleList([
+                Attention(dim, heads = heads, dim_head = dim_head, dropout = dropout),
+                FeedForward(dim, mlp_dim, dropout = dropout)
+            ]))
+
+    def forward(self, x):
+        for attn, ff in self.layers:
+            x = attn(x) + x
+            x = ff(x) + x
+
+        return self.norm(x)
+
+class ViT_base_3(Project_DFD_model):
+    def __init__(self, *, img_size = INPUT_WIDTH, patch_size = PATCH_SIZE,
+                 n_classes = 10, emb_size = EMB_SIZE, n_layers = 6, n_heads = 16, mlp_dim = EMB_SIZE*2, pool = 'cls', in_channels = INPUT_CHANNELS,
+                 dim_head = 64, dropout = 0.1, emb_dropout = 0.1):
+        
+        super().__init__(c = in_channels,h = img_size,w = img_size, n_classes = n_classes)
+        image_height, image_width = pair(img_size)
+        patch_height, patch_width = pair(patch_size)
+        
+        self.emb_size   = emb_size 
+        self.patch_size = patch_size
+        self.n_heads    = n_heads
+        self.n_layers   = n_layers
+        self.dropout    = dropout
+        
+        emb_dropout = self.dropout  # remove to avoid dropout binding
+        
+
+        assert image_height % patch_height == 0 and image_width % patch_width == 0, 'Image dimensions must be divisible by the patch size.'
+
+        num_patches = (image_height // patch_height) * (image_width // patch_width)
+        patch_dim = in_channels * patch_height * patch_width
+        assert pool in {'cls', 'mean'}, 'pool type must be either cls (cls token) or mean (mean pooling)'
+
+        self.to_patch_embedding = nn.Sequential(
+            Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = patch_height, p2 = patch_width),
+            nn.LayerNorm(patch_dim),
+            nn.Linear(patch_dim, emb_size),
+            nn.LayerNorm(emb_size),
+        )
+
+        self.pos_embedding = nn.Parameter(T.randn(1, num_patches + 1, emb_size))
+        self.cls_token = nn.Parameter(T.randn(1, 1, emb_size))
+        self.dropout = nn.Dropout(emb_dropout)
+
+        self.transformer = Transformer(emb_size, n_layers, n_heads, dim_head, mlp_dim, dropout)
+
+        self.pool = pool
+        self.to_latent = nn.Identity()
+
+        self.mlp_head = nn.Linear(emb_size, n_classes)
+
+    def forward(self, img):
+        x = self.to_patch_embedding(img)
+        b, n, _ = x.shape
+
+        cls_tokens = repeat(self.cls_token, '1 1 d -> b 1 d', b = b)
+        x = T.cat((cls_tokens, x), dim=1)
+        x += self.pos_embedding[:, :(n + 1)]
+        x = self.dropout(x)
+
+        x = self.transformer(x)
+
+        x = x.mean(dim = 1) if self.pool == 'mean' else x[:, 0]
+
+        x = self.to_latent(x)
+         
+        logits  = self.mlp_head(x)
+        
+        return logits
+
+# _____________________________ViT base pre-trained _______________________________________________
+
+
 class ViT_b16_ImageNet(Project_DFD_model):
     """ 
     This is a wrap class for pretraiend Vision Transformer b16 use the getModel function to get the nn.module implementation.
@@ -3324,6 +3466,7 @@ class ViT_b16_ImageNet(Project_DFD_model):
     
     def forward(self, x):
         
+        # reshape for grayscale images, triplicating the color channel
         if len(x.shape)==4 and x.shape[1] == 1:
             x = x.expand(-1, 3, -1, -1)
         
@@ -3637,7 +3780,8 @@ if __name__ == "__main__":
         if tests[1]:
             # vit = ViT_base(n_classes=2)
             # vit = ViT(n_classes=2)
-            vit = ViT_b16_ImageNet().to(device=device)
+            # vit = ViT_b16_ImageNet().to(device=device)
+            vit = ViT_base_3().to(device = device)
             # vit.getSummary()
             out = vit.forward(x)
             print(out.shape)
@@ -3708,7 +3852,7 @@ if __name__ == "__main__":
         
     # test_UnetScorerConfidence()
     # test_UnetScorer()
-    test_VIT()
+    # test_VIT()
     
     #                           [End test section] 
     

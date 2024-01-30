@@ -21,7 +21,7 @@ from    torch.utils.data                    import default_collate
 from    utilities                           import plot_loss, plot_valid, saveModel, metrics_binClass, loadModel, sampleValidSet, \
                                             duration, check_folder, cutmix_image, showImage, image2int, ExpLogger
 from    dataset                             import getScenarioSetting, CDDB_binary, CDDB_binary_Partial
-from    models                              import ViT_base, ViT_base_2, ViT_b16_ImageNet
+from    models                              import ViT_base, ViT_base_2, ViT_base_3, ViT_b16_ImageNet
 from    bin_classifier                      import BinaryClassifier
 
 
@@ -36,7 +36,7 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
         
 
     """
-    def __init__(self, scenario, useGPU = True, batch_size = 32, model_type = "ViT_base"):
+    def __init__(self, scenario, useGPU = True, batch_size = 64, model_type = "ViT_base"):  # batch_size = 32 or 64
         """ init classifier
 
         Args:
@@ -65,10 +65,14 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
         # load model
         if "vit_base" in model_type.lower().strip():
             if "_xs" in model_type.lower().strip(): 
-                # self.model = ViT_base(n_classes = 2, n_layers = 4, n_heads = 2)
-                
-                # self.model = ViT_base(n_classes = 2, n_layers = 10, n_heads = 4)
-                self.model = ViT_base_2(n_classes= self.n_classes, n_layers= 10, n_heads=4)
+                # self.model = ViT_base_2(n_classes= self.n_classes, n_layers= 6, n_heads=4)
+                self.model = ViT_base_3(n_classes=2)
+            elif "_s" in  model_type.lower().strip(): 
+                self.model = ViT_base_3(n_classes=2)
+                # self.model = ViT_base_2(n_classes= self.n_classes, n_layers= 10, n_heads=6)
+            # elif "_m" in model_type.lower().strip():
+            #      self.model = ViT_base_2(n_classes= self.n_classes, n_layers= 10, n_heads=10)
+
                 
             # TODO other specs for the network here: n layers, n heads, etc
             else:
@@ -91,11 +95,12 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
         # learning hyperparameters (default)
         
         self.learning_coeff         = 0.5                                       # multiplier that increases the training time
-        self.lr                     = 1e-4     # 1e-3
-        self.n_epochs               = math.floor(50 * self.learning_coeff)
+        self.lr                     = 1e-4    # 1e-3 or 1e-4
+        # self.n_epochs               = math.floor(50 * self.learning_coeff)
+        self.n_epochs               = 15
         self.start_early_stopping   = math.floor(self.n_epochs/2)               # epoch to start early stopping
         self.weight_decay           = 0.001                                     # L2 regularization term 
-        self.patience               = math.floor(5 * self.learning_coeff)       # early stopping patience
+        self.patience               = 5                                         # early stopping patience
         self.early_stopping_trigger = "loss"                                    # values "acc" or "loss"
         
         # loss definition + interpolation values for the new loss
@@ -292,14 +297,14 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
         # compute labels weights and cross entropy loss
         self.weights_labels = self.compute_class_weights()
         
-        self.bce          = T.nn.BCEWithLogitsLoss(weight=T.tensor(self.weights_labels)).to(device=self.device)
-        # self.bce        = T.nn.BCELoss(weight = T.tensor(self.weights_labels)).cuda()   # to apply after sigmodid 
+        self.bce       = T.nn.BCEWithLogitsLoss(weight=T.tensor(self.weights_labels)).to(device=self.device)
+        # self.bce      = T.nn.BCELoss(weight = T.tensor(self.weights_labels)).cuda()   # to apply after sigmodid 
         
         # learning rate scheduler
         if self.early_stopping_trigger == "loss":
-            self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor = 0.5, patience = 4, cooldown = 2, min_lr = self.lr*0.01, verbose = True) # reduce of a half the learning rate 
+            self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor = 0.5, patience = 5, cooldown = 2, min_lr = self.lr*0.01, verbose = True) # reduce of a half the learning rate 
         elif self.early_stopping_trigger == "acc":
-            self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='max', factor = 0.5, patience = 4, cooldown = 2, min_lr = self.lr*0.01, verbose = True) # reduce of a half the learning rate 
+            self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='max', factor = 0.5, patience = 5, cooldown = 2, min_lr = self.lr*0.01, verbose = True) # reduce of a half the learning rate 
         
         # define the gradient scaler to avoid weigths explosion
         scaler = GradScaler()
@@ -318,18 +323,23 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
         # learned epochs by the model initialization
         self.modelEpochs = 0
         
+        tmp_losses = []
+        
         # loop over epochs
         for epoch_idx in range(self.n_epochs):
             print(f"\n             [Epoch {epoch_idx+1}]             \n")
             
             # if epoch_idx != 2: continue
-            
+
             # define cumulative loss for the current epoch and max/min loss
             loss_epoch = 0; max_loss_epoch = 0; min_loss_epoch = math.inf
             
             # update the last epoch for training the model
             last_epoch = epoch_idx +1
             
+            
+            printed_nan = False
+                    
             # loop over steps
             for step_idx,(x,y) in tqdm(enumerate(train_dataloader), total= n_steps):
                 
@@ -337,12 +347,6 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
                 
                 # test steps loop for debug
                 if test_loop and step_idx+1 == 5: break
-                
-                # adjust labels if cutmix has been not applied (from indices to one-hot encoding)
-                # if len(y.shape) == 1 and self.use_cutmix:
-                #     y = T.nn.functional.one_hot(y, num_classes = self.n_classes)
-                
-                # showImage(x[0])
                 
                 # prepare samples/targets batches 
                 x = x.to(self.device)
@@ -354,53 +358,67 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
                 self.optimizer.zero_grad()
                 
                 # model forward and loss computation
+                with autocast():   
                 
-                # with autocast():   
-                
-                logits = self.model.forward(x) 
-                
-                # apply activation function to logits
-                # pred = self.sigmoid(logits)
+                    logits = self.model.forward(x) 
                     
-                # print(pred.shape, y.shape)
-                
-                # if step_idx == 23:
-                #     print(pred)
-                #     print(y)
-                
-                # compute classification loss
-                try:
-                    loss      = self.bce(input=logits, target=y)   # bce from logits (no weights loaded)
-                    # loss      = self.bce(input=pred, target=y)   # classic bce with "probabilities"
-                except:
-                    # loss      = T.tensor(0)
-                    continue
-                
-                # print(loss)
-                
-                try:
-                    loss_value = loss.cpu().item()
-                except:
-                    print(loss.shape, loss)
-                    print(logits.shape)
-                    print(y.shape)
-                    raise ValueError("error converting tensor to scaler with .item() function")
-                
-                if loss_value>max_loss_epoch    : max_loss_epoch = round(loss_value,4)
-                if loss_value<min_loss_epoch    : min_loss_epoch = round(loss_value,4)
-                
-                # update total loss    
-                loss_epoch += loss_value   # from tensor with single value to int and accumulation
-                
-                # loss backpropagation
-                scaler.scale(loss).backward()
-                
-                # compute updates using optimizer
-                scaler.step(self.optimizer)
+                    # apply activation function to logits
+                    # pred = self.sigmoid(logits)
+                        
+                    # compute classification loss
+                    try:
+                        loss      = self.bce(input=logits, target=y)   # bce from logits (no weights loaded)
+                        # loss      = self.bce(input=pred, target=y)   # classic bce with "probabilities"
+                    except Exception as e :
+                        print(e)
+                        print("skipping, problem in the computation of the loss")
+                        # loss      = T.tensor(0)
+                        continue
+                    
+                    if T.isnan(loss).any().item() and not(printed_nan):
+                        print(loss)
+                        print(logits)
+                        print(T.norm(logits))
+                        print(y)
+                        for name, param in self.model.named_parameters():
+                            if param.grad is not None:
+                                print(f'Parameter: {name}, Gradient Magnitude: {param.grad.norm().item()}')
+                        
+                        printed_nan = True
+                        
+                    try:
+                        loss_value = loss.cpu().item()
+                    except:
+                        print(loss.shape, loss)
+                        print(logits.shape)
+                        print(y.shape)
+                        raise ValueError("error converting tensor to scaler with .item() function")
+                    
+                    
+                    tmp_losses.append(loss_value)
+                    if step_idx%100 == 0:
+                        print("norm logits every 100 epochs ->", T.norm(logits).cpu().item())
+                        print("avg loss every 100 epochs ->", sum(tmp_losses)/len(tmp_losses))
+                        tmp_losses = []
+                    
+                    if loss_value>max_loss_epoch    : max_loss_epoch = round(loss_value,4)
+                    if loss_value<min_loss_epoch    : min_loss_epoch = round(loss_value,4)
+                    
+                    # update total loss    
+                    loss_epoch += loss_value   # from tensor with single value to int and accumulation
+                    
+                    # loss backpropagation
+                    scaler.scale(loss).backward()
+                    
+                    # compute updates using optimizer
+                    scaler.step(self.optimizer)
 
-                # update weights through scaler
-                scaler.update()
-                
+                    # update weights through scaler
+                    scaler.update()
+                    
+                    # clip gradients
+                    # T.nn.utils.clip_grad_norm_(self.model.parameters(), 5)
+
             # compute average loss for the epoch
             avg_loss = round(loss_epoch/n_steps,4)
             loss_epochs.append(avg_loss)
@@ -409,6 +427,7 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
             # include validation here if needed
             criterion = self.valid(epoch=epoch_idx+1, valid_dataloader= valid_dataloader)
             valid_history.append(criterion)  
+            
             # initialize not early stopping
             early_exit = False 
             
@@ -558,18 +577,20 @@ if __name__ == "__main__":
         bin_classifier.load(name_model, epoch)
         bin_classifier.test()
     
-    
-    
     # train_v6_scenario(model_type="ViT_base_xs", add_name="112p")
     # train_v6_scenario(model_type="ViT_B16_pretrained", add_name="112p")   # even though the Imagenet pretrained version transform the image from 112p to 224p (so using directly 224p images has no computationl effort due to later upscaling)
     
-    train_v6_scenario(model_type="ViT_B16_pretrained")   #224
+    # train_v6_scenario(model_type="ViT_B16_pretrained")   #224
+    
+    train_v6_scenario(model_type="ViT_base_S32") #224
     
     #                           [End test section] 
     """ 
             Past test/train launched: 
     # faces:
         #                                           v6
+        train_v6_scenario(model_type="ViT_B16_pretrained")   #224
+        train_v6_scenario(model_type="ViT_B16_pretrained")   #224 
 
     # GAN:
         #                                           v6
