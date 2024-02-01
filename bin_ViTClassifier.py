@@ -36,7 +36,7 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
         
 
     """
-    def __init__(self, scenario, useGPU = True, batch_size = 64, model_type = "ViT_base"):  # batch_size = 32 or 64
+    def __init__(self, scenario, useGPU = True, patch_size = None, emb_size = None,  batch_size = 32, model_type = "ViT_base"):  # batch_size = 32 or 64
         """ init classifier
 
         Args:
@@ -49,26 +49,44 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
             1st ,2nd,3rd groups and do the same for OOD without intersection.
             
             useGPU (bool, optional): flag to use CUDA device or cpu hardware by the model. Defaults to True.
+            patch_size (int, optional): size used to divide the image in patches. Defaults to None (to use default settings)
+            emb_size (int, optional): size used to build the token embeddings and the internal encodings of the transformer. Defaults to None (to use default settings)
             batch_size (int, optional): batch size used by dataloaders, Usually 32 or 64 (for lighter models). Defaults is 32.
             model_type (str, optional): choose the Unet architecture between :
-                - "ViT_base"
+                - "ViT_base_[size:xs,s,m][patch_size]"
                 - "ViT_b16_pretrained"   (imagenet)
             Defaults is "ViT_base". 
         """
         super(DFD_BinViTClassifier_v6, self).__init__(useGPU = useGPU, batch_size = batch_size, model_type = model_type)
         self.version = 6
         self.scenario = scenario
-        self.augment_data_train = False
+        self.patch_size = patch_size
+        self.emb_size = emb_size
+        self.augment_data_train = True
         self.use_cutmix         = False     # problem when we are learning transformer over sequence of patches
         self.n_classes          = 2
-            
+        
+        model_type_check = model_type.lower().strip()
+        
+        # prepare args
+        kwargs = {"n_classes": 2}
+        if self.patch_size is not(None):
+            kwargs["patch_size"] = self.patch_size
+        if self.emb_size is not(None):
+            kwargs["emb_size"] = self.emb_size
+        
+        print(kwargs)
+        
         # load model
-        if "vit_base" in model_type.lower().strip():
-            if "_xs" in model_type.lower().strip(): 
-                # self.model = ViT_base_2(n_classes= self.n_classes, n_layers= 6, n_heads=4)
-                self.model = ViT_base_3(n_classes=2)
-            elif "_s" in  model_type.lower().strip(): 
-                self.model = ViT_base_3(n_classes=2)
+        if "vit_base" in model_type_check:
+            if "_xs" in model_type_check: 
+                self.model      = ViT_base_3(**kwargs,  n_layers= 6, n_heads=4)
+            elif "_s" in  model_type_check:
+                self.model      = ViT_base_3(**kwargs)
+            elif "_m" in model_type_check:
+                self.model      = ViT_base_3(**kwargs, n_layers = 12, n_heads=12)
+        
+                
                 # self.model = ViT_base_2(n_classes= self.n_classes, n_layers= 10, n_heads=6)
             # elif "_m" in model_type.lower().strip():
             #      self.model = ViT_base_2(n_classes= self.n_classes, n_layers= 10, n_heads=10)
@@ -93,15 +111,14 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
         # bce defined in the training since is necessary to compute the labels weights 
 
         # learning hyperparameters (default)
-        
-        self.learning_coeff         = 0.5                                       # multiplier that increases the training time
+        self.learning_coeff         = 0.4                                               # multiplier that increases the training time
         self.lr                     = 1e-4    # 1e-3 or 1e-4
-        # self.n_epochs               = math.floor(50 * self.learning_coeff)
-        self.n_epochs               = 15
-        self.start_early_stopping   = math.floor(self.n_epochs/2)               # epoch to start early stopping
-        self.weight_decay           = 0.001                                     # L2 regularization term 
-        self.patience               = 5                                         # early stopping patience
-        self.early_stopping_trigger = "loss"                                    # values "acc" or "loss"
+        self.n_epochs               = math.floor(50 * self.learning_coeff)
+        # self.n_epochs               = 15
+        self.start_early_stopping   = math.floor(self.n_epochs/2)                       # epoch to start early stopping
+        self.weight_decay           = 1e-3                                              # L2 regularization term 
+        self.patience               = max(math.floor(5 * self.learning_coeff),5)        # early stopping patience
+        self.early_stopping_trigger = "loss"                                            # values "acc" or "loss"
         
         # loss definition + interpolation values for the new loss
         self.loss_name              = "weighted bce"
@@ -141,50 +158,34 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
     
     def _dataConf(self):
         
-        try:
-            input_shape = str(self.model.input_shape)
-        except:
-            input_shape = "empty"
+        try:    input_shape = str(self.model.input_shape)
+        except: input_shape = "empty"
         
-        try:
-            patch_size = self.model.patch_size
-        except:
-            patch_size = "empty"
+        try:    patch_size = self.model.patch_size
+        except: patch_size = "empty"
         
-        try:
-            n_channels = self.model.n_channels
-        except:
-            n_channels = "empty"
+        try:    n_channels = self.model.n_channels
+        except: n_channels = "empty"
         
-        try:
-            emb_dim = str(self.model.emb_size)
-        except:
-            emb_dim = "empty"
+        try:    emb_dim = str(self.model.emb_size)
+        except: emb_dim = "empty"
             
-        try:
-            n_layers = str(self.model.n_layers)
-        except:
-            n_layers = "empty"
+        try:    n_layers = str(self.model.n_layers)
+        except: n_layers = "empty"
             
-        try:
-            n_heads = str(self.model.n_heads)
-        except:
-            n_heads = "empty"
+        try:    n_heads = str(self.model.n_heads)
+        except: n_heads = "empty"
         
-        try:
-            dropout_percentage= str(self.model.dropout)
-        except:
-            dropout_percentage = "empty"
+        try:    dropout_percentage= str(self.model.dropout)
+        except: dropout_percentage = "empty"
         
-        try:
-            weights_classes = self.weights_labels
-        except: 
-            weights_classes = "empty"
+        try:    weights_classes = self.weights_labels 
+        except: weights_classes = "empty"
         
-            
-        return {
+        specified_data = {
             "date_training": date.today().strftime("%d-%m-%Y"),
-            "model": self.model_type,
+            "model_type": self.model_type,
+            "model_class": self.model.__class__.__name__,
             "input_shape": input_shape,
             "data_scenario": self.scenario,
             "version_train": self.version,
@@ -203,7 +204,15 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
             "number_heads": n_heads,
             "dropout_%": dropout_percentage
             }
-    
+        
+        # include auto-inferred data from the model if available
+        try:
+            concat_dict = lambda x,y: {**x, **y}
+            model_data = self.model.getAttributes()
+            return concat_dict(specified_data, model_data)
+        except:
+            return specified_data
+        
     def valid(self, epoch, valid_dataloader):
         """
             validation method used mainly for the Early stopping training
@@ -272,7 +281,7 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
         # define the model dir path and create the directory
         current_date = date.today().strftime("%d-%m-%Y")    
         path_model_folder       = os.path.join(self.path_models,  name_train + "_v{}_".format(str(self.version)) + current_date)
-        check_folder(path_model_folder)
+        check_folder(path_model_folder, is_model= True)
         
         # define train dataloader
         train_dataloader = None
@@ -295,9 +304,11 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
         # define the loss function and class weights
         
         # compute labels weights and cross entropy loss
-        self.weights_labels = self.compute_class_weights()
+        self.weights_labels = self.compute_class_weights(only_positive_weight=True)
         
-        self.bce       = T.nn.BCEWithLogitsLoss(weight=T.tensor(self.weights_labels)).to(device=self.device)
+        # self.bce       = T.nn.BCEWithLogitsLoss(weight=T.tensor(self.weights_labels)).to(device=self.device)
+        self.bce       = T.nn.BCEWithLogitsLoss(pos_weight=T.tensor(self.weights_labels)).to(device=self.device)
+        
         # self.bce      = T.nn.BCELoss(weight = T.tensor(self.weights_labels)).cuda()   # to apply after sigmodid 
         
         # learning rate scheduler
@@ -484,7 +495,7 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
         
         # create path for the model results
         path_results_folder     = os.path.join(self.path_results, name_train + "_v{}_".format(str(self.version)) + current_date)
-        check_folder(path_results_folder)       # create if doesn't exist
+        check_folder(path_results_folder, is_model = True) # create if doesn't exist
         name_loss_file          = 'loss_'+ str(last_epoch) +'.png'
         name_valid_file         = "valid_{}_{}.png".format(self.early_stopping_trigger, str(last_epoch))
         path_lossPlot_save      = os.path.join(path_results_folder, name_loss_file)
@@ -565,33 +576,51 @@ if __name__ == "__main__":
     
     # ________________________________ v6  ________________________________
     
-    def train_v6_scenario(model_type, add_name =""):
-        bin_classifier = DFD_BinViTClassifier_v6(scenario = data_scenario, useGPU= True, model_type=model_type)
+    def train_v6_scenario(model_type, add_name ="", patch_size = None, emb_size = None):
+        
+        bin_classifier = DFD_BinViTClassifier_v6(scenario = data_scenario, patch_size= patch_size, emb_size= emb_size,
+                                                 useGPU= True, model_type=model_type)
         if add_name != "":
             bin_classifier.train(name_train= scenario_setting + "_" + model_type + "_" + add_name, test_loop = False)
         else:
             bin_classifier.train(name_train= scenario_setting + "_" + model_type, test_loop = False)
 
-    def test_v6_metrics(name_model, epoch, model_type):
-        bin_classifier = DFD_BinViTClassifier_v6(scenario = data_scenario, useGPU= True, model_type= model_type)
+    def test_v6_metrics(name_model, epoch, model_type, patch_size = None, emb_size = None):
+        bin_classifier = DFD_BinViTClassifier_v6(scenario = data_scenario, patch_size= patch_size, emb_size= emb_size,
+                                                 useGPU= True, model_type= model_type)
         bin_classifier.load(name_model, epoch)
         bin_classifier.test()
+        
+    def train_test_v6_metrics(model_type, add_name ="", patch_size = None, emb_size = None):
+        bin_classifier = DFD_BinViTClassifier_v6(scenario = data_scenario, patch_size= patch_size, emb_size= emb_size,
+                                                 useGPU= True, model_type=model_type)
+        if add_name != "":
+            bin_classifier.train_and_test(name_train= scenario_setting + "_" + model_type + "_" + add_name)
+        else:
+            bin_classifier.train_and_test(name_train= scenario_setting + "_" + model_type)
+            
     
-    # train_v6_scenario(model_type="ViT_base_xs", add_name="112p")
-    # train_v6_scenario(model_type="ViT_B16_pretrained", add_name="112p")   # even though the Imagenet pretrained version transform the image from 112p to 224p (so using directly 224p images has no computationl effort due to later upscaling)
+    # ________________________________ v7  ________________________________
     
-    # train_v6_scenario(model_type="ViT_B16_pretrained")   #224
-    
-    train_v6_scenario(model_type="ViT_base_S32") #224
+    train_test_v6_metrics(model_type="ViT_base_M16", patch_size=16)
     
     #                           [End test section] 
     """ 
             Past test/train launched: 
     # faces:
         #                                           v6
-        train_v6_scenario(model_type="ViT_B16_pretrained")   #224
-        train_v6_scenario(model_type="ViT_B16_pretrained")   #224 
-
+        train_v6_scenario(model_type="ViT_B16_pretrained")              #224
+        train_v6_scenario(model_type="ViT_B16_pretrained")              #224 
+        train_v6_scenario(model_type="ViT_base_S32")                    #224
+        train_v6_scenario(model_type="ViT_base_S16", patch_size= 16)    #224
+        train_v6_scenario(model_type="ViT_base_S32", add_name="training+") #224
+        
+        
+        test_v6_metrics(name_model = "faces_ViT_B16_pretrained_v6_27-01-2024", epoch = 9, model_type="ViT_B16_pretrained")
+        test_v6_metrics(name_model = "faces_ViT_B16_pretrained_v6_29-01-2024", epoch = 15, model_type="ViT_B16_pretrained")
+        test_v6_metrics(name_model = "faces_ViT_base_S32_v6_30-01-2024", epoch = 15, model_type="ViT_base_S32")
+        test_v6_metrics(name_model = "faces_ViT_base_S16_v6_30-01-2024", epoch = 37, model_type="ViT_base_S16", patch_size=16)
+        test_v6_metrics(name_model = "faces_ViT_base_S32_training+_v6_31-01-2024", epoch = 141, model_type="ViT_base_S32")
     # GAN:
         #                                           v6
 

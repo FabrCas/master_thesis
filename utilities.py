@@ -1080,7 +1080,6 @@ def pool2d_out_shape(input_shape, kernel_size, stride):
     convTranspose2d_shapes(input_shape=(1,2,2), n_filters=1, kernel_size=2, padding=0, stride=2)
 """
 
-
 # custom modules/functions
 class expand_encoding(T.nn.Module):
     """ expand the encoding vector using the specified shape"""
@@ -1229,7 +1228,7 @@ def isFolder(path):
     if match_file is None: return True
     else: return False
       
-def check_folder(path:str, force = False):
+def check_folder(path:str, force = False, is_model = False):
     """ 
     check if a folder exists, otherwise create it. 
     if "force" is set to False (Default), this method has no return
@@ -1261,7 +1260,9 @@ def check_folder(path:str, force = False):
             
             os.makedirs(new_path)
             return new_path
-        # else:
+        else:
+            if is_model:
+                raise ValueError("The folder to create already exists. Change the name, otherwise model will be overwritten")
         #     print('The folder to create already exists, set the force parameter to "True" for a new version')
     else:
         raise ValueError("Impossible to create a folder, the path {} is relative to a file!".format(path))

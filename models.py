@@ -20,14 +20,13 @@ config = get_inputConfig()
 INPUT_WIDTH     = config['width']
 INPUT_HEIGHT    = config['height']
 INPUT_CHANNELS  = config['channels']
-UNET_EXP_FMS    = 4    # U-net power of 2 exponent for feature maps (starting)
-
 
 # 1st models superclass for deepfake detection
 class Project_DFD_model(nn.Module):
     
     def __init__(self, c,h,w, n_classes):
         super(Project_DFD_model,self).__init__()
+        print("Initializing {} ...".format(self.__class__.__name__))
         
         # initialize the model to None        
         self.input_dim  = (INPUT_CHANNELS, INPUT_HEIGHT, INPUT_WIDTH)
@@ -113,7 +112,19 @@ class Project_DFD_model(nn.Module):
             if len(param.shape) > 1:
                 T.nn.init.normal_(param, mean=0, std=0.01) 
     
-            
+    def getAttributes(self):
+        att = self.__dict__
+        
+        def valid(pair):
+            # unzip pair k,v
+            _, x = pair 
+            type_x = type(x)
+            condition =  (type_x is int) or (type_x is str) or (type_x is tuple)
+            return condition
+        
+        filterd_att = dict(filter(valid, att.items()))
+        return filterd_att
+    
     def forward(self):
         raise NotImplementedError
 
@@ -405,6 +416,9 @@ class ResNet_ImageNet(Project_DFD_model):   # not nn.Module subclass, but still 
         return x
     
 # _____________________________________ U net ______________________________________________________
+
+# Default U-net based model setting:
+UNET_EXP_FMS    = 4    # U-net power of 2 exponent for feature maps (starting)
 
 class Conv_block(nn.Module):
     def __init__(self, in_c, out_c):
@@ -699,7 +713,7 @@ class Unet6(Project_DFD_model):
         return rec, enc
 
     
-#_____________________________________ OOD custom modules __________________________________________
+#_____________________________________ OOD custom models: ResNet and Unet based ___________________
 
 #                                       custom ResNet
 
@@ -2244,7 +2258,6 @@ class Unet6L_ResidualScorer(Project_DFD_model):
         rec = self.decoder_out_fn(self.out(d6))  # check sigmoid vs tanh
         return logits, rec, encoding
 
-
 #                                       custom Unet + Confidence
 class Unet4_Scorer_Confidence(Project_DFD_model):
     """
@@ -2569,11 +2582,23 @@ class Project_abnorm_model(nn.Module):
     def getLayers(self):
         return dict(self.named_parameters())
     
+    def getAttributes(self):
+        att = self.__dict__
+        
+        def valid(pair):
+            # unzip pair k,v
+            _, x = pair 
+            type_x = type(x)
+            condition =  (type_x is int) or (type_x is str) or (type_x is tuple)
+            return condition
+        
+        filterd_att = dict(filter(valid, att.items()))
+        return filterd_att
+    
     def freeze(self):
         for name, param in self.named_parameters():
             param.requires_grad = False
     
-
 class Abnormality_module_Basic(Project_abnorm_model):
     
     """ problems withs model:
@@ -2653,7 +2678,6 @@ class Abnormality_module_Basic(Project_abnorm_model):
         x = self.gelu(self.bn_risk_final(self.fc_risk_final(x)))
         
         return x
-    
 
 class Abnormality_module_Encoder_v1(Project_abnorm_model):
     
@@ -2736,7 +2760,6 @@ class Abnormality_module_Encoder_v1(Project_abnorm_model):
         
         return x
 
-
 class Encoder_block_v2(nn.Module):
     """ 
     it reduces the spatial dimensionality of half
@@ -2764,7 +2787,6 @@ class Encoder_block_v2(nn.Module):
         x = self.bn3(x)
         x = self.gelu(x)
         return x
-
 
 class Abnormality_module_Encoder_v2(Project_abnorm_model):
     
@@ -3053,19 +3075,17 @@ class Abnormality_module_Encoder_v4(Project_abnorm_model):
         # if verbose: print("input module b shape -> ", x.shape)
         out = self.gelu(self.bn_risk_final(self.fc_risk_final(x_concat)))
         return out   
+
 #_____________________________________Vision Transformer (ViT)_____________________________________        
 
 
-# general transformer model settings:
+# Default transformer model settings:
 
 # PATCH_SIZE = 16
 # EMB_SIZE    = 768  # 128 adjust based on patch dimension
 
-PATCH_SIZE = 32
-EMB_SIZE    = 1024  # 128 adjust based on patch dimension
-
-# EMB_DIM = (PATCH_DIM**2)*2
-# EMB_DIM = 32 
+PATCH_SIZE  = 16
+EMB_SIZE    = 1024
 
 # _____________________________ViT base: 1st implementation _______________________________________
 
@@ -3356,9 +3376,16 @@ class Transformer(nn.Module):
         return self.norm(x)
 
 class ViT_base_3(Project_DFD_model):
-    def __init__(self, *, img_size = INPUT_WIDTH, patch_size = PATCH_SIZE,
-                 n_classes = 10, emb_size = EMB_SIZE, n_layers = 6, n_heads = 16, mlp_dim = EMB_SIZE*2, pool = 'cls', in_channels = INPUT_CHANNELS,
-                 dim_head = 64, dropout = 0.1, emb_dropout = 0.1):
+    """ Implementation of a classic ViT model (base) for classification """
+    
+    def __init__(self, *, img_size = INPUT_WIDTH, patch_size = PATCH_SIZE, n_classes = 10, emb_size = EMB_SIZE, n_layers = 6,
+                 n_heads = 16, pool = 'cls', in_channels = INPUT_CHANNELS, dropout = 0.1, emb_dropout = 0.1):
+        
+        """
+            mlp_dim (int): dimension of the hidden representation in the feedforward or multilayer perceptron block
+        """
+        
+        
         
         super().__init__(c = in_channels,h = img_size,w = img_size, n_classes = n_classes)
         image_height, image_width = pair(img_size)
@@ -3370,7 +3397,16 @@ class ViT_base_3(Project_DFD_model):
         self.n_layers   = n_layers
         self.dropout    = dropout
         
-        emb_dropout = self.dropout  # remove to avoid dropout binding
+        # compute head latent space dimensionality
+        dim_head = EMB_SIZE//n_heads
+        self.dim_head = dim_head
+        
+        # compute ff encoding dimensionality
+        mlp_dim = EMB_SIZE*2
+        self.mlp_dim = mlp_dim
+        
+        # bind Transformer dropout to the one of the embedding
+        emb_dropout = self.dropout  
         
 
         assert image_height % patch_height == 0 and image_width % patch_width == 0, 'Image dimensions must be divisible by the patch size.'
@@ -3396,6 +3432,8 @@ class ViT_base_3(Project_DFD_model):
         self.to_latent = nn.Identity()
 
         self.mlp_head = nn.Linear(emb_size, n_classes)
+        
+        self._init_weights_normal()
 
     def forward(self, img):
         x = self.to_patch_embedding(img)
@@ -3477,8 +3515,91 @@ class ViT_b16_ImageNet(Project_DFD_model):
         out = self.model(x)
         return out
   
+#_____________________________________ OOD custom models: ViT based ___________________
   
-#_____________________________________Other models_________________________________________________ 
+class ViT_base_EA(Project_DFD_model):
+    """ Implementation of a classic ViT model (base) for classification, providing image encoding (E) and attention map (A) """
+
+    def __init__(self, *, img_size = INPUT_WIDTH, patch_size = PATCH_SIZE, n_classes = 10, emb_size = EMB_SIZE, n_layers = 6,
+                    n_heads = 16, pool = 'cls', in_channels = INPUT_CHANNELS, dropout = 0.1, emb_dropout = 0.1,
+                    encoding_type = "mean"):
+        
+        """
+            mlp_dim (int): dimension of the hidden representation in the feedforward or multilayer perceptron block
+            encoding_type (str, optional). Use "mean" whether to encode by levaraging all the input token as a single vector, or "cls" to take in account only [cls] token. Defaults to "mean"
+        """
+        
+    
+        super().__init__(c = in_channels,h = img_size,w = img_size, n_classes = n_classes)
+        image_height, image_width = pair(img_size)
+        patch_height, patch_width = pair(patch_size)
+        
+        self.emb_size       = emb_size 
+        self.patch_size     = patch_size
+        self.n_heads        = n_heads
+        self.n_layers       = n_layers
+        self.dropout        = dropout
+        self.encoding_type  = encoding_type
+        
+        # compute head latent space dimensionality
+        dim_head = EMB_SIZE//n_heads
+        self.dim_head = dim_head
+        
+        # compute ff encoding dimensionality
+        mlp_dim = EMB_SIZE*2
+        self.mlp_dim = mlp_dim
+        
+        # bind Transformer dropout to the one of the embedding
+        emb_dropout = self.dropout  
+        
+
+        assert image_height % patch_height == 0 and image_width % patch_width == 0, 'Image dimensions must be divisible by the patch size.'
+
+        num_patches = (image_height // patch_height) * (image_width // patch_width)
+        patch_dim = in_channels * patch_height * patch_width
+        assert pool in {'cls', 'mean'}, 'pool type must be either cls (cls token) or mean (mean pooling)'
+
+        self.to_patch_embedding = nn.Sequential(
+            Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = patch_height, p2 = patch_width),
+            nn.LayerNorm(patch_dim),
+            nn.Linear(patch_dim, emb_size),
+            nn.LayerNorm(emb_size),
+        )
+
+        self.pos_embedding = nn.Parameter(T.randn(1, num_patches + 1, emb_size))
+        self.cls_token = nn.Parameter(T.randn(1, 1, emb_size))
+        self.dropout = nn.Dropout(emb_dropout)
+
+        self.transformer = Transformer(emb_size, n_layers, n_heads, dim_head, mlp_dim, dropout)
+
+        self.pool = pool
+        self.to_latent = nn.Identity()
+
+        self.mlp_head = nn.Linear(emb_size, n_classes)
+
+    def forward(self, img):
+        x = self.to_patch_embedding(img)
+        b, n, _ = x.shape
+
+        cls_tokens = repeat(self.cls_token, '1 1 d -> b 1 d', b = b)
+        x = T.cat((cls_tokens, x), dim=1)
+        x += self.pos_embedding[:, :(n + 1)]
+        x = self.dropout(x)
+
+        x = self.transformer(x)
+
+        # prepare encoding
+        enc = x.mean(dim = 1) if  self.encoding_type == "mean" else x[: 0]
+        
+        # flow through MLP head 
+        x = x.mean(dim = 1) if self.pool == 'mean' else x[:, 0]
+        x = self.to_latent(x)
+        logits  = self.mlp_head(x)
+        
+        return logits, enc 
+  
+  
+#_____________________________________Test models_________________________________________________ 
 
 class FC_classifier(nn.Module):
     """ 
@@ -3765,7 +3886,7 @@ if __name__ == "__main__":
     def test_VIT():
         
         # define test input
-        x = T.rand((32, 3, INPUT_HEIGHT, INPUT_WIDTH)).to(device)
+        x = T.rand((32, INPUT_CHANNELS, INPUT_HEIGHT, INPUT_WIDTH)).to(device)
         
         tests = [0, 1]
         
@@ -3783,12 +3904,42 @@ if __name__ == "__main__":
             # vit = ViT_b16_ImageNet().to(device=device)
             vit = ViT_base_3().to(device = device)
             # vit.getSummary()
-            out = vit.forward(x)
-            print(out.shape)
+            # out = vit.forward(x)
+            # print(out.shape)
             # logits = 
         
             input("press enter to exit ")
     
+    
+    def test_ViTEA():
+                
+        # define test input
+        x = T.rand((32, INPUT_CHANNELS, INPUT_HEIGHT, INPUT_WIDTH)).to(device)
+        
+        tests = [0, 1]
+        
+        # test patch embedding
+        if tests[0]:
+            emb = FCPatchEmbedding()
+            emb.to(device)
+            print("x : ",  x.shape)
+            x_prime = emb.forward(x)
+            print("x':", x_prime.shape)
+        
+        if tests[1]:
+            # vit = ViT_base(n_classes=2)
+            # vit = ViT(n_classes=2)
+            # vit = ViT_b16_ImageNet().to(device=device)
+            vit = ViT_base_EA().to(device = device)
+            # vit.getSummary()
+            # print(vit.getAttributes())
+            out = vit.forward(x)
+            print(out[0].shape)
+            print(out[1].shape)
+            # print(out.shape)
+            # logits = 
+        
+            input("press enter to exit ")
     # OOD detection
     
     def test_abnorm_basic():
@@ -3849,10 +4000,7 @@ if __name__ == "__main__":
         # input("press enter to exit ")
     
 
-        
-    # test_UnetScorerConfidence()
-    # test_UnetScorer()
-    # test_VIT()
+    test_ViTEA()
     
     #                           [End test section] 
     

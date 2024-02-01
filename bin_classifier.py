@@ -248,7 +248,7 @@ class BinaryClassifier(object):
     def zero_grad(self):
         self.optimizer.zero_grad()
     
-    def compute_class_weights(self, verbose = False, multiplier = 1):
+    def compute_class_weights(self, verbose = False, multiplier = 1, normalize = True, only_positive_weight = False):
 
         print("\n\t\t[Computing Real/Fake class weights]\n")
         
@@ -288,18 +288,27 @@ class BinaryClassifier(object):
 
         
         # normalize class weights with values between 0 and 1
-        max_value = max(class_weights)
-        class_weights = [item/max_value for item in class_weights]
-        
+        if normalize:
+            max_value = max(class_weights)
+            class_weights = [item/max_value for item in class_weights]
+            
         # proportional increase over the weights
-        class_weights = [item * multiplier for item in class_weights]
+        if multiplier != 1:
+            class_weights = [item * multiplier for item in class_weights]
         
         print("Class_weights-> ", class_weights)
         
         # turn back in loading modality sample + label
         self.train_dataset.set_only_labels(False)
         
-        return class_weights 
+        if only_positive_weight:
+            print("Computing weight only for the positive class (label 1)")
+            pos_weight = class_weights[1]/class_weights[0]
+            print("positive class weight-> ", pos_weight)
+            
+            return [pos_weight]
+        else:
+            return class_weights 
              
 class DFD_BinClassifier_v1(BinaryClassifier):
     """
@@ -454,8 +463,8 @@ class DFD_BinClassifier_v1(BinaryClassifier):
         self.modelEpochs         = self.n_epochs
         
         # create model and results folder if not already present
-        check_folder(path_model_folder)
-        check_folder(path_results_folder)
+        check_folder(path_model_folder, is_model = True)
+        check_folder(path_results_folder, is_model = True)
 
         # save loss plot
         plot_loss(loss_epochs, title_plot= name_train, path_save = path_lossPlot_save)
@@ -735,8 +744,8 @@ class DFD_BinClassifier_v2(BinaryClassifier):
         self.modelEpochs        = last_epoch
         
         # create model and results folder if not already present
-        check_folder(path_model_folder)
-        check_folder(path_results_folder)
+        check_folder(path_model_folder, is_model = True)
+        check_folder(path_results_folder, is_model = True)
         
         # save loss plot
         plot_loss(loss_epochs, title_plot= name_train, path_save = path_lossPlot_save)
@@ -934,7 +943,7 @@ class DFD_BinClassifier_v3(BinaryClassifier):
         # define the model dir path and create the directory
         current_date = date.today().strftime("%d-%m-%Y")    
         path_model_folder       = os.path.join(self.path_models,  name_train + "_v{}_".format(str(self.version)) + current_date)
-        check_folder(path_model_folder)
+        check_folder(path_model_folder, is_model = True)
         
         
         # define train dataloader
@@ -1109,7 +1118,7 @@ class DFD_BinClassifier_v3(BinaryClassifier):
         
         # create path for the model results
         path_results_folder     = os.path.join(self.path_results, name_train + "_v{}_".format(str(self.version)) + current_date)
-        check_folder(path_results_folder)       # create if doesn't exist
+        check_folder(path_results_folder, is_model = True)       # create if doesn't exist
         name_loss_file          = 'loss_'+ str(last_epoch) +'.png'
         path_lossPlot_save      = os.path.join(path_results_folder, name_loss_file)
         
@@ -1408,7 +1417,7 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         # define the model dir path and create the directory
         current_date = date.today().strftime("%d-%m-%Y")    
         path_model_folder       = os.path.join(self.path_models,  name_train + "_v{}_".format(str(self.version)) + current_date)
-        check_folder(path_model_folder)
+        check_folder(path_model_folder, is_model = True)
         
         # define train dataloader
         train_dataloader = None
@@ -1587,7 +1596,7 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         
         # create path for the model results
         path_results_folder     = os.path.join(self.path_results, name_train + "_v{}_".format(str(self.version)) + current_date)
-        check_folder(path_results_folder)       # create if doesn't exist
+        check_folder(path_results_folder, is_model = True)       # create if doesn't exist
         name_loss_file          = 'loss_'+ str(last_epoch) +'.png'
         name_valid_file         = "valid_{}_{}.png".format(self.early_stopping_trigger, str(last_epoch))
         path_lossPlot_save      = os.path.join(path_results_folder, name_loss_file)
@@ -1868,7 +1877,7 @@ class DFD_BinClassifier_v5(BinaryClassifier):
         # define the model dir path and create the directory
         current_date = date.today().strftime("%d-%m-%Y")    
         path_model_folder       = os.path.join(self.path_models,  name_train + "_v{}_".format(str(self.version)) + current_date)
-        check_folder(path_model_folder)
+        check_folder(path_model_folder, is_model = True)
         
         # define train dataloader
         train_dataloader = None
@@ -2087,7 +2096,7 @@ class DFD_BinClassifier_v5(BinaryClassifier):
         
         # create path for the model results
         path_results_folder     = os.path.join(self.path_results, name_train + "_v{}_".format(str(self.version)) + current_date)
-        check_folder(path_results_folder)       # create if doesn't exist
+        check_folder(path_results_folder, is_model = True)       # create if doesn't exist
         name_loss_file          = 'loss_'+ str(last_epoch) +'.png'
         name_valid_file         = "valid_{}_{}.png".format(self.early_stopping_trigger, str(last_epoch))
         path_lossPlot_save      = os.path.join(path_results_folder, name_loss_file)

@@ -51,7 +51,7 @@ class OOD_Classifier(object):
         
     
     #                                      data aux functions
-    def compute_positiveClassWeight(self, verbose = False, positive = "ood", multiplier = 1):
+    def compute_class_weights(self, verbose = False, positive = "ood", multiplier = 1, normalize = True, only_positive_weight = False):
         
         # TODO look https://pytorch.org/docs/stable/generated/torch.nn.BCEWithLogitsLoss.html#torch.nn.BCEWithLogitsLoss
         # to implement just pos weight computation 
@@ -99,18 +99,27 @@ class OOD_Classifier(object):
             class_weights.append(round(total/freq,5))
 
         # normalize class weights with values between 0 and 1
-        max_value = max(class_weights)
-        class_weights = [item/max_value for item in class_weights]
-        
+        if normalize:
+            max_value = max(class_weights)
+            class_weights = [item/max_value for item in class_weights]
+            
         # proportional increase over the weights
-        class_weights = [item * multiplier for item in class_weights]
+        if multiplier != 1:
+            class_weights = [item * multiplier for item in class_weights]
         
         print("Class_weights-> ", class_weights)
                 
         # turn back in loading modality sample + label
         self.dataset_train.set_only_labels(False)
         
-        return class_weights
+        if only_positive_weight:
+            print("Computing weight only for the positive class (label 1)")
+            pos_weight = class_weights[1]/class_weights[0]
+            print("positive class weight-> ", pos_weight)
+            
+            return [pos_weight]
+        else:
+            return class_weights 
 
     #                                       math/statistics aux functions
     
@@ -346,7 +355,7 @@ class OOD_Classifier(object):
         
         if train_name is not None:
             # path_results_folder = check_folder(path_results_folder, force = True) #$
-            check_folder(path_results_folder, force = False) #$
+            check_folder(path_results_folder, force = False, is_model = True) #$
             return path_results_folder
         else:
             return path_results_classifier
@@ -370,7 +379,7 @@ class OOD_Classifier(object):
         
         if train_name is not None:
             # path_models_folder = check_folder(path_models_folder, force = True)  #$
-            check_folder(path_models_folder, force = False)  #$
+            check_folder(path_models_folder, force = False, is_model = True)  #$
             return path_models_folder
         else:
             return path_models_classifier
@@ -1936,7 +1945,7 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
         self.model.train()
         
         # compute the weights for the labels
-        self.weights_labels = self.compute_positiveClassWeight(verbose=True, positive="ood")
+        self.weights_labels = self.compute_class_weights(verbose=True, positive="ood")
         
         train_dl = DataLoader(self.dataset_train, batch_size= self.batch_size,  num_workers = 8,  shuffle= True,   pin_memory= False)
         valid_dl = DataLoader(self.dataset_valid, batch_size= self.batch_size,  num_workers = 8, shuffle = False,  pin_memory= False) 
