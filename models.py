@@ -8,9 +8,12 @@ import  torch.nn                        as nn
 from    torchsummary                    import summary
 from    torchvision                     import models
 from    torchvision.models              import ResNet50_Weights, ViT_B_16_Weights
-from    utilities                       import print_dict, print_list, expand_encoding, convTranspose2d_shapes, get_inputConfig
+from    utilities                       import print_dict, print_list, expand_encoding, convTranspose2d_shapes, get_inputConfig, \
+                                            showImage
 from    einops.layers.torch             import Rearrange
 from    einops                          import repeat, rearrange
+# import  cv2
+import  timm
 
 T.manual_seed(seed=22)
 
@@ -45,7 +48,6 @@ class Project_DFD_model(nn.Module):
             expected input of this type -> color,width,height
         """
         
-        
         if input_shape is None:
             input_shape = (self.n_channels, self.height, self.width)
             
@@ -53,6 +55,7 @@ class Project_DFD_model(nn.Module):
             model_stats = summary(self, input_shape, verbose = int(verbose))
             return str(model_stats)
         except Exception as e:
+            # print(e)
             summ = ""
             n_params = 0
             for k,v in self.getLayers().items():
@@ -3454,8 +3457,65 @@ class ViT_base_3(Project_DFD_model):
         
         return logits
 
-# _____________________________ViT base pre-trained _______________________________________________
+# _____________________________ViT base 4th implementation (WildCapture-timm) __________________________
 
+
+def get_vitTimm_models(print_it = True, pretrained = True):
+    models = [model for model in timm.list_models(pretrained=pretrained) if "vit_" in model.lower().strip()]
+    if print_it:
+        print("\ntimm module, available models:\n")
+        print_list(models)
+    return models
+
+# def get_info_timm_model(model_name, print_it = True):
+#     model_info = timm.model_info(model_name)
+#     if print_it:
+#         print(f"info for model {model_name}\n:", model_info) 
+    
+    
+class ViT_timm(Project_DFD_model):
+    def __init__(self, n_classes = 10, dropout = 0.1, prog_model = 1):
+        """_summary_
+
+        Args:
+            num_classes (int, optional): _description_. Defaults to 10.
+            dropout (int, optional): dropout rate used in attention and MLP layers. Defaults to 0.
+            prog_model (int, optional): progressive id to select the model (use getModels for the complete list)
+        """
+        super(ViT_timm, self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = n_classes)
+        self.models_avaiable = ['vit_base_patch16_224', 'vit_base_patch16_224.augreg_in21k']
+        self.name = self.models_avaiable[prog_model]
+        self.model_vit = timm.create_model(model_name=self.name, pretrained=True, num_classes=n_classes, drop_rate=dropout)
+        data_config = timm.data.resolve_model_data_config(self.model_vit)
+        
+        # get trasnform ops to adapt input
+        self.transforms = timm.data.create_transform(**data_config, is_training=True)
+        
+        # print(data_config)
+        # info = get_info_timm_model(self.model_name)
+        # print(info)
+        
+        self.emb_size   = 768 
+        self.patch_size = 16
+        self.n_heads    = 12
+        self.n_layers   = 12
+        self.dropout    = dropout
+        self.dim_head = self.emb_size //self.n_heads
+
+        print(self.transforms)
+        
+        
+    def getModels(self):
+        print_list(self.models_avaiable)
+    
+    def forward(self, x):
+        # Pass the input through the ViT model
+        output = self.model_vit(x)
+
+        return output
+
+
+# _____________________________ViT base pre-trained  _______________________________________________
 
 class ViT_b16_ImageNet(Project_DFD_model):
     """ 
@@ -3598,7 +3658,202 @@ class ViT_base_EA(Project_DFD_model):
         
         return logits, enc 
   
-  
+class ViT_timm_EA(Project_DFD_model):
+    def __init__(self, num_classes = 10, dropout = 0.1, prog_model = 1, encoding_type = "mean", resize_att_map = True):
+        """_summary_
+
+        Args:
+            num_classes (int, optional): _description_. Defaults to 10.
+            dropout (int, optional): dropout rate used in attention and MLP layers. Defaults to 0.
+            prog_model (int, optional): progressive id to select the model (use getModels for the complete list)
+        """
+        super(ViT_timm_EA, self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = num_classes)
+        self.models_avaiable = ['vit_base_patch16_224', 'vit_base_patch16_224.augreg_in21k']
+        self.name = self.models_avaiable[prog_model]
+        self.model_vit = timm.create_model(model_name=self.name, pretrained=True, num_classes=num_classes, drop_rate=dropout)
+        # data_config = timm.data.resolve_model_data_config(self.model_vit)
+        
+        # get trasnform ops to adapt input
+        # self.transforms = timm.data.create_transform(**data_config, is_training=True)
+        
+        # print(data_config)
+        
+        self.resize_att_map         = resize_att_map
+        self.emb_size               = 768 
+        self.mlp_dim                = 3072
+        self.patch_size             = 16
+        self.n_heads                = 12
+        self.n_layers               = 12
+        self.dropout                = dropout
+        self.dim_head               = self.emb_size //self.n_heads
+        self.encoding_type          = encoding_type
+        
+        # get model parts
+        self.embedding  = self.model_vit.patch_embed
+        self.encoder    = self.model_vit.blocks
+        self.head       = self.model_vit.head    
+
+        # wrapper for attention extraction 
+        self.model_vit.blocks[-1].attn.forward = self.forward_wrapper(self.model_vit.blocks[-1].attn)
+        
+    def getModels(self):
+        print_list(self.models_avaiable)
+    
+    # reference: https://github.com/lcultrera/WildCapture/
+    
+    def forward_wrapper(self, attn_obj):
+        def forward_wrap(x):
+            # get batch, number of elements in the sequence (patches + cls token) and latent representation dims 
+            B, N, C = x.shape    # on last layer the input channels has dim self.emb_size (768)
+            
+            # compute the embedding size for each head
+            head_emb_size = C // attn_obj.num_heads
+
+            # get the 3 different features vector for q, k and v (3 in 3rd dimension stands for this) for each head
+            # and change dimensions order to: qkv dim, batch, head_dim, sequence_dim, head_embedding
+            qkv = attn_obj.qkv(x).reshape(B, N, 3, attn_obj.num_heads, head_emb_size).permute(2, 0, 3, 1, 4)
+            
+            # remove qkv dimension returning the 3 different vectors
+            q, k, v = qkv.unbind(dim = 0)
+
+            # print(q.shape)
+            # compute the matrix calculus for attention
+            
+            # first transposition of key vector between sequence_dim, head_embedding, to make matrix multiplication feasible
+            k_T = k.transpose(-2, -1)
+            
+            # matmul + scaling
+            attn = (q @ k_T) * attn_obj.scale
+            
+            # apply softmax over last dimension
+            attn = attn.softmax(dim=-1)
+            
+            # apply dropout
+            attn = attn_obj.attn_drop(attn)
+            
+            # print("att full", attn.shape)
+            
+            # save the full attention map
+            attn_obj.attn_map = attn
+            
+            # get attention map for [cls] token and save, dropping first 2 values of the attention
+            attn_obj.cls_attn_map = attn[:, :, 0, 2:]
+            
+            # compute the remaining operations for the attention forward
+
+            # matmul + exchange of dim between head_dim and sequence_dim
+            x = (attn @ v).transpose(1, 2)
+            
+            # collapse head dim, and head_embedding in a single dimension
+            x = x.reshape(B, N, C)
+            
+            # apply ap and dropout
+            x = attn_obj.proj(x)                        # linear activation fuction
+            x = attn_obj.proj_drop(x)                 
+            
+            return x
+        return forward_wrap
+    
+    def forward(self, x, verbose = False):
+
+        # print(x.shape)
+        features    = self.model_vit.forward_features(x)
+        if verbose: print("features shape: ", features.shape)
+        
+        # get encoding
+        encoding = features.mean(dim = 1) if self.encoding_type == 'mean' else features[:, 0]
+        if verbose: print("encoding shape: ",encoding.shape)
+
+        # get logits
+        logits      = self.model_vit.forward_head(features)         # using [cls] token embedding 
+        if verbose: print("logits shape: ",logits.shape)
+
+        # get attention map
+        
+        # compute a mean attention map over all the head emb relative to the token [cls]
+        cls_weight = self.model_vit.blocks[-1].attn.cls_attn_map
+        cls_weight =  cls_weight.mean(dim=1)
+        if verbose: print("attention encoding [cls] token: ",cls_weight.shape)
+        
+        # neceassary this part? look ff wrapper, i can take directly values of att_map between 0 and 196
+        a = T.empty(cls_weight.shape[0], 1)
+        a[:,0] = cls_weight[:,165]
+        print(a.shape)
+        att_map = T.cat((cls_weight, a.cuda()), dim  =1)
+        if verbose: print("attention encoding [cls] token, repeating one more value as last: ",att_map.shape)
+        
+        
+        # get attention map over patches and reorganize
+        # att_map = att_map.view(-1, 14, 14, 1).detach().cpu().numpy()
+        # att_map = att_map.view(-1, 14, 14, 1)
+        att_map = att_map.view(-1, 1, 14, 14)
+        if verbose: print("attention map [cls] token, as a patch-pixel image: ",att_map.shape)
+        
+        if self.resize_att_map:
+            att_map = F.interpolate(input=att_map, size=(224, 224), mode='area')
+            if verbose: print("attention map [cls] token (interpolated): ",att_map.shape)
+            # att_map = att_map.permute(0, 3, 1, 2)
+            
+        # scale map between 0 and 1
+        att_map /= T.max(att_map)
+        
+        # att_map = np.squeeze(att_map,axis=0)
+                
+        return logits, encoding, att_map 
+
+class AutoEncoder_Attention(Project_DFD_model):
+    def __init__(self):
+        super(AutoEncoder_Attention, self).__init__(c = 1, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = None)
+        self.flc = 32
+        self.zdim = 512
+        self.encoder = nn.Sequential(
+            nn.Conv2d(1, self.flc, kernel_size=4, stride=2, padding=1),
+            nn.LeakyReLU(0.2),
+            nn.Conv2d(self.flc, self.flc, kernel_size=4, stride=2, padding=1),
+            nn.LeakyReLU(0.2),
+        )
+
+        self.encoder.add_module("final_convs", nn.Sequential(
+            nn.Conv2d(self.flc, self.flc, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(0.2),
+            nn.Conv2d(self.flc, self.flc*2, kernel_size=4, stride=2, padding=1),
+            nn.LeakyReLU(0.2),
+            nn.Conv2d(self.flc*2, self.flc*2, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(0.2),
+            nn.Conv2d(self.flc*2, self.flc*4, kernel_size=4, stride=2, padding=1),
+            nn.LeakyReLU(0.2),
+            nn.Conv2d(self.flc*4, self.flc*2, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(0.2),
+            nn.Conv2d(self.flc*2, self.flc, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(0.2),
+            nn.Conv2d(self.flc, self.zdim, kernel_size=8, stride=1, padding=0)
+        ))
+
+        self.decoder = nn.Sequential(
+            nn.ConvTranspose2d(self.zdim, self.flc, kernel_size=8, stride=1, padding=0),
+            nn.LeakyReLU(0.2),
+            nn.Conv2d(self.flc, self.flc*2, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(0.2),
+            nn.Conv2d(self.flc*2, self.flc*4, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(0.2),
+            nn.ConvTranspose2d(self.flc*4, self.flc*2, kernel_size=4, stride=2, padding=1),
+            nn.LeakyReLU(0.2),
+            nn.Conv2d(self.flc*2, self.flc*2, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(0.2),
+            nn.ConvTranspose2d(self.flc*2, self.flc, kernel_size=4, stride=2, padding=1),
+            nn.LeakyReLU(0.2),
+            nn.Conv2d(self.flc, self.flc, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(0.2),
+            nn.ConvTranspose2d(self.flc, self.flc, kernel_size=4, stride=2, padding=1),
+            nn.ConvTranspose2d(self.flc, 1, kernel_size=4, stride=2, padding=1)
+        )
+
+    def forward(self, x):
+        x1 = self.encoder(x)
+        print(x1.shape)
+        x2 = self.decoder(x1)
+        print(x2.shape)
+        return x2
 #_____________________________________Test models_________________________________________________ 
 
 class FC_classifier(nn.Module):
@@ -3902,21 +4157,17 @@ if __name__ == "__main__":
             # vit = ViT_base(n_classes=2)
             # vit = ViT(n_classes=2)
             # vit = ViT_b16_ImageNet().to(device=device)
-            vit = ViT_base_3().to(device = device)
-            # vit.getSummary()
-            # out = vit.forward(x)
-            # print(out.shape)
-            # logits = 
+            vit = ViT_timm().to(device = device)
+            vit.getSummary()
+            out = vit.forward(x)
+            print(out.shape)
         
             input("press enter to exit ")
-    
-    
+        
     def test_ViTEA():
-                
         # define test input
         x = T.rand((32, INPUT_CHANNELS, INPUT_HEIGHT, INPUT_WIDTH)).to(device)
-        
-        tests = [0, 1]
+        tests = [0, 0, 0, 1]
         
         # test patch embedding
         if tests[0]:
@@ -3926,20 +4177,33 @@ if __name__ == "__main__":
             x_prime = emb.forward(x)
             print("x':", x_prime.shape)
         
-        if tests[1]:
-            # vit = ViT_base(n_classes=2)
-            # vit = ViT(n_classes=2)
-            # vit = ViT_b16_ImageNet().to(device=device)
-            vit = ViT_base_EA().to(device = device)
+        elif tests[1]:
+            vit = ViT_timm_EA().to(device = device)
             # vit.getSummary()
             # print(vit.getAttributes())
-            out = vit.forward(x)
-            print(out[0].shape)
-            print(out[1].shape)
-            # print(out.shape)
-            # logits = 
+            logits, encoding, attention = vit.forward(x)
+            # print(out[0])
+            print(attention[0].shape)
+            showImage(attention[0], has_color= False)
+            # print(out[0].shape)
+            # print(out[1].shape)
+
+        elif tests[2]:
+            ae = AutoEncoder_Attention()
+            ae.getSummary()
         
-            input("press enter to exit ")
+        
+        elif tests[3]:
+            vit = ViT_timm_EA().to(device = device)
+            # vit.getSummary()
+            # print(vit.getAttributes())
+            logits, encoding, attention = vit.forward(x)
+            # print(out[0])
+            print(attention[0].shape)
+            showImage(attention[0], has_color= False)
+        
+        input("press enter to exit ")
+    
     # OOD detection
     
     def test_abnorm_basic():
@@ -4001,6 +4265,5 @@ if __name__ == "__main__":
     
 
     test_ViTEA()
-    
     #                           [End test section] 
     

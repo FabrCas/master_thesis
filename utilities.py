@@ -210,7 +210,7 @@ def balanceLabels(self, dataloader, verbose = False):
 
 ##################################################  image transformation/data augmentation ############################################
 
-def get_transformationInput(isTensor = False):
+def trans_input_v1(isTensor = False):
     """ function that returns trasnformation operations sequence for the image input to be compatible for ResNet50 model
 
     Returns:
@@ -223,16 +223,45 @@ def get_transformationInput(isTensor = False):
     
     
     if isTensor:
-        transform_ops = transforms.Resize((h, w), interpolation= InterpolationMode.BILINEAR, antialias= True),
+        transform_ops = transforms.Compose([transforms.Resize((h, w), interpolation= InterpolationMode.BILINEAR, antialias= True),
+                        lambda x: T.clamp(x, 0, 1),])
     else: 
         transform_ops = transforms.Compose([
-            transforms.Resize((h, w), interpolation= InterpolationMode.BILINEAR, antialias= True),
             transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+            transforms.Resize((h, w), interpolation= InterpolationMode.BILINEAR, antialias= True),
             lambda x: T.clamp(x, 0, 1),
             # transforms.Normalize(mean=[0.5,0.5,0.5], std=[0.5,0.5,0.5])   # normlization between -1 and 1, using the whole range uniformly, formula: (pixel - mean)/std
         ])
     
     return transform_ops
+
+
+def trans_input_v2(isTensor = False):
+    """ function that returns trasnformation operations sequence for the image input to be compatible for ResNet50 model
+
+    Returns:
+        compose pytorch object
+    """
+    
+    config = get_inputConfig()
+    w = config['width']
+    h = config['height']
+    
+    
+    if isTensor:
+        transform_ops = transforms.Compose([
+                        transforms.Resize((h, w), interpolation= InterpolationMode.BILINEAR, antialias= True),
+                        v2.Normalize(mean= [0.5000, 0.5000, 0.5000], std=[0.5000, 0.5000, 0.5000]),
+                                                  ])
+    else: 
+        transform_ops = transforms.Compose([
+            transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+            transforms.Resize((h, w), interpolation= InterpolationMode.BILINEAR, antialias= True),
+            v2.Normalize(mean= [0.5000, 0.5000, 0.5000], std=[0.5000, 0.5000, 0.5000])
+        ])
+    
+    return transform_ops
+
 
 def augment_v1(x):
     
@@ -249,6 +278,35 @@ def augment_v1(x):
     x = T.clamp(x, 0, 1)
     
     return x
+
+def augment_v2(x):
+    
+    config = get_inputConfig()
+    w = config['width']
+    h = config['height']
+    
+    x = v2.ToTensor()(x)   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+    x = v2.Resize((w, h), interpolation= InterpolationMode.BILINEAR, antialias= True)(x)
+    x = v2.RandomHorizontalFlip(p=0.5)(x)
+    x = v2.ColorJitter(brightness=(0.6, 1.4), contrast=(0.6, 1.4), saturation=(0.6, 1.4), hue=None)(x)
+    x = v2.Normalize(mean = [0.5000, 0.5000, 0.5000], std=[0.5000, 0.5000, 0.5000])(x)
+    return x
+
+
+def alpha_blend_pytorch(image1, image2, alpha):
+    """
+    Alpha blend two PyTorch tensors representing images.
+
+    Parameters:
+        - image1: The first image (background) as a PyTorch tensor
+        - image2: The second image (foreground) as a PyTorch tensor
+        - alpha: The blending factor (opacity) for image2. Should be in the range [0, 1].
+
+    Returns:
+        - blended_image: The alpha-blended image as a PyTorch tensor.
+    """
+    blended_image = (1 - alpha) * image1 + alpha * image2
+    return blended_image
 
 def image2int(img_tensor, is_range_zero_one = True):
     """ 
@@ -454,7 +512,8 @@ def showImage(img, name= "unknown", has_color = True, save_image = False):
             img = img.detach().cpu().numpy()
             
         # move back color channel has last dimension, (in Tensor the convention for the color channel is to use the first after the batch)
-        img = np.moveaxis(img,0,-1)
+        img = np.moveaxis(img, source = 0, destination=-1)
+        # print(img.shape)
     
     
     plt.figure()

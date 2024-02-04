@@ -21,7 +21,7 @@ from    torch.utils.data                    import default_collate
 from    utilities                           import plot_loss, plot_valid, saveModel, metrics_binClass, loadModel, sampleValidSet, \
                                             duration, check_folder, cutmix_image, showImage, image2int, ExpLogger
 from    dataset                             import getScenarioSetting, CDDB_binary, CDDB_binary_Partial
-from    models                              import ViT_base, ViT_base_2, ViT_base_3, ViT_b16_ImageNet
+from    models                              import ViT_base_3, ViT_b16_ImageNet, ViT_timm
 from    bin_classifier                      import BinaryClassifier
 
 
@@ -36,7 +36,8 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
         
 
     """
-    def __init__(self, scenario, useGPU = True, patch_size = None, emb_size = None,  batch_size = 32, model_type = "ViT_base"):  # batch_size = 32 or 64
+    def __init__(self, scenario, useGPU = True, patch_size = None, emb_size = None,  batch_size = 32,
+                 model_type = "ViT_base", transform_prog = 1):  # batch_size = 32 or 64
         """ init classifier
 
         Args:
@@ -55,7 +56,9 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
             model_type (str, optional): choose the Unet architecture between :
                 - "ViT_base_[size:xs,s,m][patch_size]"
                 - "ViT_b16_pretrained"   (imagenet)
+                - "ViT_pretrained_timm"
             Defaults is "ViT_base". 
+            transform_prog (int, optional). Select the prog for input data trasnformation.Defaults is 1.
         """
         super(DFD_BinViTClassifier_v6, self).__init__(useGPU = useGPU, batch_size = batch_size, model_type = model_type)
         self.version = 6
@@ -65,6 +68,7 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
         self.augment_data_train = True
         self.use_cutmix         = False     # problem when we are learning transformer over sequence of patches
         self.n_classes          = 2
+        self.transform_prog   = transform_prog
         
         model_type_check = model_type.lower().strip()
         
@@ -96,8 +100,12 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
             else:
                 raise ValueError("specify the dimension of the ViT_base model")
             
-        elif "vit_b16_pretrained" in model_type.lower().strip():
-            self.model = ViT_b16_ImageNet(n_classes= self.n_classes)
+        elif "vit_b16_pretrained_imagenet" in model_type.lower().strip():
+            self.model = ViT_b16_ImageNet(**kwargs)
+            
+        elif "vit_pretrained_timm" in model_type.lower().strip():
+            self.model = ViT_timm(**kwargs)
+        
         else:
             raise ValueError("The model type is not a Unet model")
         
@@ -111,10 +119,9 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
         # bce defined in the training since is necessary to compute the labels weights 
 
         # learning hyperparameters (default)
-        self.learning_coeff         = 0.4                                               # multiplier that increases the training time
+        self.learning_coeff         = 0.1                                              # multiplier that increases the training time
         self.lr                     = 1e-4    # 1e-3 or 1e-4
         self.n_epochs               = math.floor(50 * self.learning_coeff)
-        # self.n_epochs               = 15
         self.start_early_stopping   = math.floor(self.n_epochs/2)                       # epoch to start early stopping
         self.weight_decay           = 1e-3                                              # L2 regularization term 
         self.patience               = max(math.floor(5 * self.learning_coeff),5)        # early stopping patience
@@ -135,10 +142,12 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
         # get train set
         print(f"\n\t\t[Loading CDDB binary partial ({self.scenario}) data]\n")
 
-        self.train_dataset  = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False, augment= self.augment_data_train, label_vector= True)
+        self.train_dataset  = CDDB_binary_Partial(scenario = self.scenario, train = True,  ood = False,
+                                                  augment= self.augment_data_train, label_vector= True, type_transformation= self.transform_prog)
         
         # get valid and test sets
-        test_dataset        = CDDB_binary_Partial(scenario = self.scenario, train = False, ood = False, augment= False)
+        test_dataset        = CDDB_binary_Partial(scenario = self.scenario, train = False, ood = False,
+                                                  augment= False, type_transformation= self.transform_prog)
         self.valid_dataset, self.test_dataset = sampleValidSet(trainset= self.train_dataset, testset= test_dataset, useOnlyTest = True, verbose = True)
         
     def _check_parameters(self):
@@ -187,6 +196,7 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
             "model_type": self.model_type,
             "model_class": self.model.__class__.__name__,
             "input_shape": input_shape,
+            "prog_data_transformation": self.transform_prog, 
             "data_scenario": self.scenario,
             "version_train": self.version,
             "optimizer": self.optimizer_name,
@@ -602,7 +612,7 @@ if __name__ == "__main__":
     
     # ________________________________ v7  ________________________________
     
-    train_test_v6_metrics(model_type="ViT_base_M16", patch_size=16)
+    train_test_v6_metrics(model_type="ViT_pretrained_timm")
     
     #                           [End test section] 
     """ 
@@ -621,6 +631,7 @@ if __name__ == "__main__":
         test_v6_metrics(name_model = "faces_ViT_base_S32_v6_30-01-2024", epoch = 15, model_type="ViT_base_S32")
         test_v6_metrics(name_model = "faces_ViT_base_S16_v6_30-01-2024", epoch = 37, model_type="ViT_base_S16", patch_size=16)
         test_v6_metrics(name_model = "faces_ViT_base_S32_training+_v6_31-01-2024", epoch = 141, model_type="ViT_base_S32")
+        
     # GAN:
         #                                           v6
 

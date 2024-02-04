@@ -98,7 +98,7 @@ def getScenarioSetting():
 
 ##################################################### [Project dataset superclass]#####################################################################
 class ProjectDataset(Dataset):
-    def __init__(self, train, augment, label_vector, width_img, height_img, transform2ood):
+    def __init__(self, train, augment, label_vector, width_img, height_img, transform2ood, type_transformation):
         super(ProjectDataset, self).__init__()
         self.train = train                      # boolean flag to select train or test data
         self.augment  = augment
@@ -107,27 +107,45 @@ class ProjectDataset(Dataset):
         self.height_img = height_img
         self.transform2ood  = transform2ood
         self.toTensor       = transforms.ToTensor()  # function to pytorch tensor
+        self.type_transformation = type_transformation
         
-        if self.augment:
-            self.transform_ops = transforms.Compose([
-                v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
-                v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
-                # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])   # to have pixel values close between -1 and 1 (imagenet distribution)
-                # v2.ToImage(),
-                # v2.ToDtype(T.float32, scale=True),
-                v2.RandomHorizontalFlip(0.5),
-                v2.RandomVerticalFlip(0.1),
-                v2.RandAugment(num_ops = 1, magnitude= 7, num_magnitude_bins= 51, interpolation = InterpolationMode.BILINEAR),
-                lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
-            ])
-        else:
-            self.transform_ops = transforms.Compose([
-                v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
-                v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
-                lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
-                # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])   # to have pixel values close between -1 and 1 (imagenet distribution)
-                # transforms.Normalize(mean=[0.5,0.5,0.5], std=[0.5,0.5,0.5])   # normlization between -1 and 1, using the whole range uniformly, formula: (pixel - mean)/std
-            ])
+        
+        if type_transformation == 0:
+            if self.augment:
+                self.transform_ops = transforms.Compose([
+                    v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+                    v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
+                    # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])   # to have pixel values close between -1 and 1 (imagenet distribution)
+                    # v2.ToImage(),
+                    # v2.ToDtype(T.float32, scale=True),
+                    v2.RandomHorizontalFlip(0.5),
+                    v2.RandomVerticalFlip(0.1),
+                    v2.RandAugment(num_ops = 1, magnitude= 7, num_magnitude_bins= 51, interpolation = InterpolationMode.BILINEAR),
+                    lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
+                ])
+            else:
+                self.transform_ops = transforms.Compose([
+                    v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+                    v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
+                    lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
+                    # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])   # to have pixel values close between -1 and 1 (imagenet distribution)
+                    # transforms.Normalize(mean=[0.5,0.5,0.5], std=[0.5,0.5,0.5])   # normlization between -1 and 1, using the whole range uniformly, formula: (pixel - mean)/std
+                ])
+        elif type_transformation == 1:
+            if self.augment:    
+                self.transform_ops = transforms.Compose([
+                    v2.ToTensor(),
+                    v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
+                    v2.RandomHorizontalFlip(p=0.5),
+                    v2.ColorJitter(brightness=(0.6, 1.4), contrast=(0.6, 1.4), saturation=(0.6, 1.4), hue=None),
+                    v2.Normalize(mean = [0.5000, 0.5000, 0.5000], std=[0.5000, 0.5000, 0.5000])
+                ])
+            else:
+                self.transform_ops = transforms.Compose([
+                    v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+                    v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
+                    v2.Normalize(mean= [0.5000, 0.5000, 0.5000], std=[0.5000, 0.5000, 0.5000])
+                ])
             
             
         # initialization of path for the input images and the labels
@@ -205,7 +223,8 @@ class CDDB_binary(ProjectDataset):
     """_
         Dataset class that uses the full data from CDDB dataset as In-Distribuion (ID) for binary deepfake detection
     """
-    def __init__(self, width_img= w, height_img = h, train = True, augment = False, label_vector = True, transform2ood = False):
+    def __init__(self, width_img= w, height_img = h, train = True, augment = False, label_vector = True,
+                 transform2ood = False, type_transformation = 0):
         """ CDDB_binary constructor
 
         Args:                
@@ -217,10 +236,11 @@ class CDDB_binary(ProjectDataset):
             - label_vector (bool, optional): boolean flag to indicate the label format in output for the labels.
                 if True one-hot encoding labels are returned, otherwise index based representation is used.Defaults to True.
             - transform2ood (bool, optional): boolean flag to activate synthesis of OOD data from ID data, Defaults to False
+            - type_transformation (int, optional): choose between the differnt type of input data transformation, Defaults is 0
         """
         
         super(CDDB_binary,self).__init__(train = train, augment = augment, label_vector = label_vector, width_img = width_img,  \
-                                         height_img = height_img, transform2ood = transform2ood)
+                                         height_img = height_img, transform2ood = transform2ood, type_transformation= type_transformation)
 
         # scan the data   
         self._scanData()
@@ -356,7 +376,8 @@ class CDDB_binary_Partial(ProjectDataset):
         Selecting the study case ("content","group","mix") the data are organized,
         using remaining samples as OOD data.
     """
-    def __init__(self, scenario, width_img= w, height_img = h, train = True, ood = False, augment = False, label_vector = True, transform2ood = False):
+    def __init__(self, scenario, width_img= w, height_img = h, train = True, ood = False, augment = False, label_vector = True,
+                 transform2ood = False, type_transformation = 0):
         """ CDDB_binary_Partial constructor
 
         Args:
@@ -376,9 +397,10 @@ class CDDB_binary_Partial(ProjectDataset):
             - label_vector (bool, optional): boolean flag to indicate the label format in output for the labels.
                 if True one-hot encoding labels are returned, otherwise index based representation is used. Defaults to True.
             - transform2ood (bool, optional): boolean flag to activate synthesis of OOD data from ID data, Defaults to False
+            - type_transformation (int, optional): choose between the differnt type of input data transformation, Defaults is 0
         """
         super(CDDB_binary_Partial,self).__init__(train = train, augment = augment, label_vector = label_vector, width_img = width_img,  \
-                                         height_img = height_img, transform2ood = transform2ood)
+                                         height_img = height_img, transform2ood = transform2ood, type_transformation= type_transformation)
         # boolean flags for data to return
         self.scenario       = scenario.lower().strip()
         self.ood            = ood
@@ -559,7 +581,8 @@ class CDDB(ProjectDataset):
     """_
         Dataset class that uses the full data from CDDB dataset as In-Distribuion (ID) for multi-label deepfake detection
     """
-    def __init__(self, width_img= w, height_img = h, train = True, augment = False, real_grouping = "single", label_vector = False, transform2ood = False):
+    def __init__(self, width_img= w, height_img = h, train = True, augment = False, real_grouping = "single", label_vector = False,
+                 transform2ood = False, type_transformation = 0):
         """
         CDDB_binary_Partial constructor
 
@@ -576,9 +599,10 @@ class CDDB(ProjectDataset):
             - label_vector (bool, optional): boolean flag to indicate the label format in output for the labels.
                 if True one-hot encoding labels are returned, otherwise index based representation is used.Defaults to True.
             - transform2ood (bool, optional): boolean flag to activate synthesis of OOD data from ID data, Defaults to False
+            - type_transformation (int, optional): choose between the differnt type of input data transformation, Defaults is 0
         """
         super(CDDB,self).__init__(train = train, augment = augment, label_vector = label_vector, width_img = width_img,  \
-                                         height_img = height_img, transform2ood = transform2ood)
+                                         height_img = height_img, transform2ood = transform2ood, type_transformation= type_transformation)
         
         self.real_grouping = real_grouping
         
@@ -959,7 +983,8 @@ class CDDB_Partial(ProjectDataset):
         Selecting the study case ("content","group","mix") the data are organized,
         using remaining samples as OOD data.
     """
-    def __init__(self, scenario, width_img= w, height_img = h, train = True, ood = False, augment = False, real_grouping = "single", label_vector = False, transform2ood = False):
+    def __init__(self, scenario, width_img= w, height_img = h, train = True, ood = False, augment = False, real_grouping = "single",
+                 label_vector = False, transform2ood = False, type_transformation = 0):
         """CDDB_Partial constructor
 
         Args:
@@ -984,9 +1009,10 @@ class CDDB_Partial(ProjectDataset):
             - label_vector (bool, optional): boolean flag to indicate the label format in output for the labels.
             if True one-hot encoding labels are returned, otherwise index based representation is used.Defaults to True.
             - transform2ood (bool, optional): boolean flag to activate synthesis of OOD data from ID data, Defaults to False
+            - type_transformation (int, optional): choose between the differnt type of input data transformation, Defaults is 0
         """
         super(CDDB_Partial,self).__init__(train = train, augment = augment, label_vector = label_vector, width_img = width_img,  \
-                                         height_img = height_img, transform2ood = transform2ood)
+                                         height_img = height_img, transform2ood = transform2ood, type_transformation= type_transformation)
         self.scenario           = scenario
         self.real_grouping      = real_grouping
         self.ood                = ood

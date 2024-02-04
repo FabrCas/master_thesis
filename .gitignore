@@ -205,7 +205,13 @@ pip-selfcheck.json
 .ionide
 
 
+# ignore pytorch/keras model 
+# *.ckpt
+# *.h5
+
 # ignore project folders
 data/
 models/
+
+
 
