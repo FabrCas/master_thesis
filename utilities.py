@@ -491,12 +491,18 @@ def loadJson(path_file):
 
 ##################################################  Plot/show functions ###############################################################
 
-def showImage(img, name= "unknown", has_color = True, save_image = False):
+def showImage(img, name= "unknown", has_color = True, save_image = False, convert_range  = False):
     """ plot image using matplotlib
 
     Args:
         img (np.array/T.Tensor/Image): image data in RGB format, [height, width, color_channel]
+        convert_range (boolean, optinal): used to convert float range [-1,1] to valid [0,1]. Defaults to False
     """
+    
+    # auto-infer if conversion is necessary
+    
+    if convert_range:
+        img = (img+1)/2
     
     if save_image:
         check_folder("./static/saved_imgs")
@@ -584,9 +590,9 @@ def plot_loss(loss_array, title_plot = None, path_save = None, duration_timer = 
     plt.xlabel('epochs', fontsize=18)
     plt.ylabel('Loss', fontsize=18)
     if title_plot is not None:
-        plt.title("Learning loss plot {}".format(title_plot), fontsize=18)
+        plt.title("Learning loss history {}".format(title_plot), fontsize=18)
     else:
-        plt.title('Learning loss plot', fontsize=18)
+        plt.title('Learning loss history', fontsize=18)
     
     # save if you define the path
     if path_save is not None:
@@ -758,8 +764,7 @@ def plot_PR_curve(recalls, precisions, path_save = None, duration_timer = 2500):
     #     plt.clf()  # clear plot data
     plt.show()
         
-    
-
+        
 ##################################################  Metrics functions #################################################################
 
 def metrics_binClass(preds, targets, pred_probs, epoch_model="unknown", path_save = None, average = "macro",  save = True, name_ood_file  = None, ood_labels_reversed = False):

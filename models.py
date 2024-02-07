@@ -82,7 +82,7 @@ class Project_DFD_model(nn.Module):
         self.to(device)
         
     def _init_weights_kaimingNormal(self):
-        # Initialize the weights  using He initialization
+        # Initialize the weights  using He initialization (good for conv net)
         print("Weights initialization using kaiming Normal")
                
         for param in self.parameters():
@@ -3466,12 +3466,7 @@ def get_vitTimm_models(print_it = True, pretrained = True):
         print("\ntimm module, available models:\n")
         print_list(models)
     return models
-
-# def get_info_timm_model(model_name, print_it = True):
-#     model_info = timm.model_info(model_name)
-#     if print_it:
-#         print(f"info for model {model_name}\n:", model_info) 
-    
+     
     
 class ViT_timm(Project_DFD_model):
     def __init__(self, n_classes = 10, dropout = 0.1, prog_model = 1):
@@ -3659,7 +3654,7 @@ class ViT_base_EA(Project_DFD_model):
         return logits, enc 
   
 class ViT_timm_EA(Project_DFD_model):
-    def __init__(self, num_classes = 10, dropout = 0.1, prog_model = 1, encoding_type = "mean", resize_att_map = True):
+    def __init__(self, n_classes = 10, dropout = 0.1, prog_model = 1, encoding_type = "mean", resize_att_map = True):
         """_summary_
 
         Args:
@@ -3667,10 +3662,10 @@ class ViT_timm_EA(Project_DFD_model):
             dropout (int, optional): dropout rate used in attention and MLP layers. Defaults to 0.
             prog_model (int, optional): progressive id to select the model (use getModels for the complete list)
         """
-        super(ViT_timm_EA, self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = num_classes)
+        super(ViT_timm_EA, self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = n_classes)
         self.models_avaiable = ['vit_base_patch16_224', 'vit_base_patch16_224.augreg_in21k']
         self.name = self.models_avaiable[prog_model]
-        self.model_vit = timm.create_model(model_name=self.name, pretrained=True, num_classes=num_classes, drop_rate=dropout)
+        self.model_vit = timm.create_model(model_name=self.name, pretrained=True, num_classes=n_classes, drop_rate=dropout)
         # data_config = timm.data.resolve_model_data_config(self.model_vit)
         
         # get trasnform ops to adapt input
@@ -3737,7 +3732,8 @@ class ViT_timm_EA(Project_DFD_model):
             attn_obj.attn_map = attn
             
             # get attention map for [cls] token and save, dropping first 2 values of the attention
-            attn_obj.cls_attn_map = attn[:, :, 0, 2:]
+            # attn_obj.cls_attn_map = attn[:, :, 0, 2:]
+            attn_obj.cls_attn_map = attn[:, :, 0, 1:]
             
             # compute the remaining operations for the attention forward
 
@@ -3760,46 +3756,56 @@ class ViT_timm_EA(Project_DFD_model):
         features    = self.model_vit.forward_features(x)
         if verbose: print("features shape: ", features.shape)
         
-        # get encoding
+        #                                       1) get encoding
         encoding = features.mean(dim = 1) if self.encoding_type == 'mean' else features[:, 0]
         if verbose: print("encoding shape: ",encoding.shape)
 
-        # get logits
+        #                                       2) get logits
         logits      = self.model_vit.forward_head(features)         # using [cls] token embedding 
         if verbose: print("logits shape: ",logits.shape)
 
-        # get attention map
+        #                                       3) get attention map
         
-        # compute a mean attention map over all the head emb relative to the token [cls]
-        cls_weight = self.model_vit.blocks[-1].attn.cls_attn_map
-        cls_weight =  cls_weight.mean(dim=1)
-        if verbose: print("attention encoding [cls] token: ",cls_weight.shape)
-        
-        # neceassary this part? look ff wrapper, i can take directly values of att_map between 0 and 196
-        a = T.empty(cls_weight.shape[0], 1)
-        a[:,0] = cls_weight[:,165]
-        print(a.shape)
-        att_map = T.cat((cls_weight, a.cuda()), dim  =1)
-        if verbose: print("attention encoding [cls] token, repeating one more value as last: ",att_map.shape)
-        
-        
-        # get attention map over patches and reorganize
-        # att_map = att_map.view(-1, 14, 14, 1).detach().cpu().numpy()
-        # att_map = att_map.view(-1, 14, 14, 1)
-        att_map = att_map.view(-1, 1, 14, 14)
-        if verbose: print("attention map [cls] token, as a patch-pixel image: ",att_map.shape)
-        
-        if self.resize_att_map:
-            att_map = F.interpolate(input=att_map, size=(224, 224), mode='area')
-            if verbose: print("attention map [cls] token (interpolated): ",att_map.shape)
-            # att_map = att_map.permute(0, 3, 1, 2)
+        if False:
+            # compute a mean attention map over all the head emb relative to the token [cls]
+            cls_weight = self.model_vit.blocks[-1].attn.cls_attn_map
+            cls_weight =  cls_weight.mean(dim=1)
+            if verbose: print("attention encoding [cls] token: ",cls_weight.shape)
             
-        # scale map between 0 and 1
-        att_map /= T.max(att_map)
-        
-        # att_map = np.squeeze(att_map,axis=0)
+            # neceassary this part? look ff wrapper, i can take directly values of att_map between 0 and 196
+            a = T.empty(cls_weight.shape[0], 1)
+            a[:,0] = cls_weight[:,165]
+            # print(a.shape)
+            att_map = T.cat((cls_weight, a.cuda()), dim  =1)
+            if verbose: print("attention encoding [cls] token, repeating one more value as last: ",att_map.shape)
+            
+            
+            # get attention map over patches and reorganize
+            # att_map = att_map.view(-1, 14, 14, 1).detach().cpu().numpy()
+            # att_map = att_map.view(-1, 14, 14, 1)
+            att_map = att_map.view(-1, 1, 14, 14)
+            if verbose: print("attention map [cls] token, as a patch-pixel image: ",att_map.shape)
+            
+            if self.resize_att_map:
+                att_map = F.interpolate(input=att_map, size=(224, 224), mode='area')
+                if verbose: print("attention map [cls] token (interpolated): ",att_map.shape)
+                # att_map = att_map.permute(0, 3, 1, 2)
                 
-        return logits, encoding, att_map 
+            # scale map between 0 and 1
+            att_map /= T.max(att_map)
+            
+        # attn_map_full   = self.model_vit.blocks[-1].attn.attn_map.mean(dim=1).detach()
+        # print(attn_map_full.shape)
+        att_map_cls     = self.model_vit.blocks[-1].attn.cls_attn_map.mean(dim=1).view(-1, 1, 14, 14).detach()
+        # print(att_map_cls.shape)
+        att_map_cls     = F.interpolate(att_map_cls, (224, 224), mode='bilinear')
+        # print(att_map_cls.shape)
+        
+        
+        # print(T.max(att_map_cls), T.min(att_map_cls))
+        
+        
+        return logits, encoding, att_map_cls
 
 class AutoEncoder_Attention(Project_DFD_model):
     def __init__(self):
@@ -3812,6 +3818,8 @@ class AutoEncoder_Attention(Project_DFD_model):
             nn.Conv2d(self.flc, self.flc, kernel_size=4, stride=2, padding=1),
             nn.LeakyReLU(0.2),
         )
+        # self.sigmoid = nn.Sigmoid()
+        # self.tahn = nn.Tanh()
 
         self.encoder.add_module("final_convs", nn.Sequential(
             nn.Conv2d(self.flc, self.flc, kernel_size=3, stride=1, padding=1),
@@ -3846,13 +3854,16 @@ class AutoEncoder_Attention(Project_DFD_model):
             nn.LeakyReLU(0.2),
             nn.ConvTranspose2d(self.flc, self.flc, kernel_size=4, stride=2, padding=1),
             nn.ConvTranspose2d(self.flc, 1, kernel_size=4, stride=2, padding=1)
+            # nn.Tanh()
         )
+        
+        self._init_weights_kaimingNormal()
 
     def forward(self, x):
         x1 = self.encoder(x)
-        print(x1.shape)
+        # print(x1.shape)
         x2 = self.decoder(x1)
-        print(x2.shape)
+        # print(x2.shape)
         return x2
 #_____________________________________Test models_________________________________________________ 
 
@@ -4167,7 +4178,7 @@ if __name__ == "__main__":
     def test_ViTEA():
         # define test input
         x = T.rand((32, INPUT_CHANNELS, INPUT_HEIGHT, INPUT_WIDTH)).to(device)
-        tests = [0, 0, 0, 1]
+        tests = [0, 1, 0, 0]
         
         # test patch embedding
         if tests[0]:
@@ -4195,12 +4206,18 @@ if __name__ == "__main__":
         
         elif tests[3]:
             vit = ViT_timm_EA().to(device = device)
+            ae  = AutoEncoder_Attention().to(device=device)
             # vit.getSummary()
             # print(vit.getAttributes())
             logits, encoding, attention = vit.forward(x)
             # print(out[0])
-            print(attention[0].shape)
+            print(attention.shape)
+            
+            rec = ae(attention)
+            print(rec.shape)
+            
             showImage(attention[0], has_color= False)
+            showImage(rec[0], has_color= False)
         
         input("press enter to exit ")
     
