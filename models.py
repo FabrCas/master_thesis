@@ -2934,11 +2934,14 @@ class Abnormality_module_Encoder_v3(Project_abnorm_model):
         
     def forward(self, probs_softmax, encoding, residual, verbose = False):
         
-        # conv forward for the 
+        # for 112p images
+        # conv forward for the  
         residual_out = self.e1(residual)
         residual_out = self.e2(residual_out)
         residual_out = self.e3(residual_out)
-        residual_out = self.e4(residual_out)
+        residual_out = self.e4(residual_out)   # 64, 7, 7 shape
+        
+        print(residual_out.shape)
         
         # flat the residual
         flatten_residual = T.flatten(residual_out, start_dim=1)
@@ -3078,6 +3081,95 @@ class Abnormality_module_Encoder_v4(Project_abnorm_model):
         # if verbose: print("input module b shape -> ", x.shape)
         out = self.gelu(self.bn_risk_final(self.fc_risk_final(x_concat)))
         return out   
+
+class Abnormality_module_Encoder_VIT_v3(Project_abnorm_model):
+    
+    """ 
+        based on Abnormality_module_Encoder_v3:
+        - use a smaleller encoding as input (from fc layes of the scorer)
+        - higher reduction for the residual before the fc layers (more encoding blocks)
+        - consequent reduced n. params for the final fc risk section.
+        
+        **requires** output from a classifier with: classifier_name.large_encoding = False
+    """
+    
+    def __init__(self, shape_softmax_probs, shape_encoding, shape_residual):
+        super().__init__()
+        
+        self.probs_softmax_shape   = shape_softmax_probs
+        self.encoding_shape = shape_encoding
+        self.residual_shape = shape_residual
+        self.input_shape = (shape_softmax_probs, shape_encoding, shape_residual)   # input_shape doesn't consider the batch
+        self._createNet()
+        self._init_weights_normal()
+    
+    def _createNet(self):
+        
+        n_encoder_block             = 5
+        n_features_latent_residual  = 64
+        residual_length  = math.floor(self.residual_shape[2]/(2**n_encoder_block))**2 * n_features_latent_residual # flatten residual (after encoding) should have same dim of the encoding
+        
+        tot_features_0   = self.probs_softmax_shape[1] +  self.encoding_shape[1] + residual_length
+
+        # conv section, the encoder block must be equal to the number specified in n_encoder_block above
+        self.e1 = Encoder_block_v2(in_c =  self.residual_shape[1] , out_c = 4)
+        self.e2 = Encoder_block_v2(in_c =  4, out_c = 8)
+        self.e3 = Encoder_block_v2(in_c =  8, out_c = 16)
+        self.e4 = Encoder_block_v2(in_c =  16, out_c = 32)
+        self.e5 = Encoder_block_v2(in_c =  32 , out_c = n_features_latent_residual)
+
+        tot_features_1      = 1024       
+         
+        # taken from official work 
+        tot_feaures_risk_1  = 512
+        tot_feaures_risk_2  = 128
+        tot_feaures_final   = 1
+        
+        self.gelu = T.nn.GELU()
+        self.sigmoid = T.nn.Sigmoid()
+        
+        # preliminary layers
+        self.fc1 = T.nn.Linear(tot_features_0,tot_features_1)
+        self.bn1 = T.nn.BatchNorm1d(tot_features_1)
+        
+        # risk section
+        self.fc_risk_1      = T.nn.Linear(tot_features_1,tot_feaures_risk_1)
+        self.bn_risk_1      = T.nn.BatchNorm1d(tot_feaures_risk_1)
+        self.fc_risk_2      = T.nn.Linear(tot_feaures_risk_1,tot_feaures_risk_2)
+        self.bn_risk_2      = T.nn.BatchNorm1d(tot_feaures_risk_2)
+        self.fc_risk_final  = T.nn.Linear(tot_feaures_risk_2,tot_feaures_final)
+        self.bn_risk_final  = T.nn.BatchNorm1d(tot_feaures_final)
+        
+    def forward(self, probs_softmax, encoding, residual, verbose = True):
+        
+        # for 224p images
+        # conv forward for the 
+        residual_out = self.e1(residual)
+        residual_out = self.e2(residual_out)
+        residual_out = self.e3(residual_out)
+        residual_out = self.e4(residual_out)
+        residual_out = self.e5(residual_out)    # 64, 7, 7 shape
+        
+        # print(residual_out.shape)
+        
+        # flat the residual
+        flatten_residual = T.flatten(residual_out, start_dim=1)
+        
+        # print(flatten_residual.shape)
+        
+        # # build the vector input 
+        x = T.cat((probs_softmax, encoding, flatten_residual), dim = 1)
+        if verbose: print("input module b shape -> ", x.shape)
+        
+        # # preliminary layers
+        x = self.gelu(self.bn1(self.fc1(x)))
+        
+        # # risk section
+        x = self.gelu(self.bn_risk_1(self.fc_risk_1(x)))
+        x = self.gelu(self.bn_risk_2(self.fc_risk_2(x)))
+        x = self.gelu(self.bn_risk_final(self.fc_risk_final(x)))
+        
+        return x
 
 #_____________________________________Vision Transformer (ViT)_____________________________________        
 
@@ -3654,13 +3746,16 @@ class ViT_base_EA(Project_DFD_model):
         return logits, enc 
   
 class ViT_timm_EA(Project_DFD_model):
-    def __init__(self, n_classes = 10, dropout = 0.1, prog_model = 1, encoding_type = "mean", resize_att_map = True):
+    def __init__(self, n_classes = 10, dropout = 0.1, prog_model = 1, encoding_type = "mean", resize_att_map = True, use_attnmap_cls = True):
         """_summary_
 
         Args:
             num_classes (int, optional): _description_. Defaults to 10.
             dropout (int, optional): dropout rate used in attention and MLP layers. Defaults to 0.
             prog_model (int, optional): progressive id to select the model (use getModels for the complete list)
+            resize_att_map(boolean, optinal): select if output attention map should have same dimension of input images, 
+            if false patch_size is used when use_attnmap_cls is True, or lenght of tokens-1, when use_attnmap_cls is False. Defaults to True.
+            use_attnmap_cls (boolean, optinal). Select to use attention map from first token (cls), or from pathces .Defaults to True.
         """
         super(ViT_timm_EA, self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = n_classes)
         self.models_avaiable = ['vit_base_patch16_224', 'vit_base_patch16_224.augreg_in21k']
@@ -3674,6 +3769,7 @@ class ViT_timm_EA(Project_DFD_model):
         # print(data_config)
         
         self.resize_att_map         = resize_att_map
+        self.use_attnmap_cls        = use_attnmap_cls
         self.emb_size               = 768 
         self.mlp_dim                = 3072
         self.patch_size             = 16
@@ -3728,10 +3824,10 @@ class ViT_timm_EA(Project_DFD_model):
             
             # print("att full", attn.shape)
             
-            # save the full attention map
+            # save the full attention map (used if self.use_attnmap_cls is False)
             attn_obj.attn_map = attn
             
-            # get attention map for [cls] token and save, dropping first 2 values of the attention
+            # get attention map for [cls] token and save, dropping first element in last dimension since is relative to token and not to patches (used if self.use_attnmap_cls is True)
             # attn_obj.cls_attn_map = attn[:, :, 0, 2:]
             attn_obj.cls_attn_map = attn[:, :, 0, 1:]
             
@@ -3796,16 +3892,26 @@ class ViT_timm_EA(Project_DFD_model):
             
         # attn_map_full   = self.model_vit.blocks[-1].attn.attn_map.mean(dim=1).detach()
         # print(attn_map_full.shape)
-        att_map_cls     = self.model_vit.blocks[-1].attn.cls_attn_map.mean(dim=1).view(-1, 1, 14, 14).detach()
+        
+        if self.use_attnmap_cls:
+            att_map     = self.model_vit.blocks[-1].attn.cls_attn_map.mean(dim=1).view(-1, 14, 14).detach()  # mean over heads results
+            att_map     = att_map.unsqueeze(dim = 1)
+        else:
+            att_map     = self.model_vit.blocks[-1].attn.attn_map.mean(dim=1).detach()
+            att_map     = att_map[:, 1:, 1:].view(-1,1,196,196)
+        
+        
         # print(att_map_cls.shape)
-        att_map_cls     = F.interpolate(att_map_cls, (224, 224), mode='bilinear')
+        if self.resize_att_map:
+            att_map     = F.interpolate(att_map, (224, 224), mode='bilinear')
+            
         # print(att_map_cls.shape)
         
         
         # print(T.max(att_map_cls), T.min(att_map_cls))
         
         
-        return logits, encoding, att_map_cls
+        return logits, encoding, att_map
 
 class AutoEncoder_Attention(Project_DFD_model):
     def __init__(self):
@@ -4189,7 +4295,7 @@ if __name__ == "__main__":
             print("x':", x_prime.shape)
         
         elif tests[1]:
-            vit = ViT_timm_EA().to(device = device)
+            vit = ViT_timm_EA(use_attnmap_cls=False, resize_att_map=True).to(device = device)
             # vit.getSummary()
             # print(vit.getAttributes())
             logits, encoding, attention = vit.forward(x)
@@ -4275,12 +4381,46 @@ if __name__ == "__main__":
         # abnorm_module.getSummary()
         # abnorm_module.forward(probs_softmax=softmax_prob, residual=residual, encoding=encoding)
         
-        abnorm_module = Abnormality_module_Encoder_v4(shape_softmax_probs = softmax_prob.shape, shape_encoding=encoding.shape, shape_residual=residual.shape).to(device)
+        abnorm_module = Abnormality_module_Encoder_v3(shape_softmax_probs = softmax_prob.shape, shape_encoding=encoding.shape, shape_residual=residual.shape).to(device)
         # abnorm_module.getSummary()
         abnorm_module.forward(probs_softmax=softmax_prob, residual=residual, encoding=encoding)
         # input("press enter to exit ")
     
+    # test using ViT trasformer
+    def test_abnorm_encoder_vit():
+        from    bin_ViTClassifier                  import DFD_BinViTClassifier_v7
+        classifier = DFD_BinViTClassifier_v7(scenario="content")
+        classifier.load("faces_ViTEA_timm_v7_07-02-2024", 21)
+        x_module_a = T.rand((32, INPUT_CHANNELS, INPUT_HEIGHT, INPUT_WIDTH)).to(device)
+        logits, encoding, att_map,  = classifier.model.forward(x_module_a)
+        # input("press enter for next step ")
+        
+        softmax_prob = T.nn.functional.softmax(logits, dim=1)
+        print("logits shape -> ", softmax_prob.shape)
+        print("encoding shape -> ",encoding.shape)
+        
+        rec_att_map = classifier.autoencoder.forward(att_map)
+        
+        # from reconstuction to residual
+        residual = T.square(att_map - rec_att_map)
+        # residual_flatten = T.flatten(residual, start_dim=1)
+        
+        
+        print("residual shape ->", residual.shape)
+        # print("residual (flatten) shape ->",residual_flatten.shape)
+        
+        # test_encoding = T.rand((32, 50176)).to(device)
+        # test_residual = T.rand((32, 3, 112, 112)).to(device)
+        
+        
+        abnorm_module = Abnormality_module_Encoder_VIT_v3(shape_softmax_probs = softmax_prob.shape, shape_encoding=encoding.shape, shape_residual=residual.shape).to(device)
+        # abnorm_module.getSummary()
+        out = abnorm_module.forward(probs_softmax=softmax_prob, residual=residual, encoding=encoding)
+        print(out.shape)
+    
+        
+    test_abnorm_encoder_vit()
 
-    test_ViTEA()
+    # test_ViTEA()
     #                           [End test section] 
     

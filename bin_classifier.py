@@ -248,6 +248,35 @@ class BinaryClassifier(object):
     def zero_grad(self):
         self.optimizer.zero_grad()
     
+    def denormalize_v2(self, x):
+        # functions used to pass from range [-1,1] to [0,1]
+        return (x+1)/2
+    
+    def spread_range(self, x, is_batch = False):
+        
+        # autoinfer
+        if len(x.shape) == 4:
+            is_batch = True
+        
+        # take any tensor and spread is range between [0,1]
+        if is_batch:
+            
+            max_ = T.tensor([T.max(elem) for elem in x[:]]).to(x.device)
+            min_ = T.tensor([T.min(elem)for elem in x[:]]).to(x.device)
+            
+            print(max_.shape)
+
+            # Spread the range between [0,1]
+            x -= min_
+            x /= (max_ - min_).clamp_min(1e-8)  # Avoid division by zero
+        else:
+            max_ = T.max(x).to(x.device)
+            min_ = T.min(x).to(x.device)
+            
+            x -= min_
+            x /= (max_ - min_).clamp_min(1e-8)   # avoid division by zero
+        return x
+        
     def compute_class_weights(self, verbose = False, multiplier = 1, normalize = True, only_positive_weight = False):
 
         print("\n\t\t[Computing Real/Fake class weights]\n")

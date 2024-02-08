@@ -15,8 +15,9 @@ from    torch.cuda.amp      import GradScaler, autocast
 from    dataset             import getScenarioSetting, CDDB_binary_Partial, CDDB_Partial, OOD_dataset, getCIFAR100_dataset, getMNIST_dataset, getFMNIST_dataset
 from    experiments         import MNISTClassifier_keras
 from    bin_classifier      import DFD_BinClassifier_v4, DFD_BinClassifier_v5
+from    bin_ViTClassifier   import DFD_BinViTClassifier_v7
 from    models              import Abnormality_module_Basic, Abnormality_module_Encoder_v1, Abnormality_module_Encoder_v2,\
-                            Abnormality_module_Encoder_v3, Abnormality_module_Encoder_v4
+                            Abnormality_module_Encoder_v3, Abnormality_module_Encoder_v4, Abnormality_module_Encoder_VIT_v3
 from    utilities           import saveJson, loadJson, metrics_binClass, metrics_OOD, print_dict, showImage, check_folder, sampleValidSet, \
                             mergeDatasets, ExpLogger, loadModel, saveModel, duration, plot_loss, plot_valid
 
@@ -355,7 +356,7 @@ class OOD_Classifier(object):
         
         if train_name is not None:
             # path_results_folder = check_folder(path_results_folder, force = True) #$
-            check_folder(path_results_folder, force = False, is_model = True) #$
+            check_folder(path_results_folder, force = False) #$
             return path_results_folder
         else:
             return path_results_classifier
@@ -1422,7 +1423,7 @@ class Confidence_Detector(OOD_Classifier):
         return pred
     
 class Abnormality_module(OOD_Classifier):   # model to train necessary 
-    """ Custom implementation of the abnormality module using ResNet, look https://arxiv.org/abs/1610.02136 chapter 4"
+    """ Custom implementation of the abnormality module using Unet4, look https://arxiv.org/abs/1610.02136 chapter 4"
     
     model_type (str): choose between: "basic", 
     
@@ -2317,6 +2318,822 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
     def test_threshold(self):
         self.model.eval()
         raise NotImplementedError
+
+class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary 
+    """ 
+        Modification of Abnormality_module for ViT model, using attention map instead of image reconstruction
+    """
+    
+    def __init__(self, classifier: DFD_BinViTClassifier_v7, scenario:str, model_type: str, useGPU: bool= True, binary_dataset: bool = True,
+                 batch_size = 64, use_synthetic:bool = True, extended_ood: bool = False, blind_test: bool = True,
+                 balancing_mode: str = "max", ):
+        """ 
+            ARGS:
+            - classifier (DFD_BinViTClassifier_v7): the ViT classifier + Autoencoder (Module A) that produces the input for Module B (abnormality module)
+            - scenario (str): choose between: "content", "mix", "group"
+            - model_type (str): choose between avaialbe model for the abnrormality module: "basic", "encoder", "encoder_v2", "encoder_v3"
+            "encoder_v4"
+            - batch_size (str/int): the size of the batch, set defaut to use the assigned from superclass, otherwise the int size. Default is "default".
+            - use_synthetic (boolean): choose if use ood data generated from ID data (synthetic) with several techniques, or not. Defaults is True.
+            - extended_ood (boolean, optional): This has sense if use_synthetic is set to True. Select if extend the ood data for training, using not only synthetic data. Default is True
+            - blind_test (boolean, optional): This has sense if use_synthetic is set to True. Select if use real ood data (True) or synthetized one from In distributiion data. Default is True
+            - balancing_mode (string,optinal): This has sense if use_synthethid is set to True and extended_ood is set to True.
+            Choose between "max and "all", max mode give a balance number of OOD same as ID, while, all produces more OOD samples than ID. Default is "max"
+            
+        """
+        super(Abnormality_module_ViT, self).__init__(useGPU=useGPU)
+        
+        # set the classifier (module A)
+        self.classifier  = classifier
+        self.scenario = scenario
+        self.binary_dataset = binary_dataset
+        self.model_type = model_type
+        
+        self.name               = "Abnormality_module"
+        self.name_classifier    = self.classifier.classifier_name
+        self.train_name         = None
+        self._meta_data()
+        
+        # configuration variables for abnormality module (module B)
+        self.augment_data_train = False
+        self.loss_name          = "weighted bce"   # binary cross entropy or sigmoid cross entropy (weighted)
+        
+        # instantiation aux elements
+        self.bce     = F.binary_cross_entropy_with_logits   # performs sigmoid internally
+        # self.ce      = F.cross_entropy()
+        self.sigmoid = F.sigmoid
+        self.softmax = F.softmax
+        self._build_model()
+            
+        # training parameters  
+        if not batch_size == "dafault":   # default batch size is defined in the superclass 
+            self.batch_size             = int(batch_size)
+            
+        # self.lr                     = 1e-4
+        self.lr                     = 1e-3
+        self.n_epochs               = 30  # 50
+        self.weight_decay           = 1e-3                  # L2 regularization term 
+        
+        # load data ID/OOD
+        if self.binary_dataset:   # binary vs multi-class task
+            self.dataset_class = CDDB_binary_Partial
+        else:
+            self.dataset_class = CDDB_Partial
+        
+        # Datasets flags
+        self.use_synthetic  = use_synthetic    
+        self.extended_ood   = extended_ood
+        self.blind_test     = blind_test
+        if not(balancing_mode in ["max", "all"]):
+            raise ValueError('Wrong selection for balancing mode. Choose between "max" or "all".') 
+        
+        self.balancing_mode = balancing_mode
+        
+        # Define sets
+        if self.use_synthetic:
+            self._prepare_data_synt(verbose = True)
+        else:
+            self._prepare_data(verbose=True)
+        
+    def _build_model(self):
+        # compute shapes for the input
+        x_shape = (1, *self.classifier.model.input_shape)
+        x = T.rand(x_shape).to(self.device)
+        out = self._forward_A(x)
+        
+        probs_softmax       = out["probabilities"]
+        encoding            = out["encoding"]
+        residual_flatten    = out["residual"]
+
+
+        if self.model_type == "encoder_v3_vit":
+            self.model = Abnormality_module_Encoder_VIT_v3(probs_softmax.shape, encoding.shape, residual_flatten.shape)
+
+        self.model.to(self.device)
+        self.model.eval()
+    
+    def _meta_data(self, task_type_prog = None):
+        """ prepare meta data of the current model: task_type_prog and name_ood_data"""
+        
+        if task_type_prog is None:
+            if self.binary_dataset:
+                task_type_prog = 0 # binary-class
+            else:
+                task_type_prog = 1  # multi-class 
+        self.task_type_prog = task_type_prog 
+        
+        try:
+            setting = getScenarioSetting()[self.scenario]
+        except:
+            ValueError("wrong selection for the scenario, is not possible to retrieve the setting")
+        
+        # if self.scenario == "content":
+        #     self.name_ood_data  = "CDDB_" + self.scenario + "_faces_scenario"
+        # else:
+        #     self.name_ood_data  = "CDDB_" + self.scenario + "_scenario"
+        
+        self.name_ood_data  = "CDDB_" + self.scenario + "_" + setting + "_scenario"
+        
+    def _prepare_data_synt(self,verbose = False):
+        """ method used to prepare Dataset class used for both training and testing, synthetizing OOD data for training
+        
+            ARGS:
+            - verbose (boolean, optional): choose to print extra information while loading the data
+        """
+        
+        # synthesis of OOD data (train and valid)
+        print("\n\t\t[Loading OOD (synthetized) data]\n")
+        ood_data_train_syn    = self.dataset_class(scenario = self.scenario, train = True,  ood = False, augment = False, transform2ood = True)
+        tmp        = self.dataset_class(scenario = self.scenario, train = False, ood = False, augment = False, transform2ood = True)
+        ood_data_valid_syn , ood_data_test_syn      = sampleValidSet(trainset = ood_data_train_syn, testset= tmp, useOnlyTest = True, verbose = True)
+        
+        # fetch ID data (train, valid and test)
+        print("\n\t\t[Loading ID data]\n")
+        id_data_train      = self.dataset_class(scenario = self.scenario, train = True,  ood = False, augment = False, transform2ood = False)
+        tmp            = self.dataset_class(scenario = self.scenario, train = False, ood = False, augment = False, transform2ood = False)
+        id_data_valid , id_data_test   = sampleValidSet(trainset = id_data_train, testset= tmp, useOnlyTest = True, verbose = True)
+        
+        
+        if verbose:
+            print("length ID dataset  (train) -> ",  len(id_data_train))
+            print("length ID dataset  (valid) -> ",  len(id_data_valid))
+            print("length ID dataset  (test) -> ", len(id_data_test))
+            print("length OOD dataset (train) synthetized -> ", len(ood_data_train_syn))
+            print("length OOD dataset (valid) synthetized -> ", len(ood_data_valid_syn))
+
+                
+        if self.extended_ood:
+            print("\n\t\t[Extending OOD data with CDDB samples]\n")
+            ood_train_expansion = self.dataset_class(scenario = self.scenario, train = True,   ood = True, augment = False)            
+            ood_data_train = mergeDatasets(ood_data_train_syn, ood_train_expansion) 
+           
+            if verbose: print("length OOD dataset after extension (train) -> ", len(ood_data_train))
+            
+            # train set: id data train + ood from synthetic ood and expansion)
+            self.dataset_train = OOD_dataset(id_data_train, ood_data_train, balancing_mode= self.balancing_mode)
+        else:
+            # train set: id data train + synthetic ood (id data train transformed in ood)
+            self.dataset_train = OOD_dataset(id_data_train, ood_data_train_syn, balancing_mode= self.balancing_mode)
+            
+        if self.blind_test:
+            ood_data_test  = self.dataset_class(scenario = self.scenario, train = False,  ood = True, augment = False)
+            if verbose: print("length OOD dataset (test) -> ", len(ood_data_test))
+            # test set: id data test + ood data test
+            self.dataset_test  = OOD_dataset(id_data_test , ood_data_test,  balancing_mode= self.balancing_mode)
+        else:
+            self.dataset_test  = OOD_dataset(id_data_test , ood_data_test_syn,  balancing_mode= self.balancing_mode)  # not real ood data but the synthetized one (useful to test the effective learning of the model)
+        
+        # valid set: id data valid + synthetic ood (id data train transformed in ood)
+        self.dataset_valid = OOD_dataset(id_data_valid, ood_data_valid_syn, balancing_mode= self.balancing_mode)
+        
+        
+        if verbose: print("length full dataset (train/valid/test) with balancing -> ", len(self.dataset_train), len(self.dataset_valid), len(self.dataset_test))
+        print("\n")
+    
+    def _prepare_data(self, verbose = False):
+        
+        """ method used to prepare Dataset class used for both training and testing, both ID and OOD comes from CDDB dataset
+        
+            ARGS:
+           - verbose (boolean, optional): choose to print extra information while loading the data
+        """
+        
+        # fetch ID data (train, valid and test)
+        print("\n\t\t[Loading ID data]\n")
+        id_data_train      = self.dataset_class(scenario = self.scenario, train = True,  ood = False, augment = False, transform2ood = False)
+        tmp            = self.dataset_class(scenario = self.scenario, train = False, ood = False, augment = False, transform2ood = False)
+        id_data_valid , id_data_test   = sampleValidSet(trainset = id_data_train, testset= tmp, useOnlyTest = True, verbose = True)
+        
+
+        print("\n\t\t[Loading OOD data]\n")
+        ood_data_train = self.dataset_class(scenario = self.scenario, train = True,   ood = True, augment = False) 
+        tmp  = self.dataset_class(scenario = self.scenario, train = False,  ood = True, augment = False)
+        ood_data_valid , ood_data_test   = sampleValidSet(trainset = ood_data_train, testset= tmp, useOnlyTest = True, verbose = True)
+        
+        
+        if verbose:
+            print("length ID dataset  (train) -> ",  len(id_data_train))
+            print("length ID dataset  (valid) -> ",  len(id_data_valid))
+            print("length ID dataset  (test)  -> ", len(id_data_test))
+        if verbose: 
+            print("length OOD dataset (train) -> ", len(ood_data_train))
+            print("length OOD dataset (valid) -> ", len(ood_data_valid))
+            print("length OOD dataset (test)  -> ", len(ood_data_test))
+
+                
+        # define the OOD detection sets
+        self.dataset_train = OOD_dataset(id_data_train, ood_data_train, balancing_mode=self.balancing_mode)
+        self.dataset_test  = OOD_dataset(id_data_test , ood_data_valid, balancing_mode=self.balancing_mode)
+        self.dataset_valid = OOD_dataset(id_data_valid, ood_data_test , balancing_mode=self.balancing_mode)
+        
+        if verbose: print("length full dataset (train/valid/test) with balancing -> ", len(self.dataset_train), len(self.dataset_valid), len(self.dataset_test))
+        print("\n")
+     
+    def _hyperParams(self):
+        return {
+            "lr": self.lr,
+            "batch_size": self.batch_size,
+            "epochs_max": self.n_epochs,
+            "weight_decay": self.weight_decay
+                }
+    
+    def _dataConf(self):
+        
+        # load not fixed config specs with try-catch
+
+        try:
+            input_shape = str(self.model.input_shape)
+        except:
+            input_shape = "empty"
+            
+        specified_data =  {
+            "date_training": date.today().strftime("%d-%m-%Y"),
+            "model": "Abnormality module " + self.model_type,
+            "input_shape": input_shape,
+            "data_scenario": self.scenario,
+            "optimizer": self.optimizer.__class__.__name__,
+            "scheduler": self.scheduler.__class__.__name__,
+            "loss": self.loss_name,
+            "grad_scaler": True,                # always true
+            "base_augmentation": self.augment_data_train,
+            "Use OOD data synthetized":  self.use_synthetic,
+            "Use extension OOD from CDDB": self.extended_ood,
+            "Balancing mode": self.balancing_mode,
+
+            # dataset lengths 
+            "Train Set Samples": len(self.dataset_train),
+            "Valid Set Samples": len(self.dataset_valid),
+            "Test Set Samples":  len(self.dataset_test),
+            
+            # dataset distribution
+            # "ID train samples": round((1/self.pos_weight_labels[0]) * self.samples_train),
+            # "OOD train samples": round((1/self.pos_weight_labels[1]) * self.samples_train)
+            "pos_weight_samples": self.pos_weight_labels,
+            }
+        
+        # include auto-inferred data from the model if available
+        try:
+            concat_dict = lambda x,y: {**x, **y}
+            model_data = self.model.getAttributes()
+            return concat_dict(specified_data, model_data)
+        except:
+            return specified_data
+        
+    def init_logger(self, path_model):
+        """
+            path_model -> specific path of the current model training
+        """
+        logger = ExpLogger(path_model=path_model)
+        
+        # logger for the classifier (module A)
+        logger.write_config(self.classifier._dataConf(), name_section="Configuration Classifier")
+        logger.write_hyper(self.classifier._hyperParams(), name_section="Hyperparameters Classifier")
+        try:
+            logger.write_model(self.classifier.model.getSummary(verbose=False), name_section="Model architecture Classifier")
+            logger.write_model(self.classifier.autoencoder.getSummary(verbose= False), name_section = "AutoEncoder architecture")
+        except:
+            print("Impossible to retrieve the model structure for logging")
+        
+        # logger for the abnormality module  (module B)
+        logger.write_config(self._dataConf())
+        logger.write_hyper(self._hyperParams())
+        try:
+            logger.write_model(self.model.getSummary(verbose=False))
+        except:
+            print("Impossible to retrieve the model structure for logging")
+        
+        return logger
+    
+    def _forward_A(self, x, verbose = False):
+        """ this method return a dictionary with the all the outputs from the model branches
+            keys: "probabilities", "encding", "residual", "confidence"
+            the confidence key-value pair is present if and only if is a confidence model (check the name)
+        """
+
+        # logits, reconstruction, encoding = self.classifier.model.forward(x)
+        
+        # with T.no_grad():
+        output_model = self.classifier.model.forward(x)  # logits, encoding, att_map
+        
+        # unpack the output based on the model
+        logits          = output_model[0]
+        encoding        = output_model[1]
+        att_map         = output_model[2]
+        
+        # generate att_map from autoencoder
+        att_map = self.classifier.norm(att_map)
+        rec_att_map = self.classifier.autoencoder.forward(att_map)
+            
+        output = {"encoding": encoding}
+        probs_softmax = T.nn.functional.softmax(logits, dim=1)
+        
+        if verbose: 
+            print("prob shape -> ", probs_softmax.shape)
+            print("encoding shape -> ",encoding.shape)
+        
+        # from reconstuction to residual
+        residual = T.square(rec_att_map - att_map)
+        # residual_flatten = T.flatten(residual, start_dim=1)
+        
+        output["probabilities"] = probs_softmax
+        output["residual"]      = residual
+        
+        if verbose: 
+            print("residual shape ->", residual.shape)
+        
+        return output
+                
+
+    def _forward_B(self, probs_softmax, encoding, residual, verbose = False):
+        """ if self.use_confidence is True probs_softmax should include the confidence value (Stacked) """
+        
+        
+        y = self.model.forward(probs_softmax, encoding, residual)
+        if verbose: print("y shape", y.shape)
+        return y
+        
+    def forward(self,x):
+        
+        if self.model is None: raise ValueError("No model has been defined, impossible forwarding the data")
+        
+        if not(isinstance(x, T.Tensor)):
+            x = T.tensor(x)
+        
+        # handle single image, increasing dimensions simulating a batch
+        if len(x.shape) == 3:
+            x = x.expand(1,-1,-1,-1)
+        elif len(x.shape) <= 2 or len(x.shape) >= 5:
+            raise ValueError("The input shape is not compatiple, expected a batch or a single image")
+        
+        # correct the dtype
+        if not (x.dtype is T.float32):
+            x = x.to(T.float32)
+         
+        x = x.to(self.device)
+        
+        out = self._forward_A(x)
+
+        probs_softmax       = out["probabilities"]
+        encoding            = out["encoding"]
+        residual            = out["residual"]
+                
+        logit = self._forward_B(probs_softmax, encoding, residual)
+        out   = self.sigmoid(logit)
+        
+        return  out
+    
+    def load(self, name_folder, epoch):
+        
+        print("\n\t\t[Loading model]\n")
+        
+        self._meta_data()
+        
+        # save folder of the train (can be used to save new files in models and results)
+        self.train_name     = name_folder
+        self.modelEpochs    = epoch
+        
+        # get full path to load
+        models_path         = self.get_path2SaveModels()
+        path2model          = os.path.join(models_path,  name_folder, str(epoch) + ".ckpt")
+
+        try:
+            loadModel(self.model, path2model)
+            self.model.eval()   # no train mode, fix dropout, batchnormalization, etc.
+        except Exception as e:
+            print(e)
+            print("No model: {} found for the epoch: {} in the folder: {}".format(name_folder, epoch, path2model))
+    
+    def valid(self, epoch, valid_dl):
+        """
+            validation method used mainly for the Early stopping training
+        """
+        print (f"Validation for the epoch: {epoch} ...")
+        
+        # set temporary evaluation mode and empty cuda cache
+        self.model.eval()
+        T.cuda.empty_cache()
+        
+        # list of losses
+        losses = []
+
+        
+        for (x,y) in tqdm(valid_dl):
+            
+            x = x.to(self.device)
+            # y = y.to(self.device).to(T.float32)
+            
+            # take only label for the positive class (fake)
+            y = y[:,1]
+            
+            # compute monodimensional weights for the full batch
+            weights = T.tensor([self.pos_weight_labels[elem] for elem in y ]).to(self.device)
+            
+            y = y.to(self.device).to(T.float32)
+
+            
+            with T.no_grad():
+                # with autocast():
+                out = self._forward_A(x)
+
+                probs_softmax       = out["probabilities"]
+                encoding            = out["encoding"]
+                residual            = out["residual"]
+                
+
+
+                if self.model_type == "basic" or "encoder" in self.model_type:
+                    # logit = self._forward_B(prob_softmax, encoding, residual)
+                    # logit = T.squeeze(logit)
+                    logit = T.squeeze(self.model.forward(probs_softmax, encoding, residual))
+                else:
+                    raise ValueError("Forward not defined in valid function for model: {}".format(self.model_type))
+                
+
+                loss = self.bce(input=logit, target=y, pos_weight=weights)   # logits bce version, peforms first sigmoid and binary cross entropy on the output
+                losses.append(loss.item())
+
+                        
+        # go back to train mode 
+        self.model.train()
+        
+        # return the average loss
+        loss_valid = sum(losses)/len(losses)
+        print(f"Loss from validation: {loss_valid}")
+        return loss_valid
+
+    @duration
+    def train(self, additional_name = "", task_type_prog = None, test_loop = False):
+        # """ requried the ood data name to recognize the task """
+        
+        # 1) prepare meta-data
+        self._meta_data(task_type_prog= task_type_prog)
+        
+        # compose train name
+        current_date        = date.today().strftime("%d-%m-%Y")   
+        train_name          = self.name + "_" + self.model_type + "_"+ additional_name + "_" + current_date
+        self.train_name     = train_name
+        
+        # get paths to save files on model and results
+        path_save_model     = self.get_path2SaveModels(train_name  = train_name)   # specify train_name for an additional depth layer in the models file system
+        path_save_results   = self.get_path2SaveResults(train_name = train_name)
+
+        print(path_save_model)
+        print(path_save_results)
+        # 2) prepare the training components
+        self.model.train()
+        
+        # compute the weights for the labels
+        self.pos_weight_labels = self.compute_class_weights(verbose=True, positive="ood", only_positive_weight= True)
+        
+        train_dl = DataLoader(self.dataset_train, batch_size= self.batch_size,  num_workers = 8,  shuffle= True,   pin_memory= False)
+        valid_dl = DataLoader(self.dataset_valid, batch_size= self.batch_size,  num_workers = 8, shuffle = False,  pin_memory= False) 
+        
+        # compute number of steps for epoch
+        n_steps = len(train_dl)
+        print("Number of steps per epoch: {}".format(n_steps))
+        
+        # self.optimizer =  Adam(self.model.parameters(), lr = self.lr, weight_decay =  self.weight_decay)
+        self.optimizer =  Adam(self.model.parameters(), lr = self.lr, weight_decay =  self.weight_decay)
+        
+        self.scheduler = lr_scheduler.OneCycleLR(self.optimizer, max_lr=self.lr, steps_per_epoch=n_steps, epochs=self.n_epochs, pct_start=0.3)
+        # self.scheduler = None
+        scaler = GradScaler()
+        
+        # initialize logger
+        logger  = self.init_logger(path_model= path_save_model)
+        
+        # intialize data structure to keep track of training performance
+        loss_epochs     = []
+        valid_history   = []
+        
+        # learned epochs by the model initialization
+        self.modelEpochs = 0
+        
+        # 3) learning loop
+        
+        for epoch_idx in range(self.n_epochs):
+            print(f"\n             [Epoch {epoch_idx+1}]             \n")
+            # print(self.classifier.model.large_encoding)
+            # define cumulative loss for the current epoch and max/min loss
+            loss_epoch = 0; max_loss_epoch = 0; min_loss_epoch = math.inf
+            
+            # update the last epoch for training the model
+            last_epoch = epoch_idx +1
+            
+            time1 = []
+            time2 = []
+            
+            # loop over steps
+            for step_idx,(x,y) in tqdm(enumerate(train_dl), total= n_steps):
+                
+                # if step_idx >= 50: break
+                
+                # test steps loop for debug
+                if test_loop and step_idx+1 == 5: break
+                
+                # if step_idx == 20: break
+                # zeroing the gradient
+                self.optimizer.zero_grad()
+                
+                
+                # prepare samples/targets batches 
+                x = x.to(self.device)
+                # x.requires_grad_(True)
+                y = y[:,1]                           # take only label for the positive class (fake)
+                
+                # compute weights for the full batch
+                # weights     = T.tensor([self.weights_labels[elem] for elem in y ]).to(self.device)   #TODO check this usage of the class weight, try pos_weight
+                
+                # compute weight for the positive class
+                # pos_weight  = T.tensor([self.weights_labels[1]]).to(self.device)
+                pos_weight  = T.tensor(self.pos_weight_labels).to(self.device)
+                # print(pos_weight.shape)
+
+                # int2float and move data to GPU mem                
+                y = y.to(self.device).to(T.float32)               # binary int encoding for each sample
+            
+                # model forward and loss computation
+                
+                s_1 = time()
+                with T.no_grad():  # avoid storage gradient for the classifier
+                    out = self._forward_A(x)
+
+                    probs_softmax       = out["probabilities"]
+                    encoding            = out["encoding"]
+                    residual            = out["residual"]
+                    
+                time1.append(time()- s_1) 
+                
+                # with autocast():
+                s_2 = time()
+                                    
+                probs_softmax.requires_grad_(True)
+                encoding.requires_grad_(True)
+                residual.requires_grad_(True)
+                
+                
+                if self.model_type == "basic" or "encoder" in self.model_type:
+
+                    logit = T.squeeze(self.model.forward(probs_softmax, encoding, residual))
+                    
+                else:
+                    raise ValueError("Forward not defined in train function for model: {}".format(self.model_type))
+                # print(logit.shape)
+                time2.append(time()- s_2)
+
+
+                loss = self.bce(input=logit, target= y, pos_weight=pos_weight)
+                # print(loss)
+
+                
+
+                # Exit the autocast() context manager
+                # autocast(enabled=False)
+                
+                loss_value = loss.item()
+                if loss_value>max_loss_epoch    : max_loss_epoch = round(loss_value,4)
+                if loss_value<min_loss_epoch    : min_loss_epoch = round(loss_value,4)
+                
+                # update total loss    
+                loss_epoch += loss.item()   # from tensor with single value to int and accumulation
+                
+                # loss backpropagation
+                scaler.scale(loss).backward()
+                # loss.backward()
+                
+                # (Optional) Clip gradients to prevent exploding gradients
+                # T.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                                
+                # compute updates using optimizer
+                scaler.step(self.optimizer)
+                # self.optimizer.step()
+
+                # update weights through scaler
+                scaler.update()
+                
+                # lr scheduler step 
+                self.scheduler.step()
+            
+            # T.cuda.empty_cache()
+            
+            print("Time (avg) for forward module A -> ",round(sum(time1)/len(time1),5))   
+            print("Time (avg) for forward module B -> ",round(sum(time2)/len(time2),5))
+            
+            
+            # compute average loss for the epoch
+            avg_loss = round(loss_epoch/n_steps,4)
+            loss_epochs.append(avg_loss)
+            print("Average loss: {}".format(avg_loss))
+            
+            # include validation here if needed
+            criterion = self.valid(epoch=epoch_idx+1, valid_dl = valid_dl)
+            # criterion = 0
+            
+            valid_history.append(criterion)  
+
+                        
+            # create dictionary with info frome epoch: loss + valid, and log it
+            epoch_data = {"epoch": last_epoch, "avg_loss": avg_loss, "max_loss": max_loss_epoch, \
+                          "min_loss": min_loss_epoch, "valid_loss": criterion}
+            logger.log(epoch_data)
+            
+            # test epochs loop for debug   
+            if test_loop and last_epoch == 5: break
+        
+        
+        # log GPU memory statistics during training
+        logger.log_mem(T.cuda.memory_summary(device=self.device))
+        
+        # 4) Save section
+        
+        # save loss 
+        name_loss_file          = 'loss_'+ str(last_epoch) +'.png'
+        name_valid_file         = "valid_" + str(last_epoch) + '.png' 
+        if test_loop:
+            plot_loss(loss_epochs, title_plot = self.name + "_" + self.model_type, path_save = None)
+            plot_valid(valid_history, title_plot = self.name + "_" + self.model_type, path_save= None)
+        else: 
+            plot_loss(loss_epochs, title_plot= self.name + "_" + self.model_type, path_save = os.path.join(path_save_results, name_loss_file))
+            plot_loss(loss_epochs, title_plot= self.name + "_" + self.model_type, path_save = os.path.join(path_save_model  ,name_loss_file), show=False)  # just save, not show
+            plot_valid(valid_history, title_plot= self.name + "_" + self.model_type, path_save = os.path.join(path_save_results, name_valid_file))
+            plot_valid(valid_history, title_plot= self.name + "_" + self.model_type, path_save = os.path.join(path_save_model  ,name_valid_file), show=False)  # just save, not show
+
+
+        # save model
+        print("\n\t\t[Saving model]\n")
+        name_model_file         = str(last_epoch) +'.ckpt'
+        path_model_save         = os.path.join(path_save_model, name_model_file)  # path folder + name file
+        saveModel(self.model, path_model_save)
+    
+        # terminate the logger
+        logger.end_log()
+        
+    def test_risk(self, task_type_prog = None):
+        
+        # saving folder path
+        path_results_folder         = self.get_path2SaveResults(train_name=self.train_name)
+        
+        # 1) prepare meta-data
+        self._meta_data(task_type_prog= task_type_prog)
+        self.model.eval()
+        
+        # 2) prepare test
+        test_dl = DataLoader(self.dataset_test, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
+        
+        # compute number of steps for epoch
+        n_steps = len(test_dl)
+        print("Number of steps per epoch: {}".format(n_steps))
+        
+        # empty lists to store results
+        pred_risks = np.empty((0,1), dtype= np.float32)
+        dl_labels = np.empty((0,2), dtype= np.int32)   
+        
+        for idx, (x,y) in tqdm(enumerate(test_dl), total= n_steps):
+            
+            # to test
+            # if idx >= 1: break
+            
+            x = x.to(self.device)
+            with T.no_grad():
+                # with autocast():
+                    
+                out = self._forward_A(x)
+
+                probs_softmax       = out["probabilities"]
+                encoding            = out["encoding"]
+                residual            = out["residual"]
+                                    
+                # if not basic Abnromality model, do recuction here
+                logit = self._forward_B(probs_softmax, encoding, residual)
+                # risk = T.squeeze(risk)
+                risk =self.sigmoid(logit)
+                    
+            # to numpy array
+            risk   = risk.cpu().numpy()
+            y       = y.numpy()
+            
+            pred_risks = np.append(pred_risks, risk, axis= 0)
+            dl_labels = np.append(dl_labels, y, axis= 0)
+            
+        # divide id risk from  ood risk
+        
+        id_labels     =  dl_labels[:,0]                # filter by label column
+        ood_labels    =  dl_labels[:,1]
+        risks_id      = pred_risks[id_labels == 1]         # split forward probabilites between ID adn OOD, still a list of probabilities for each class learned by the model
+        risks_ood     = pred_risks[ood_labels == 1]
+        
+        risks_id = risks_id[:risks_ood.shape[0]]
+        # print(risks_id.shape)
+        # print(risks_ood.shape)
+         
+        # compute statistical moments from risks output
+        
+        conf_all           = np.average(pred_risks)
+        
+        id_mean_r          =  np.mean(risks_id)
+        id_std_r           =  np.std(risks_id)
+        # id_entropy         = self.entropy(risks_id)
+        # id_mean_e          = np.mean(id_entropy)
+        # id_std_e           = np.std(id_entropy) 
+    
+        ood_mean_r         =  np.mean(risks_ood)
+        ood_std_r          =  np.std(risks_ood)
+        # ood_entropy        = self.entropy(risks_ood)
+        # ood_mean_e         = np.mean(ood_entropy)
+        # ood_std_e          = np.std(ood_entropy)
+
+        # in-out of distribution moments
+        print("In-Distribution risk                 [mean (confidence ID),std]  -> ", id_mean_r, id_std_r)
+        print("Out-Of-Distribution risk             [mean (confidence OOD),std] -> ", ood_mean_r, ood_std_r)
+        
+        # print("In-Distribution Entropy risk         [mean,std]                  -> ", id_mean_e, id_std_e)
+        # print("Out-Of-Distribution Entropy risk     [mean,std]                  -> ", ood_mean_e, ood_std_e)
+    
+        # normality detection
+        print("Normality detection:")
+        norm_base_rate = round(100*(risks_id.shape[0]/(risks_id.shape[0] + risks_ood.shape[0])),2)
+        print("\tbase rate(%): {}".format(norm_base_rate))
+        # print("\tKL divergence (entropy)")
+        # kl_norm_aupr, kl_norm_auroc = self.compute_curves(id_entropy, ood_entropy)
+        print("\tPrediction probability")
+        p_norm_aupr, p_norm_auroc = self.compute_curves(1- risks_id, 1- risks_ood)
+        
+        # abnormality detection
+        print("Abnormality detection:")
+        abnorm_base_rate = round(100*(risks_ood.shape[0]/(risks_id.shape[0] + risks_ood.shape[0])),2)
+        print("\tbase rate(%): {}".format(abnorm_base_rate))
+        # print("\tKL divergence (entropy)")
+        # kl_abnorm_aupr, kl_abnorm_auroc = self.compute_curves(-id_entropy, -ood_entropy, positive_reversed= True)
+        # kl_abnorm_aupr, kl_abnorm_auroc = self.compute_curves(1-id_entropy, 1-ood_entropy, positive_reversed= True)
+        print("\tPrediction probability")
+        p_abnorm_aupr, p_abnorm_auroc = self.compute_curves(risks_id, risks_ood, positive_reversed= True)
+        # p_abnorm_aupr, p_abnorm_auroc = self.compute_curves(1-risks_id, 1-risk_ood, positive_reversed= True)
+        
+
+        
+        # compute fpr95, detection_error and threshold_error 
+        metrics_norm = self.compute_metrics_ood(1-risks_id, 1-risks_ood)
+        print("OOD metrics:\n", metrics_norm)  
+        metrics_abnorm = self.compute_metrics_ood(risks_id, risks_ood, positive_reversed= True, path_save = path_results_folder)
+        print("OOD metrics:\n", metrics_abnorm)  
+        
+        
+                # store statistics/metrics in a dictionary
+        data = {
+            "ID_max_prob": {
+                "mean":  float(id_mean_r), 
+                "var":   float(id_std_r)
+            },
+            "OOD_max_prob": {
+                "mean": float(ood_mean_r), 
+                "var":  float(ood_std_r) 
+            },
+            # "ID_entropy":   {
+            #     "mean": float(id_mean_e), 
+            #     "var":  float(id_std_e)
+            # },
+            # "OOD_entropy":  {
+            #     "mean": float(ood_mean_e), 
+            #     "var":  float(ood_std_e)
+            # },
+            
+            "normality": {
+                "base_rate":        float(norm_base_rate),
+                # "KL_AUPR":          float(kl_norm_aupr),
+                # "KL_AUROC":         float(kl_norm_auroc),
+                "Prob_AUPR":        float(p_norm_aupr),   
+                "Prob_AUROC":       float(p_norm_auroc)
+            },
+            "abnormality":{
+                "base_rate":        float(abnorm_base_rate),
+                # "KL_AUPR":          float(kl_abnorm_aupr),
+                # "KL_AUROC":         float(kl_abnorm_auroc),
+                "Prob_AUPR":        float(p_abnorm_aupr),   
+                "Prob_AUROC":       float(p_abnorm_auroc),
+
+            },
+            "avg_confidence":   float(conf_all),
+            "fpr95_normality":            float(metrics_norm['fpr95']),
+            "detection_error_normality":  float(metrics_norm['detection_error']),
+            "threshold_normality":        float(metrics_norm['thr_de']),
+            "fpr95_abnormality":            float(metrics_abnorm['fpr95']),
+            "detection_error_abnormality":  float(metrics_abnorm['detection_error']),
+            "threshold_abnormality":        float(metrics_abnorm['thr_de'])
+            
+        }
+        
+        # save data (JSON)
+        if self.name_ood_data is not None:
+            name_result_file            = 'metrics_ood_{}.json'.format(self.name_ood_data)
+            path_result_save            = os.path.join(path_results_folder, name_result_file)   # full path to json file
+            
+            print(path_result_save)
+                
+            saveJson(path_file = path_result_save, data = data)
+        
+    def test_threshold(self):
+        self.model.eval()
+        raise NotImplementedError
     
     
 if __name__ == "__main__":
@@ -2324,9 +3141,10 @@ if __name__ == "__main__":
     
     # [1] load deep fake classifier
     # choose classifier model as module A associated with a certain scenario
-    classifier_model = 1
+    classifier_model = 2
 
-    if classifier_model == 0:
+
+    if classifier_model == 0:      # Unet + classifiier 
         
         classifier_name = "faces_Unet4_Scorer112p_v4_03-12-2023"
         classifier_type = "Unet4_Scorer"
@@ -2334,9 +3152,10 @@ if __name__ == "__main__":
         scenario = "content"
         classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
         classifier.load(classifier_name, classifier_epoch)
+        resolution = "112p"
     
-    elif classifier_model == 1:
-        
+    elif classifier_model == 1:   # Unet + classifiier + confidence
+    
         classifier_name = "faces_Unet4_Scorer_Confidence_112p_v5_02-01-2024"
         classifier_type = "Unet4_Scorer_Confidence"
         classifier_epoch = 98
@@ -2344,7 +3163,16 @@ if __name__ == "__main__":
         classifier = DFD_BinClassifier_v5(scenario="content", model_type=classifier_type)
         classifier.load(classifier_name, classifier_epoch)
         conf_usage_mode = "ignore" # ignore, merge or alone
+        resolution = "112p"
     
+    elif classifier_model == 2:         # ViT + Autoencoder
+        classifier_name = "faces_ViTEA_timm_v7_07-02-2024"
+        classifier_type = "ViTEA_timm"
+        classifier_epoch = 21
+        scenario = "content"
+        classifier = DFD_BinViTClassifier_v7(scenario="content", model_type=classifier_type)
+        classifier.load(classifier_name, classifier_epoch)
+        resolution = "224p"
     
     
     # ________________________________ baseline  _______________________________________
@@ -2474,27 +3302,39 @@ if __name__ == "__main__":
         # y = abn.forward(x)
         # print(y)
     
-    def train_abn_encoder(type_encoder = "encoder", resolution = "112p"):
-        abn = Abnormality_module(classifier, scenario = scenario, model_type= type_encoder, conf_usage_mode = conf_usage_mode)
+    def train_abn_encoder(type_encoder = "encoder"):
+        
+        if classifier_model == 2:
+            abn = Abnormality_module_ViT(classifier, scenario = scenario, model_type= "encoder_v3_vit")
+        else: 
+            abn = Abnormality_module(classifier, scenario = scenario, model_type= type_encoder, conf_usage_mode = conf_usage_mode)
         # abn.train(additional_name= resolution + "_ignored_confidence" , test_loop=False)
         abn.train(additional_name= resolution, test_loop=False)
         
-    def train_extended_abn_encoder(type_encoder = "encoder", resolution = "112p"):
+    def train_extended_abn_encoder(type_encoder = "encoder"):
         """ uses extended OOD data"""
-        abn = Abnormality_module(classifier, scenario = scenario, model_type= type_encoder, extended_ood = True,  conf_usage_mode = conf_usage_mode)
+        if classifier_model == 2:
+            abn = Abnormality_module_ViT(classifier, scenario = scenario, model_type= "encoder_v3_vit", extended_ood = True)
+        else: 
+            abn = Abnormality_module(classifier, scenario = scenario, model_type= type_encoder, extended_ood = True,  conf_usage_mode = conf_usage_mode)
         abn.train(additional_name= resolution + "_extendedOOD", test_loop=False)
         
-    def train_nosynt_abn_encoder(type_encoder = "encoder", resolution = "112p"):
+    def train_nosynt_abn_encoder(type_encoder = "encoder"):
         """ uses extended OOD data"""
         
-        abn = Abnormality_module(classifier, scenario = scenario, model_type=type_encoder, use_synthetic= False,  conf_usage_mode = conf_usage_mode)
+        if classifier_model == 2:
+            abn = Abnormality_module_ViT(classifier, scenario = scenario, model_type="encoder_v3_vit", use_synthetic= False)
+        else: 
+            abn = Abnormality_module(classifier, scenario = scenario, model_type=type_encoder, use_synthetic= False,  conf_usage_mode = conf_usage_mode)
         abn.train(additional_name= resolution + "_nosynt", test_loop=False)
     
-    def train_full_extended_abn_encoder(type_encoder = "encoder", resolution = "112p"):
+    def train_full_extended_abn_encoder(type_encoder = "encoder"):
         
         """ uses extended OOD data"""
-        
-        abn = Abnormality_module(classifier, scenario = scenario, model_type= type_encoder, extended_ood = True, balancing_mode="all",  conf_usage_mode = conf_usage_mode)
+        if classifier_model == 2:
+            abn = Abnormality_module_ViT(classifier, scenario = scenario, model_type= "encoder_v3_vit", extended_ood = True, balancing_mode="all")
+        else: 
+            abn = Abnormality_module(classifier, scenario = scenario, model_type= type_encoder, extended_ood = True, balancing_mode="all",  conf_usage_mode = conf_usage_mode)
         abn.train(additional_name = resolution + "_fullExtendedOOD", test_loop=False)
     
     def test_abn(name_model, epoch, type_encoder):
@@ -2525,14 +3365,22 @@ if __name__ == "__main__":
                 # print(y)
                 break
         
+        
         # load model
-        abn = Abnormality_module(classifier, scenario=scenario, model_type=type_encoder,  conf_usage_mode = conf_usage_mode)
+        if classifier_model == 2:
+            abn = Abnormality_module_ViT(classifier, scenario=scenario, model_type="encoder_v3_vit")
+        else: 
+            abn = Abnormality_module(classifier, scenario=scenario, model_type=type_encoder,  conf_usage_mode = conf_usage_mode)
+            
         abn.load(name_model, epoch)
         
         # test_forward()
     
         # launch test with non-thr metrics
         abn.test_risk()
+    
+    
+    train_abn_encoder()
     
     pass
     #                           [End test section] 
@@ -2606,7 +3454,6 @@ if __name__ == "__main__":
         test_confidenceDetector_facesCDDB_CIFAR()
         
         
-        
                                     ABNORMALITY MODULE ENCODER  (Synthetic ood data, no extension)
         train_abn_encoder(type_encoder= "encoder")
         train_abn_encoder(type_encoder= "encoder_v3")
@@ -2634,5 +3481,6 @@ if __name__ == "__main__":
         test_abn("Abnormality_module_encoder_v3_112p_fullExtendedOOD_09-01-2024", 50, "encoder_v3")
     
     
+    classifier: faces_ViTEA_timm_v7_07-02-2024:
     
     """

@@ -19,7 +19,7 @@ from    torch.utils.data                    import default_collate
 # Local imports
 
 from    utilities                           import plot_loss, plot_valid, saveModel, metrics_binClass, loadModel, sampleValidSet, \
-                                            duration, check_folder, cutmix_image, showImage, image2int, ExpLogger
+                                            duration, check_folder, cutmix_image, showImage, image2int, ExpLogger, alpha_blend_pytorch, show_imgs_blend
 from    dataset                             import getScenarioSetting, CDDB_binary, CDDB_binary_Partial
 from    models                              import ViT_base_3, ViT_b16_ImageNet, ViT_timm, ViT_timm_EA, AutoEncoder_Attention
 from    bin_classifier                      import BinaryClassifier
@@ -579,7 +579,7 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
         Together with the ViT is also trained an autoencoder to reconstruct the attention map, this is used for OOD detection inference.
     """
     def __init__(self, scenario, useGPU = True, patch_size = None, emb_size = None,  batch_size = 32,
-                 model_type = "ViTEA_timm", transform_prog = 1):  # batch_size = 32 or 64
+                 model_type = "ViTEA_timm", transform_prog = 1, train_together = True):  # batch_size = 32 or 64
         """ init classifier
 
         Args:
@@ -600,7 +600,7 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
             Defaults is "ViTEA_timm". 
             transform_prog (int, optional). Select the prog for input data trasnformation.Defaults is 1 (normalization values btw -1 and 1).
         """
-        super(DFD_BinViTClassifier_v7, self).__init__(useGPU = useGPU, batch_size = batch_size, model_type = model_type)
+        super(DFD_BinViTClassifier_v7, self).__init__(useGPU = useGPU, batch_size = batch_size, model_type = model_type, )
         self.version                = 7
         self.scenario               = scenario
         self.patch_size             = patch_size
@@ -610,6 +610,7 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
         self.n_classes              = 2
         self.transform_prog         = transform_prog
         self.external_autoencoder   = True
+        self.train_together         = train_together
         
 
         # prepare args
@@ -644,26 +645,37 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
         self.linear_af  = T.nn.Identity()
         # bce defined in the training since is necessary to compute the labels weights
         self.mse        = T.nn.MSELoss()
+        self.mae        = T.nn.L1Loss()
 
-        # learning hyperparameters (default)
-        self.learning_coeff         = 0.5                                              # multiplier that increases the training time
+        # learning hyperparameters common
         self.lr                     = 1e-4    # 1e-3 or 1e-4
+        self.weight_decay           = 1e-3    # L2 regularization term 
+        
+        # learning hyperparameters ViT
+        self.learning_coeff         = 0.5                                              # multiplier that increases the training time
         self.n_epochs               = math.floor(50 * self.learning_coeff)
-        self.start_early_stopping   = math.floor(self.n_epochs/2)                       # epoch to start early stopping
-        self.weight_decay           = 1e-3                                              # L2 regularization term 
+        self.start_early_stopping   = math.floor(self.n_epochs/2)                       # epoch to start early stopping                         
         self.patience               = max(math.floor(5 * self.learning_coeff),5)        # early stopping patience
         self.early_stopping_trigger = "loss"                                            # values "acc" or "loss"
         
+        # learning hyperparameters autoencoder
+        if self.train_together:
+            self.n_epochs_AE             = self.n_epochs
+        else:
+            self.n_epochs_AE             = math.floor(50 * self.learning_coeff) 
+        
+        
         # loss definition + interpolation values for the new loss
         self.loss_name              = "weighted bce"
-        self.loss_name_ae           = "MSE"   # or MAE
+        self.loss_name_ae           = "MAE"   # or MAE
         self._check_parameters()
         
         # training components definintion
-        self.optimizer_name     = "Adam"
-        self.lr_scheduler_name  = "ReduceLROnPlateau"
-        self.optimizer          = Adam(self.model.parameters(), lr = self.lr, weight_decay =  self.weight_decay)
-        self.optimizer_ae       = Adam(self.autoencoder.parameters(), lr = self.lr, weight_decay =  self.weight_decay)
+        self.optimizer_name         = "Adam"
+        self.lr_scheduler_name      = "ReduceLROnPlateau"
+        self.optimizer              = Adam(self.model.parameters(), lr = self.lr, weight_decay =  self.weight_decay)
+        self.optimizer_ae           = Adam(self.autoencoder.parameters(), lr = self.lr, weight_decay =  self.weight_decay)
+        self.lr_scheduler_ae_name   = "lr_scheduler.OneCycleLR"
         
     def _load_data(self):
         # load dataset: train, validation and test.
@@ -688,6 +700,7 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
             "lr": self.lr,
             "batch_size": self.batch_size,
             "epochs_max": self.n_epochs,
+            "epochs_max_AE" : self.n_epochs_AE,
             "weight_decay": self.weight_decay,
             "early_stopping_patience": self.patience,
             "early_stopping_trigger": self.early_stopping_trigger,
@@ -720,6 +733,14 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
         try:    weights_classes = self.pos_weight_label 
         except: weights_classes = "empty"
         
+        
+        try:    path_model = self.path_model_folder
+        except: path_model = "empty"
+        
+        try:    path_results = self.path_results_folder
+        except: path_results = "empty"
+        
+        
         specified_data = {
             "date_training": date.today().strftime("%d-%m-%Y"),
             "model_type": self.model_type,
@@ -732,7 +753,7 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
             "version_train": self.version,
             "optimizer": self.optimizer_name,
             "scheduler": self.lr_scheduler_name,
-            "scheduler_autoencdoer" :self.scheduler_ae.__class__.__name__, 
+            "scheduler_autoencdoer" :self.lr_scheduler_ae_name, 
             "loss": self.loss_name,
             "loss autoencoder": self.loss_name_ae,
             "base_augmentation": self.augment_data_train,
@@ -745,7 +766,11 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
             "embedding_dimension": emb_dim,
             "number_layers": n_layers,
             "number_heads": n_heads,
-            "dropout_%": dropout_percentage
+            "dropout_%": dropout_percentage,
+            
+            # paths
+            "path2model": path_model,
+            "path2results":  path_results
             }
         
         # include auto-inferred data from the model if available
@@ -806,7 +831,7 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
                 x_ae = self.norm(x_ae)
                 
                 rec_att_map = self.autoencoder(x_ae)
-                loss_ae     = self.mse(rec_att_map, x_ae)
+                loss_ae     = self.mae(rec_att_map, x_ae)
                 losses_ae.append(loss_ae.cpu().item())
                 
                         
@@ -828,8 +853,113 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
             print(f"Accuracy from validation: {accuracy_valid}")
             return accuracy_valid, loss_ae_valid
     
+    def validViT(self,epoch, valid_dataloader):
+        """
+            validation method used mainly for the Early stopping training
+        """
+        print (f"Validation for the epoch: {epoch} ...")
+        
+        # set temporary evaluation mode and empty cuda cache
+        self.model.eval()
+        
+        T.cuda.empty_cache()
+        
+        # list of losses
+        losses      = []
+        
+        # counters to compute accuracy
+        correct_predictions = 0
+        num_predictions = 0
+        
+        for (x,y) in tqdm(valid_dataloader):
+            x = x.to(self.device)
+            # y = y.to(self.device).to(T.float32)
+            y = y.to(self.device).to(T.float32)
+            
+            with T.no_grad():
+                logits, _, _  = self.model.forward(x) 
+                # pred = self.sigmoid(logits)
+                # classifier criterion
+                if self.early_stopping_trigger == "loss":
+                    # loss = self.bce(input=pred, target=y)   # pred bce version
+                    loss = self.bce(input=logits, target=y)   # logits bce version
+                    losses.append(loss.cpu().item())
+                    
+                elif self.early_stopping_trigger == "acc":
+                    # prepare predictions and targets
+                    pred = self.sigmoid(logits)
+                    y_pred  = T.argmax(pred, -1).cpu().numpy()  # both are list of int (indices)
+                    y       = T.argmax(y, -1).cpu().numpy()
+                    
+                    # update counters
+                    correct_predictions += (y_pred == y).sum()
+                    num_predictions += y_pred.shape[0]
+
+                break
+            
+        # go back to train mode 
+        self.model.train()
+    
+        if self.early_stopping_trigger == "loss":
+            # return the average loss
+            loss_valid = sum(losses)/len(losses)
+            print(f"Loss from validation: {loss_valid}")
+            return loss_valid
+        elif self.early_stopping_trigger == "acc":
+            # return accuracy
+            accuracy_valid = correct_predictions / num_predictions
+            print(f"Accuracy from validation: {accuracy_valid}")
+            return accuracy_valid
+        
+    def validAE(self,epoch, valid_dataloader):
+        print (f"Validation for the epoch: {epoch} ...")
+        
+        # set temporary evaluation mode and empty cuda cache
+        self.model.eval()
+        self.autoencoder.eval()
+        T.cuda.empty_cache()
+        
+        # list of losses
+
+        losses_ae   = []
+        
+
+        
+        for (x,y) in tqdm(valid_dataloader):
+            
+            x = x.to(self.device)
+
+            
+            with T.no_grad():
+                _, _, att_maps  = self.model.forward(x) 
+              
+                # Autoencoder criterion
+                x_ae = att_maps.clone().to(device =self.device)
+                x_ae = self.norm(x_ae)
+                
+                rec_att_map = self.autoencoder(x_ae)
+                loss_ae     = self.mae(rec_att_map, x_ae)
+                losses_ae.append(loss_ae.cpu().item())
+            
+            break
+                        
+        # go back to train mode 
+        self.autoencoder.train()
+        
+        loss_ae_valid = sum(losses_ae)/len(losses_ae)
+        print(f"Loss from validation: {loss_ae_valid}")
+        return loss_ae_valid
+    
     @duration
     def train(self, name_train, test_loop = False):
+        # wrapper function to train
+        if self.train_together:
+            self.train_both(name_train, test_loop)
+        else:
+            path_model_folder, path_results_folder = self.trainViT(name_train, test_loop)
+            self.trainAE(path_model_folder, path_results_folder, test_loop)
+
+    def train_both(self, name_train, test_loop = False):
         """
         Args:
             name_train (str) should include the scenario selected and the model name (i.e. ResNet50), keep this convention {scenario}_{model_name}
@@ -997,7 +1127,7 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
                 
                 rec_att_map = self.autoencoder(x_ae)
 
-                loss_ae     = self.mse(rec_att_map, x_ae)
+                loss_ae     = self.mae(rec_att_map, x_ae)
                 
                 loss_value_ae = loss_ae.cpu().item()
                 
@@ -1153,17 +1283,422 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
         self.autoencoder.eval()
         self.model.eval()
 
+    def trainViT(self, name_train, test_loop = False):
+        """
+        Args:
+            name_train (str) should include the scenario selected and the model name (i.e. ResNet50), keep this convention {scenario}_{model_name}
+        """
+        
+        # set the full current model name 
+        self.classifier_name = name_train
+        
+        # define the model dir path and create the directory
+        current_date = date.today().strftime("%d-%m-%Y")    
+        path_model_folder       = os.path.join(self.path_models,  name_train + "_v{}_".format(str(self.version)) + current_date)
+        self.path_model_folder  = path_model_folder
+        check_folder(path_model_folder, is_model= True)
+        # create path for the model results
+        path_results_folder     = os.path.join(self.path_results, name_train + "_v{}_".format(str(self.version)) + current_date)
+        self.path_results_folder = path_results_folder
+        check_folder(path_results_folder) # create if doesn't exist
+        
+        # define train dataloader
+        train_dataloader = DataLoader(self.train_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
+        
+        # define valid dataloader
+        valid_dataloader = DataLoader(self.valid_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= False, pin_memory= True)
+        
+        # compute number of steps for epoch
+        n_steps = len(train_dataloader)
+        print("Number of steps per epoch: {}".format(n_steps))
+        
+        # model in training mode
+        self.model.train()
+        
+        # define the optimization algorithm
+        self.optimizer          =  Adam(self.model.parameters(), lr = self.lr, weight_decay =  self.weight_decay)
+        self.optimizer_ae       =  Adam(self.autoencoder.parameters(), lr = self.lr, weight_decay = self.weight_decay)
+        
+        # define the loss function and class weights, compute labels weights and cross entropy loss
+        self.pos_weight_label = self.compute_class_weights(only_positive_weight=True)
+        
+        self.bce       = T.nn.BCEWithLogitsLoss(pos_weight=T.tensor(self.pos_weight_label)).to(device=self.device)
+        
+        # learning rate schedulers
+        if self.early_stopping_trigger == "loss":
+            self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor = 0.5, patience = 5, cooldown = 2, min_lr = self.lr*0.01, verbose = True) # reduce of a half the learning rate 
+        elif self.early_stopping_trigger == "acc":
+            self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='max', factor = 0.5, patience = 5, cooldown = 2, min_lr = self.lr*0.01, verbose = True) # reduce of a half the learning rate 
+        
+        self.scheduler_ae = lr_scheduler.OneCycleLR(self.optimizer_ae, max_lr=self.lr, steps_per_epoch=n_steps, epochs=self.n_epochs, pct_start=0.3)
+        
+        # define the gradient scaler to avoid weigths explosion
+        scaler      = GradScaler()
+        
+        # initialize logger
+        self.logger  = self.init_logger(path_model= path_model_folder)
+        
+        # intialize data structure to keep track of training performance
+        loss_epochs     = []
+        
+        # initialzie the patience counter and history for early stopping
+        valid_history       = []
+        counter_stopping    = 0
+        last_epoch          = 0
+        
+        # learned epochs by the model initialization
+        self.modelEpochs = 0
+        tmp_losses      = []
+        
+        # T.autograd.set_detect_anomaly(True)
+        # flag to detect forward problem with nan
+        printed_nan = False
+        
+        # loop over epochs
+        for epoch_idx in range(self.n_epochs):
+            print(f"\n             [Epoch {epoch_idx+1}]             \n")
+            
+            # define cumulative loss for the current epoch and max/min loss
+            loss_epoch      = 0; max_loss_epoch     = 0; min_loss_epoch     = math.inf
+            
+            # update the last epoch for training the model
+            last_epoch = epoch_idx +1
+                
+            # loop over steps
+            for step_idx,(x,y) in tqdm(enumerate(train_dataloader), total= n_steps):
+                
+                # test steps loop for debug
+                if test_loop and step_idx+1 == 5: break
+                
+                # prepare samples/targets batches 
+                x = x.to(self.device)
+                x.requires_grad_(True)
+                y = y.to(self.device)               # binary int encoding for each sample
+                y = y.to(T.float)
+                
+                if T.isnan(x).any().item():
+                    print("nan value in the input found")
+                    continue
+                
+                # check there is any nan value in the input that causes instability
+                # zeroing the gradient
+                self.optimizer.zero_grad()
+                # model forward and loss computation
+                # with autocast():   
+                logits, _, att_map  = self.model.forward(x) 
+                
+                # apply activation function to logits
+                # pred = self.sigmoid(logits)
+                    
+                #                                       compute classification loss
+                loss      = self.bce(input=logits, target=y)   # bce from logits (no weights loaded)
+                # loss      = self.bce(input=pred, target=y)   # classic bce with "probabilities"
+
+                
+                if (T.isnan(loss).any().item() or T.isinf(loss).any().item())and not(printed_nan):
+                    print(loss)
+                    print(logits)
+                    print(T.norm(logits))
+                    print(y)
+                    for name, param in self.model.named_parameters():
+                        if param.grad is not None:
+                            print(f'Parameter: {name}, Gradient Magnitude: {param.grad.norm().item()}')
+                    
+                    printed_nan = True
+                    break  #
+                    
+                
+                loss_value = loss.cpu().item()
+                tmp_losses.append(loss_value)
+                
+                print_every = 50
+                if (step_idx+1)%print_every == 0:
+                    # print("norm logits every 100 epochs ->", T.norm(logits).cpu().item())
+                    print(f"avg loss every {print_every} epochs ->", sum(tmp_losses)/len(tmp_losses))
+                    print(f"max att map: {T.max(att_map)}", f"min att map: {T.min(att_map)}")
+                    tmp_losses = []
+                
+                if loss_value>max_loss_epoch    : max_loss_epoch = round(loss_value,4)
+                if loss_value<min_loss_epoch    : min_loss_epoch = round(loss_value,4)
+                
+                # update total loss    
+                loss_epoch += loss_value   # from tensor with single value to int and accumulation
+                
+                # loss backpropagation
+                scaler.scale(loss).backward()
+                
+                # compute updates using optimizer
+                scaler.step(self.optimizer)
+
+                # update weights through scaler
+                scaler.update()
+                
+                # (optional) gradient clipping 
+                # T.nn.utils.clip_grad_norm_(self.model.parameters(), 10) 
+                         
+            if printed_nan: break
+                     
+            # compute average loss for the epoch
+            avg_loss = round(loss_epoch/n_steps,4)
+            loss_epochs.append(avg_loss)
+            print("Average loss: {}".format(avg_loss))
+            
+            # include validation here if needed
+            criterion = self.validViT(epoch=epoch_idx+1, valid_dataloader= valid_dataloader)
+            valid_history.append(criterion)
+            
+            # initialize not early stopping
+            early_exit = False 
+            
+            # early stopping update
+            if epoch_idx > 0 and last_epoch >= self.start_early_stopping:
+                print("Early stopping step ...")
+                
+                if self.early_stopping_trigger == "loss":
+                        if valid_history[-1] > valid_history[-2]:
+                            if counter_stopping >= self.patience:
+                                print("Early stop")
+                                early_exit = True
+                                # break
+                            else:
+                                print("Pantience counter increased")
+                                counter_stopping += 1
+                        else:
+                            print("loss decreased respect previous epoch")
+                            
+                elif self.early_stopping_trigger == "acc":
+                        if valid_history[-1] < valid_history[-2]:
+                            if counter_stopping >= self.patience:
+                                print("Early stop")
+                                early_exit = True
+                                # break
+                            else:
+                                print("Pantience counter increased")
+                                counter_stopping += 1
+                        else:
+                            print("Accuracy increased respect previous epoch")
+            
+            
+            # create dictionary with info frome epoch: loss + valid, and log it
+            epoch_data = {"epoch": last_epoch, "avg_loss": avg_loss, "max_loss": max_loss_epoch, \
+                          "min_loss": min_loss_epoch, self.early_stopping_trigger + "_valid": criterion,
+                         }
+            
+            self.logger.log(epoch_data)
+            
+            # test epochs loop for debug   
+            if test_loop and last_epoch == 5: break
+            
+            # exit for early stopping if is the case
+            if early_exit: break 
+            
+            # lr scheduler step based on validation result
+            self.scheduler.step(criterion)
+
+        # log GPU memory statistics during training
+        self.logger.log_mem(T.cuda.memory_summary(device=self.device))
+        
+        # create path for the model save and loss plot in results
+        # classifier
+        name_model_file         = str(last_epoch) +'.ckpt'
+        path_model_save         = os.path.join(path_model_folder, name_model_file)  # path folder + name file
+
+        # classifier
+        name_loss_file          = 'loss_'+ str(last_epoch) +'.png'
+        name_valid_file         = "valid_{}_{}.png".format(self.early_stopping_trigger, str(last_epoch))
+        
+        
+        
+        # save info for the new model trained
+        self.path2model_results = path_results_folder
+        self.modelEpochs        = last_epoch
+        
+        # save loss plot
+
+        # main model
+        plot_loss(loss_epochs, title_plot= "classifier", path_save = os.path.join(path_results_folder, name_loss_file))
+        plot_loss(loss_epochs, title_plot= "classifier", path_save = os.path.join(path_model_folder,name_loss_file), show=False)
+        plot_valid(valid_history, title_plot= "classifier "+ self.early_stopping_trigger, path_save = os.path.join(path_results_folder, name_valid_file))
+        plot_valid(valid_history, title_plot= "classifier "+ self.early_stopping_trigger, path_save = os.path.join(path_model_folder,name_valid_file), show=False)
+
+        # save model
+        saveModel(self.model, path_model_save)
+        
+        return path_model_folder, path_results_folder
+        
+    def trainAE(self, path_model_folder, path_results_folder, test_loop = False):
+        """
+        Args:
+            name_train (str) should include the scenario selected and the model name (i.e. ResNet50), keep this convention {scenario}_{model_name}
+        """
+
+        # define train dataloader
+        train_dataloader = DataLoader(self.train_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
+
+        # define valid dataloader
+        valid_dataloader = DataLoader(self.valid_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= False, pin_memory= True)
+
+        # compute number of steps for epoch
+        n_steps = len(train_dataloader)
+        print("Number of steps per epoch: {}".format(n_steps))
+
+        # model in training mode
+        self.model.train()
+        self.autoencoder.train()
+
+        # define the gradient scaler to avoid weigths explosion
+        scaler_ae   = GradScaler()
+
+        # initialize logger
+        self.logger.write_model(self.autoencoder.getSummary(verbose=False), name_section = "AutoEncoder architecture")
+
+        # reset train log 
+        self.logger.train_lines = []
+        
+        # intialize data structure to keep track of training performance
+        loss_epochs_ae  = []
+
+        # initialzie the patience counter and history for early stopping
+        valid_ae_history    = []
+        last_epoch          = 0
+
+        # learned epochs by the model initialization
+        self.modelEpochs = 0
+
+        # T.autograd.set_detect_anomaly(True)
+
+        # loop over epochs
+        for epoch_idx in range(self.n_epochs_AE):
+            print(f"\n             [Epoch {epoch_idx+1}]             \n")
+            
+            # define cumulative loss for the current epoch and max/min loss
+            loss_epoch_ae   = 0; max_loss_epoch_ae  = 0; min_loss_epoch_ae  = math.inf
+            
+            # update the last epoch for training the model
+            last_epoch = epoch_idx +1
+                
+            # loop over steps
+            for step_idx,(x,y) in tqdm(enumerate(train_dataloader), total= n_steps):
+                
+                # test steps loop for debug
+                if test_loop and step_idx+1 == 5: break
+                
+                # prepare samples/targets batches 
+                x = x.to(self.device)
+                x.requires_grad_(False)
+                
+                if T.isnan(x).any().item():
+                    print("nan value in the input found")
+                    continue
+                
+                # check there is any nan value in the input that causes instability
+                
+                # model forward and loss computation
+                # with autocast():   
+                with T.no_grad():
+                    
+                    _, _, att_map  = self.model.forward(x) 
+
+                #                                      compute reconstruction loss
+                self.optimizer_ae.zero_grad()
+                
+                x_ae = att_map.detach().clone()
+                x_ae.requires_grad_(True)
+                x_ae.to(device=self.device)
+                x_ae = self.norm(x_ae)
+                
+                rec_att_map = self.autoencoder(x_ae)
+
+                loss_ae     = self.mae(rec_att_map, x_ae)
+                
+                loss_value_ae = loss_ae.cpu().item()
+                
+                if loss_value_ae>max_loss_epoch_ae    : max_loss_epoch_ae = round(loss_value_ae,4)
+                if loss_value_ae<min_loss_epoch_ae    : min_loss_epoch_ae = round(loss_value_ae,4)
+                
+                # update total loss    
+                loss_epoch_ae += loss_value_ae   # from tensor with single value to int and accumulation
+            
+                scaler_ae.scale(loss_ae).backward()                     # loss_ae.backward() # self.optimizer_ae.step()
+                
+                scaler_ae.step(self.optimizer_ae)
+                
+                scaler_ae.update()
+                
+                self.scheduler_ae.step()
+            
+                # (optional) gradient clipping 
+                # T.nn.utils.clip_grad_norm_(self.autoencoder.parameters(), 10) 
+                           
+            # compute average loss for the epoch
+            
+            avg_loss_ae = round(loss_epoch_ae/n_steps,4)
+            loss_epochs_ae.append(avg_loss_ae)
+            print("Average loss autoencoder: {}".format(avg_loss_ae))
+            
+            # include validation here if needed
+            criterion_ae = self.validAE(epoch=epoch_idx+1, valid_dataloader= valid_dataloader)
+            valid_ae_history.append(criterion_ae)  
+            
+            
+            # create dictionary with info frome epoch: loss + valid, and log it
+            epoch_data_ae = {
+                            "epoch": last_epoch, "avg_loss_ae": avg_loss_ae, "max_loss_ae": max_loss_epoch_ae,
+                            "min_loss_ae": min_loss_epoch_ae, "loss_valid": criterion_ae
+            }
+            
+            self.logger.log(epoch_data_ae)
+            
+            # test epochs loop for debug   
+            if test_loop and last_epoch == 5: break
+            
+
+        # log GPU memory statistics during training
+        self.logger.log_mem(T.cuda.memory_summary(device=self.device))
+
+        # create path for the model save
+        
+        # autoencoder
+        name_model_ae_file      = "ae_" + str(last_epoch) +'.ckpt'
+        path_model_ae_save      = os.path.join(path_model_folder, name_model_ae_file)
+
+        # autoencoder
+        name_loss_ae_file          = 'loss_ae_'+ str(last_epoch) +'.png'
+        name_valid_ae_file         = "valid_ae_loss_{}.png".format(str(last_epoch))
+
+        # save info for the new model trained
+        self.path2model_results = path_results_folder
+        self.modelEpochsAE        = last_epoch
+
+        # save loss plot
+        # autoencoder
+        plot_loss(loss_epochs_ae, title_plot= "AE", path_save = os.path.join(path_results_folder, name_loss_ae_file))
+        plot_loss(loss_epochs_ae, title_plot= "AE", path_save = os.path.join(path_model_folder,name_loss_ae_file), show=False)
+        plot_valid(valid_ae_history, title_plot= "AE loss", path_save = os.path.join(path_results_folder, name_valid_ae_file))
+        plot_valid(valid_ae_history, title_plot= "AE loss", path_save = os.path.join(path_model_folder,name_valid_ae_file), show=False)
+            
+        # save models
+        saveModel(self.autoencoder, path_model_ae_save)
+
+        # terminate the log session
+        self.logger.end_log()
+
+        self.autoencoder.eval()
+        self.model.eval()
+        
     def test(self):
         # call same test function but don't load again the data
         super().test(load_data=False)
     
-    def load(self, folder_model, epoch):
+    def load(self, folder_model, epoch, epoch_ae = None):
         # load main model
         super().load(folder_model, epoch)
         
+        if epoch_ae == None:
+            epoch_ae = self.n_epochs_AE
         # load autoencoder
         try:
-            self.path2model_ae         = os.path.join(self.path_models,  folder_model,"ae_"+ str(epoch) + ".ckpt")
+            self.path2model_ae         = os.path.join(self.path_models,  folder_model,"ae_"+ str(epoch_ae) + ".ckpt")
             loadModel(self.autoencoder, self.path2model_ae)
             self.autoencoder.eval()   # no train mode, fix dropout, batchnormalization, etc.
         except Exception as e:
@@ -1180,6 +1715,9 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
         Returns:
             pred: label: 0 -> real, 1 -> fake
         """
+        self.model.eval()
+        
+        
         if self.model is None: raise ValueError("No model has been defined, impossible forwarding the data")
         
         if not(isinstance(x, T.Tensor)):
@@ -1205,7 +1743,6 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
         fake_prob   = probs[:,1]   # positive class probability (fake probability)
         
         return pred, fake_prob, logits
-
 
 if __name__ == "__main__":
     #                           [Start test section] 
@@ -1244,15 +1781,234 @@ if __name__ == "__main__":
         else:
             bin_classifier.train_and_test(name_train= scenario_setting + "_" + model_type)
             
-    
     # ________________________________ v7  ________________________________
     
     def test_attention_map_v7(name_model, epoch, model_type = "ViTEA_timm"):
         bin_classifier = DFD_BinViTClassifier_v7(scenario = data_scenario, useGPU= True, model_type= model_type)
         bin_classifier.load(name_model, epoch)
-        # data_iter = bin_classifier.train_dataset
-        # img, y = data_iter.__getitem__(0)
-        # showImage(img)
+        data_iter = bin_classifier.train_dataset
+        save    = False
+        img_id  = 0
+        
+        img, y = data_iter.__getitem__(img_id)
+        img_d = bin_classifier.denormalize_v2(img)
+        showImage(img_d, save_image= save, name="attention_original_" + str(img_id))
+        print(img_d.shape)
+        print(T.max(img_d))
+        print(T.min(img_d))
+        
+        img = img.unsqueeze(dim=0)
+        print(img.shape)
+        
+        
+        img = img.to(device = bin_classifier.device)
+        
+        _, _, att_map = bin_classifier.model.forward(img)
+        
+        print(att_map.shape, T.max(att_map), T.min(att_map))
+        
+        att_map_n = bin_classifier.norm(att_map)
+        
+        print(att_map_n.shape, T.max(att_map_n), T.min(att_map_n))
+        
+        rec_att_map = bin_classifier.autoencoder.forward(att_map_n)
+        
+        print(rec_att_map.shape, T.max(rec_att_map), T.min(rec_att_map))
+        
+        rec_att_map_d = bin_classifier.denormalize_v2(rec_att_map)
+
+        print(rec_att_map_d.shape, T.max(rec_att_map_d), T.min(rec_att_map_d))
+        
+        # select image over batch
+        # print(T.max(att_map))
+        # print(T.min(att_map))
+        
+        
+        
+        # att_map = bin_classifier.spread_range(att_map)
+    
+        att_map = att_map[0]
+        rec_att_map = rec_att_map[0]
+        
+        # min_value = T.min(att_map)
+        # att_map -= min_value
+        # max_value = T.max(att_map)
+        # att_map /= max_value
+        
+        # print(T.max(att_map))
+        # print(T.min(att_map))
+        
+        
+        showImage(att_map, has_color= False, save_image= save, name="attention_map_" + str(img_id))
+        showImage(rec_att_map, has_color= False, save_image= save, name="attention_map_AE_" + str(img_id))
+
+        # improve visualization
+        # max_value = T.max(att_map)
+        # att_map /= max_value
+        # showImage(att_map, has_color= False)
+        
+        # print(T.max(att_map))
+        # print(T.min(att_map))
+        
+        # interpolation for a better understanding
+        
+        # grayscale to color image
+        # print(att_map_d.shape)
+        
+        att_map_color = att_map.repeat(3, 1, 1).cpu()
+        # print(att_map_color.shape)
+        # print(T.max(att_map_color))
+        # print(T.min(att_map_color))
+        # showImage(att_map_color, has_color = True)
+        
+        # blend_img = alpha_blend_pytorch(img_d, att_map_color, 0.8)
+        # showImage(blend_img, has_color = True)
+        
+        show_imgs_blend(img_d, att_map.cpu(), alpha=0.8, save_image= save, name="attention_blend_" + str(img_id))
+        
+        
+        # show reconstruction
+        
+        
+        
+        
+        
+        
+    def test_attention_map():
+
+        from PIL import Image
+        import matplotlib.pyplot as plt
+        from timm.models import create_model
+        from torchvision import transforms
+        from torchvision.transforms import Compose, Resize, CenterCrop, Normalize, ToTensor
+
+        def to_tensor(img):
+            transform_fn = Compose([Resize(249, 3), CenterCrop(224), ToTensor(), Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+            return transform_fn(img)
+
+        def show_img(img):
+            img = np.asarray(img)
+            plt.figure(figsize=(10, 10))
+            plt.imshow(img)
+            plt.axis('off')
+            plt.show()
+
+        def show_img2(img1, img2, alpha=0.8):
+            img1 = np.asarray(img1)
+            img2 = np.asarray(img2)
+            plt.figure(figsize=(10, 10))
+            plt.imshow(img1)
+            plt.imshow(img2, alpha=alpha)
+            plt.axis('off')
+            plt.show()
+
+        def my_forward_wrapper(attn_obj):
+            def my_forward(x):
+                B, N, C = x.shape
+                print("B: ", B)
+                print("N: ", N)
+                print("C: ", C)
+                
+                qkv = attn_obj.qkv(x).reshape(B, N, 3, attn_obj.num_heads, C // attn_obj.num_heads).permute(2, 0, 3, 1, 4)
+                
+                print("qkv shape", qkv.shape)
+                
+                q, k, v = qkv.unbind(0)   # make torchscript happy (cannot use tensor as tuple)
+                
+                print("q shape", q.shape)
+                print("k shape", k.shape)
+                print("v shape", v.shape)
+                
+
+                attn = (q @ k.transpose(-2, -1)) * attn_obj.scale
+                attn = attn.softmax(dim=-1)
+                attn = attn_obj.attn_drop(attn)
+                
+                # print(attn.shape)
+                
+                attn_obj.attn_map = attn
+                # attn_obj.cls_attn_map = attn[:, :, 0, 2:]
+                attn_obj.cls_attn_map = attn[:, :, 0, 1:]
+
+                x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+                x = attn_obj.proj(x)
+                x = attn_obj.proj_drop(x)
+                return x
+            return my_forward
+        
+        bin_classifier = DFD_BinViTClassifier_v7(scenario = "content", useGPU= True)
+        data_iter = bin_classifier.train_dataset
+        x1, y = data_iter.__getitem__(0)
+        x2, _ = data_iter.__getitem__(1)
+        
+
+        
+        # model = create_model('deit_small_distilled_patch16_224', pretrained=True)
+        model = create_model(model_name='vit_base_patch16_224.augreg_in21k' , pretrained=True, num_classes=2, drop_rate=0.1)
+        
+        # bin_classifier = DFD_BinViTClassifier_v7(scenario = data_scenario, useGPU= True, model_type= model_type)
+        # bin_classifier.load(name_model, epoch)
+        
+        
+        model.blocks[-1].attn.forward = my_forward_wrapper(model.blocks[-1].attn)
+        # model = bin_classifier.model.model_vit
+
+        x = T.stack((x1,x2))
+        print("image batch shape: ", x.shape)
+        
+        # x = x.unsqueeze(0)
+
+        _ = model(x)
+        
+        att_map = model.blocks[-1].attn.attn_map.mean(dim=1).detach()
+        att_map = att_map[:, 1:, 1:].view(-1,1,196,196)
+        print("full attention map: ", att_map.shape)
+        
+        # print(model.blocks[-1].attn.cls_attn_map.mean(dim=1).shape)
+        att_map_cls = model.blocks[-1].attn.cls_attn_map.mean(dim=1).view(-1, 14, 14).detach()
+        att_map_cls = att_map_cls.unsqueeze(dim = 1)
+        
+        print("attention map cls (batch) shape: ", att_map_cls.shape)
+        
+        # print(model.blocks[-1].attn.cls_attn_map.mean(dim=1).view(-1,14,14).shape)
+        # cls_weight = model.blocks[-1].attn.cls_attn_map[:].mean(dim=1).view(14, 14).detach()
+        # print(cls_weight.shape)
+        
+        
+        print("att_map max: ", T.max(att_map))
+        print("att_map min: ", T.min(att_map))
+        print("att_map cls max: ", T.max(att_map_cls))
+        print("att_map cls min: ", T.min(att_map_cls))
+        
+        att_map_up          = F.interpolate(att_map, (224,224), mode = "bilinear")
+        att_map_cls_up      = F.interpolate(att_map_cls, (224, 224), mode='bilinear')
+        
+        
+
+        x_show          = (x[0].permute(1, 2, 0) + 1)/2
+        
+        att_map         = att_map[0].permute(1,2,0)
+        att_map_up      = att_map_up[0].permute(1,2,0)
+        att_map_cls     = att_map_cls[0].permute(1,2,0)
+        att_map_cls_up  = att_map_cls_up[0].permute(1,2,0)
+        
+        
+        show_img(x_show)
+        
+        
+        show_img(att_map)
+        show_img(att_map_up)
+        
+        show_img(att_map_cls)
+        show_img(att_map_cls_up)
+        
+        print(x_show.shape)
+        print(att_map_cls_up.shape)
+        
+        show_img2(x_show, att_map_cls_up, alpha=0.8)
+    
+      
+        
         # bin_classifier.model
         
     def train_v7_scenario(model_type = "ViTEA_timm", add_name =""):
@@ -1263,6 +2019,13 @@ if __name__ == "__main__":
         else:
             bin_classifier.train(name_train= scenario_setting + "_" + model_type, test_loop = False)
 
+    def train_v7_scenario_separately(model_type = "ViTEA_timm", add_name ="", test_loop = False):
+        bin_classifier = DFD_BinViTClassifier_v7(scenario = data_scenario, useGPU= True, model_type=model_type, train_together=False)
+        if add_name != "":
+            bin_classifier.train(name_train= scenario_setting + "_" + model_type + "_" + add_name, test_loop = test_loop)
+        else:
+            bin_classifier.train(name_train= scenario_setting + "_" + model_type, test_loop = test_loop)
+    
     def test_v7_metrics(name_model, epoch, model_type = "ViTEA_timm"):
         bin_classifier = DFD_BinViTClassifier_v7(scenario = data_scenario, useGPU= True, model_type= model_type)
         bin_classifier.load(name_model, epoch)
@@ -1275,10 +2038,15 @@ if __name__ == "__main__":
         else:
             bin_classifier.train_and_test(name_train= scenario_setting + "_" + model_type)
     
-    # test_v7_metrics("faces_ViTEA_timm_v7_05-02-2024", 20)
-    # train_v7_scenario()
+    test_attention_map_v7("faces_ViTEA_timm_v7_07-02-2024", 21)
+    # test_attention_map()
     
     
+    # train_v7_scenario_separately()
+    
+    
+    
+
     #                           [End test section] 
     """ 
             Past test/train launched: 
@@ -1289,8 +2057,8 @@ if __name__ == "__main__":
         train_v6_scenario(model_type="ViT_base_S32")                    #224
         train_v6_scenario(model_type="ViT_base_S16", patch_size= 16)    #224
         train_v6_scenario(model_type="ViT_base_S32", add_name="training+") #224
-        train_v7_scenario()   # no autoencoder saved here
-        train_v7_scenario()
+
+
         
         test_v6_metrics(name_model = "faces_ViT_B16_pretrained_v6_27-01-2024", epoch = 9, model_type="ViT_B16_pretrained")
         test_v6_metrics(name_model = "faces_ViT_B16_pretrained_v6_29-01-2024", epoch = 15, model_type="ViT_B16_pretrained")
@@ -1298,11 +2066,16 @@ if __name__ == "__main__":
         test_v6_metrics(name_model = "faces_ViT_base_S16_v6_30-01-2024", epoch = 37, model_type="ViT_base_S16", patch_size=16)
         test_v6_metrics(name_model = "faces_ViT_base_S32_training+_v6_31-01-2024", epoch = 141, model_type="ViT_base_S32")
         
+       
+        train_test_v6_metrics(model_type="ViT_pretrained_timm")
+        train_test_v6_metrics(model_type="ViT_pretrained_timm")
+        
+        #                                           v7
+        train_v7_scenario()
+        train_v7_scenario_separately()
+        
         test_v7_metrics("faces_ViTEA_timm_v7_06-02-2024", 23)
-        
-        
-        train_test_v6_metrics(model_type="ViT_pretrained_timm")
-        train_test_v6_metrics(model_type="ViT_pretrained_timm")
+        test_v7_metrics("faces_ViTEA_timm_v7_07-02-2024", 21)
         
     # GAN:
         #                                           v6
