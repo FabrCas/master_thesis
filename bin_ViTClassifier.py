@@ -1787,7 +1787,7 @@ if __name__ == "__main__":
         bin_classifier = DFD_BinViTClassifier_v7(scenario = data_scenario, useGPU= True, model_type= model_type)
         bin_classifier.load(name_model, epoch)
         data_iter = bin_classifier.train_dataset
-        save    = False
+        save    = True
         img_id  = 0
         
         img, y = data_iter.__getitem__(img_id)
@@ -1828,7 +1828,7 @@ if __name__ == "__main__":
         # att_map = bin_classifier.spread_range(att_map)
     
         att_map = att_map[0]
-        rec_att_map = rec_att_map[0]
+        rec_att_map_d = rec_att_map_d[0]
         
         # min_value = T.min(att_map)
         # att_map -= min_value
@@ -1840,7 +1840,7 @@ if __name__ == "__main__":
         
         
         showImage(att_map, has_color= False, save_image= save, name="attention_map_" + str(img_id))
-        showImage(rec_att_map, has_color= False, save_image= save, name="attention_map_AE_" + str(img_id))
+        showImage(rec_att_map_d, has_color= False, save_image= save, name="attention_map_AE_" + str(img_id))
 
         # improve visualization
         # max_value = T.max(att_map)
@@ -1868,11 +1868,6 @@ if __name__ == "__main__":
         
         
         # show reconstruction
-        
-        
-        
-        
-        
         
     def test_attention_map():
 

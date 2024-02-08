@@ -3140,7 +3140,7 @@ class Abnormality_module_Encoder_VIT_v3(Project_abnorm_model):
         self.fc_risk_final  = T.nn.Linear(tot_feaures_risk_2,tot_feaures_final)
         self.bn_risk_final  = T.nn.BatchNorm1d(tot_feaures_final)
         
-    def forward(self, probs_softmax, encoding, residual, verbose = True):
+    def forward(self, probs_softmax, encoding, residual, verbose = False):
         
         # for 224p images
         # conv forward for the 

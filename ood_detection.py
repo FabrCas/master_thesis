@@ -2325,7 +2325,7 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
     """
     
     def __init__(self, classifier: DFD_BinViTClassifier_v7, scenario:str, model_type: str, useGPU: bool= True, binary_dataset: bool = True,
-                 batch_size = 64, use_synthetic:bool = True, extended_ood: bool = False, blind_test: bool = True,
+                 batch_size = 32, use_synthetic:bool = True, extended_ood: bool = False, blind_test: bool = True,
                  balancing_mode: str = "max", ):
         """ 
             ARGS:
@@ -2371,7 +2371,7 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
             
         # self.lr                     = 1e-4
         self.lr                     = 1e-3
-        self.n_epochs               = 30  # 50
+        self.n_epochs               = 20  # 50
         self.weight_decay           = 1e-3                  # L2 regularization term 
         
         # load data ID/OOD
@@ -2726,7 +2726,8 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
             y = y[:,1]
             
             # compute monodimensional weights for the full batch
-            weights = T.tensor([self.pos_weight_labels[elem] for elem in y ]).to(self.device)
+            # weights = T.tensor([self.pos_weight_labels[elem] for elem in y ]).to(self.device)
+            pos_weight  = T.tensor(self.pos_weight_labels).to(self.device)
             
             y = y.to(self.device).to(T.float32)
 
@@ -2740,16 +2741,16 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
                 residual            = out["residual"]
                 
 
+                with autocast():
+                    if self.model_type == "basic" or "encoder" in self.model_type:
+                        # logit = self._forward_B(prob_softmax, encoding, residual)
+                        # logit = T.squeeze(logit)
+                        logit = T.squeeze(self.model.forward(probs_softmax, encoding, residual))
+                    else:
+                        raise ValueError("Forward not defined in valid function for model: {}".format(self.model_type))
+                    
 
-                if self.model_type == "basic" or "encoder" in self.model_type:
-                    # logit = self._forward_B(prob_softmax, encoding, residual)
-                    # logit = T.squeeze(logit)
-                    logit = T.squeeze(self.model.forward(probs_softmax, encoding, residual))
-                else:
-                    raise ValueError("Forward not defined in valid function for model: {}".format(self.model_type))
-                
-
-                loss = self.bce(input=logit, target=y, pos_weight=weights)   # logits bce version, peforms first sigmoid and binary cross entropy on the output
+                    loss = self.bce(input=logit, target=y, pos_weight=pos_weight)   # logits bce version, peforms first sigmoid and binary cross entropy on the output
                 losses.append(loss.item())
 
                         
@@ -2871,18 +2872,18 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
                 encoding.requires_grad_(True)
                 residual.requires_grad_(True)
                 
-                
-                if self.model_type == "basic" or "encoder" in self.model_type:
+                with autocast():
+                    if self.model_type == "basic" or "encoder" in self.model_type:
 
-                    logit = T.squeeze(self.model.forward(probs_softmax, encoding, residual))
-                    
-                else:
-                    raise ValueError("Forward not defined in train function for model: {}".format(self.model_type))
-                # print(logit.shape)
-                time2.append(time()- s_2)
+                        logit = T.squeeze(self.model.forward(probs_softmax, encoding, residual))
+                        
+                    else:
+                        raise ValueError("Forward not defined in train function for model: {}".format(self.model_type))
+                    # print(logit.shape)
+                    time2.append(time()- s_2)
 
 
-                loss = self.bce(input=logit, target= y, pos_weight=pos_weight)
+                    loss = self.bce(input=logit, target= y, pos_weight=pos_weight)
                 # print(loss)
 
                 
