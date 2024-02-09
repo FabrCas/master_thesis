@@ -4420,6 +4420,8 @@ if __name__ == "__main__":
     
         
     test_abnorm_encoder_vit()
+    
+    
 
     # test_ViTEA()
     #                           [End test section] 
