@@ -20,7 +20,7 @@ from    torch.utils.data                    import default_collate
 from    utilities                           import plot_loss, plot_valid, saveModel, metrics_binClass, loadModel, test_num_workers, sampleValidSet, \
                                             duration, check_folder, cutmix_image, showImage, image2int, ExpLogger
 from    dataset                             import getScenarioSetting, CDDB_binary, CDDB_binary_Partial
-from    models                              import ResNet_ImageNet, ResNet, ResNet_EDS, Unet4_Scorer, Unet5_Scorer, Unet6_Scorer, Unet6L_Scorer, \
+from    models                              import ResNet_ImageNet, ResNet_scratch, ResNet_EDS, Unet4_Scorer, Unet5_Scorer, Unet6_Scorer, Unet6L_Scorer, \
                                             Unet4_ResidualScorer, Unet5_ResidualScorer, Unet6_ResidualScorer, Unet6L_ResidualScorer, \
                                             Unet4_Scorer_Confidence, Unet5_Scorer_Confidence \
 
@@ -362,7 +362,7 @@ class DFD_BinClassifier_v1(BinaryClassifier):
             self.model = ResNet_ImageNet(n_classes = 2).getModel()
             self.path2model_results   = os.path.join(self.path_results, "ImageNet")     
         else:                                   # training from scratch
-            self.model = ResNet()
+            self.model = ResNet_scratch()
             self.init_weights_kaimingNormal()    # initializaton of the wights
             self.path2model_results   = os.path.join(self.path_results, "RandomIntialization")
             
@@ -543,7 +543,7 @@ class DFD_BinClassifier_v2(BinaryClassifier):
             self.model = ResNet_ImageNet(n_classes = 2).getModel()
             self.path2model_results   = os.path.join(self.path_results, "ImageNet")  # this give a simple name when initialized the module, but training and loading the model, this changes
         else:                                   # training from scratch
-            self.model = ResNet(depth_level= 2)
+            self.model = ResNet_scratch(depth_level= 2)
             self.init_weights_kaimingNormal()    # initializaton of the wights
             self.path2model_results   = os.path.join(self.path_results, "RandomIntialization")
             

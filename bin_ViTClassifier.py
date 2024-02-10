@@ -21,7 +21,7 @@ from    torch.utils.data                    import default_collate
 from    utilities                           import plot_loss, plot_valid, saveModel, metrics_binClass, loadModel, sampleValidSet, \
                                             duration, check_folder, cutmix_image, showImage, image2int, ExpLogger, alpha_blend_pytorch, show_imgs_blend
 from    dataset                             import getScenarioSetting, CDDB_binary, CDDB_binary_Partial
-from    models                              import ViT_base_3, ViT_b16_ImageNet, ViT_timm, ViT_timm_EA, AutoEncoder_Attention
+from    models                              import ViT_b_scratch, ViT_b16_ImageNet, ViT_timm, ViT_timm_EA, AutoEncoder
 from    bin_classifier                      import BinaryClassifier
 
 
@@ -37,7 +37,7 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
 
     """
     def __init__(self, scenario, useGPU = True, patch_size = None, emb_size = None,  batch_size = 32,
-                 model_type = "ViT_base", transform_prog = 1):  # batch_size = 32 or 64
+                 model_type = "ViT_base", transform_prog = 0):  # batch_size = 32 or 64
         """ init classifier
 
         Args:
@@ -84,11 +84,11 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
         # load model
         if "vit_base" in model_type_check:
             if "_xs" in model_type_check: 
-                self.model      = ViT_base_3(**kwargs,  n_layers= 6, n_heads=4)
+                self.model      = ViT_b_scratch(**kwargs,  n_layers= 6, n_heads=4)
             elif "_s" in  model_type_check:
-                self.model      = ViT_base_3(**kwargs)
+                self.model      = ViT_b_scratch(**kwargs)
             elif "_m" in model_type_check:
-                self.model      = ViT_base_3(**kwargs, n_layers = 12, n_heads=12)
+                self.model      = ViT_b_scratch(**kwargs, n_layers = 12, n_heads=12)
         
                 
                 # self.model = ViT_base_2(n_classes= self.n_classes, n_layers= 10, n_heads=6)
@@ -579,7 +579,7 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
         Together with the ViT is also trained an autoencoder to reconstruct the attention map, this is used for OOD detection inference.
     """
     def __init__(self, scenario, useGPU = True, patch_size = None, emb_size = None,  batch_size = 32,
-                 model_type = "ViTEA_timm", transform_prog = 1, train_together = True):  # batch_size = 32 or 64
+                 model_type = "ViTEA_timm", transform_prog = 0, train_together = True):  # batch_size = 32 or 64
         """ init classifier
 
         Args:
@@ -598,7 +598,7 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
             model_type (str, optional): choose the Unet architecture between :
                 - "ViTEA_timm"
             Defaults is "ViTEA_timm". 
-            transform_prog (int, optional). Select the prog for input data trasnformation.Defaults is 1 (normalization values btw -1 and 1).
+            transform_prog (int, optional). Select the prog for input data trasnformation.Defaults is 0 (normalization values btw 0 and 1). (pre-trained models can use its own trasnformation compose)
         """
         super(DFD_BinViTClassifier_v7, self).__init__(useGPU = useGPU, batch_size = batch_size, model_type = model_type, )
         self.version                = 7
@@ -631,7 +631,7 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
         self.model.to(self.device)
         self.model.eval()
         
-        self.autoencoder = AutoEncoder_Attention()
+        self.autoencoder = AutoEncoder()
         self.autoencoder.to(self.device)
         self.autoencoder.eval()
         #                       data
@@ -1363,7 +1363,10 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
             
             # update the last epoch for training the model
             last_epoch = epoch_idx +1
-                
+            
+            
+            max_value_att_map = []
+            
             # loop over steps
             for step_idx,(x,y) in tqdm(enumerate(train_dataloader), total= n_steps):
                 
@@ -1394,6 +1397,8 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
                 loss      = self.bce(input=logits, target=y)   # bce from logits (no weights loaded)
                 # loss      = self.bce(input=pred, target=y)   # classic bce with "probabilities"
 
+                
+                max_value_att_map.append(T.max(att_map).detach().cpu().item())
                 
                 if (T.isnan(loss).any().item() or T.isinf(loss).any().item())and not(printed_nan):
                     print(loss)
@@ -1442,6 +1447,9 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
             avg_loss = round(loss_epoch/n_steps,4)
             loss_epochs.append(avg_loss)
             print("Average loss: {}".format(avg_loss))
+            
+            avg_max_attention = sum(max_value_att_map)/len(max_value_att_map)   
+            print("Average max attention value: {}".format(avg_max_attention))
             
             # include validation here if needed
             criterion = self.validViT(epoch=epoch_idx+1, valid_dataloader= valid_dataloader)

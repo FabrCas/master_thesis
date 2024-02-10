@@ -146,6 +146,11 @@ class ProjectDataset(Dataset):
                     v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
                     v2.Normalize(mean= [0.5000, 0.5000, 0.5000], std=[0.5000, 0.5000, 0.5000])
                 ])
+        else: 
+                self.transform_ops = transforms.Compose([
+                    v2.ToTensor(),   
+                    v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
+                ])
             
             
         # initialization of path for the input images and the labels

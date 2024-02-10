@@ -235,9 +235,8 @@ def trans_input_v1(isTensor = False):
     
     return transform_ops
 
-
 def trans_input_v2(isTensor = False):
-    """ function that returns trasnformation operations sequence for the image input to be compatible for ResNet50 model
+    """ function that returns transformation operations sequence for the image input to be compatible for ResNet50 model
 
     Returns:
         compose pytorch object
@@ -262,6 +261,30 @@ def trans_input_v2(isTensor = False):
     
     return transform_ops
 
+def trans_input_base(isTensor = False):
+    """ function that returns transformation operations 
+
+    Returns:
+        compose pytorch object
+    """
+    
+    config = get_inputConfig()
+    w = config['width']
+    h = config['height']
+    
+    
+    if isTensor:
+        transform_ops = transforms.Compose([
+                        transforms.Resize((h, w), interpolation= InterpolationMode.BILINEAR, antialias= True),
+                                                  ])
+    else: 
+        transform_ops = transforms.Compose([
+            transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+            transforms.Resize((h, w), interpolation= InterpolationMode.BILINEAR, antialias= True),
+        ])
+    
+    return transform_ops
+    
 
 def augment_v1(x):
     

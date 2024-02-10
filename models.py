@@ -133,234 +133,7 @@ class Project_DFD_model(nn.Module):
 
 #_________________________________________ ResNet__________________________________________________
 
-"""
-                            ResNet (scratch) Legend:
-                                
-    c_n -> 2D/3D convolutional layer number n
-    bn_n -> 2D/3D batch normalization layer number n
-    relu -> rectified linear unit activation function
-    mp -> 2D/3D max pooling layer
-    ds_layer -> downsampling layer
-    ap -> average pooling layer
-    fm_dim -> feature map dimension
-    do -> dropout layer
-    exp_coeff -> expansion coefficent
-    
-    
-    depth_level:
-    0 -> 18  layers ResNet + 1 dropout
-    1 -> 34  layers ResNet + 1 dropout
-    2 -> 50  layers ResNet + 1 dropout
-    3 -> 101 layers ResNet + 1 dropout
-    4 -> 152 layers ResNet + 1 dropout
- 
-    
-    input shape:
-    2D -> [batch, colours, width, height]
-"""
-class Bottleneck_block2D_l(nn.Module):
-    def __init__(self, n_inCh, n_outCh, stride = 1, ds_layer = None, exp_coeff = 4):
-        super(Bottleneck_block2D_l,self).__init__()
-        """
-                            3 Convolutional layers
-        """
-        self.exp_coeff = exp_coeff
-
-        # 1st block
-        self.c_1 = nn.Conv2d(n_inCh, n_outCh, kernel_size=1, stride=1, padding=0)
-        self.bn_1 = nn.BatchNorm2d(n_outCh)
-        
-        # 2nd block
-        self.c_2 = nn.Conv2d(n_outCh, n_outCh, kernel_size=3, stride=stride, padding=1)
-        self.bn_2 = nn.BatchNorm2d(n_outCh)
-        
-        # 3rd block
-        self.c_3 = nn.Conv2d(n_outCh, n_outCh*self.exp_coeff, kernel_size=1, stride=1, padding=0)
-        self.bn_3 = nn.BatchNorm2d(n_outCh*self.exp_coeff)
-        
-        # relu as a.f. for each block 
-        self.relu = nn.ReLU()
-        
-        self.ds_layer  = ds_layer
-        self.stride = stride
-        
-    
-    def forward(self, x):
-        x_init = x.clone()  # identity shortcuts
-        
-        # forwarding into the bottleneck layer
-        
-        x = self.relu(self.bn_1(self.c_1(x)))
-        x = self.relu(self.bn_2(self.c_2(x)))
-        x = self.bn_3(self.c_3(x))
-    
-        #downsample identity whether necessary and sum 
-        if self.ds_layer is not None:
-            x_init = self.ds_layer(x_init)
-        
-        x+=x_init
-        x=self.relu(x)
-        
-        return x
-
-class Bottleneck_block2D_s(nn.Module):
-    
-    def __init__(self, n_inCh, n_outCh, stride = 1, ds_layer = None, exp_coeff = 4):
-        """
-                            2 Convolutional layers
-        """
-        super(Bottleneck_block2D_s,self).__init__()
-        self.exp_coeff = exp_coeff
-
-        # 1st block
-        self.c_1 = nn.Conv2d(n_inCh, n_outCh, kernel_size=3, stride=1, padding=1)
-        self.bn_1 = nn.BatchNorm2d(n_outCh)
-        
-        # 2nd block
-        self.c_2 = nn.Conv2d(n_outCh, n_outCh, kernel_size=3, stride = stride, padding=1)
-        self.bn_2 = nn.BatchNorm2d(n_outCh)
-        
-        # relu as a.f. for each block 
-        self.relu = nn.ReLU()
-        
-        self.ds_layer  = ds_layer
-        self.stride = stride
-        
-    def forward(self, x):
-        x_init = x.clone()  # identity shortcuts
-        
-        # forwarding into the bottleneck layer
-        
-        x = self.relu(self.bn_1(self.c_1(x)))
-        x = self.bn_2(self.c_2(x))
-        
-        #downsample identity whether necessary and sum 
-        if self.ds_layer is not None:
-            x_init = self.ds_layer(x_init)
-            
-        x+=x_init
-        x=self.relu(x)
-        
-        return x
-      
-class ResNet(Project_DFD_model):
-    # channel -> colors image
-    # classes -> unique labels for the classification
-    
-    def __init__(self, depth_level = 2, n_classes = 10):
-        super(ResNet,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = n_classes)
-        
-        self.exp_coeff = 4 # output/input feature dimension ratio in bottleneck (default value for mid/big size model, reduced for small resnet 18 & 34)
-    
-        
-        print("Initializing {} ...".format(self.__class__.__name__))
-        self.initialTime = time.time()
-        self.input_ch= 64   #    300 frames 64
-        self.depth_level = depth_level
-        self._check_depth_level()
-        
-        
-        self.bottleneck_structs = [[2,2,2,2], [3,4,6,3], [3,4,6,3], [3,4,23,3], [3,8,36,3]]  # number of layers for the bottleneck                                             
-        
-        self.bottleneck_struct = self.bottleneck_structs[depth_level]
-        self.fm_dim = [64,128,256,512]                          # feature map dimension
-        
-        
-        self._create_net()
-        
-    
-    def _check_depth_level(self):
-        if self.depth_level< 0 or self.depth_level>4:
-            raise ValueError("Wrong selection for the depth level, range: [0,4]")
-        
-        # set to 1 the exp coefficient if you are using reduced model
-        if self.depth_level < 2: self.exp_coeff = 1
-    
-    
-    def _create_net(self):
-        # first block
-        self.c_1 = nn.Conv2d(self.n_channels, self.fm_dim[0], kernel_size= 7, stride = 2, padding = 3, bias = False)
-        self.bn_1 = nn.BatchNorm2d(self.fm_dim[0])
-        self.relu = nn.ReLU()
-        self.mp = nn.MaxPool2d(kernel_size= 3, stride = 2, padding= 1)
-        
-        # body blocks
-        self.l1 = self._buildLayers(n_blocks = self.bottleneck_struct[0], n_fm = self.fm_dim[0])
-        self.l2 = self._buildLayers(n_blocks = self.bottleneck_struct[1], n_fm = self.fm_dim[1], stride = 2)
-        self.l3 = self._buildLayers(n_blocks = self.bottleneck_struct[2], n_fm = self.fm_dim[2], stride = 2)
-        self.l4 = self._buildLayers(n_blocks = self.bottleneck_struct[3], n_fm = self.fm_dim[3], stride = 2)
-        
-        
-        # last block
-        self.ap = nn.AdaptiveAvgPool2d((1,1)) # (1,1) output dimension
-        self.do = nn.Dropout(0.3)
-        self.fc = nn.Linear(512*self.exp_coeff, self.n_classes)
-        
-        # self.af_out = nn.Sigmoid() # used directly in the loss function
-        
-        print("Model created, time {} [s]".format(time.time() - self.initialTime))
-        
-    def _buildLayers(self, n_blocks, n_fm, stride = 1):
-        
-        """
-            basic block 2 operations: conv + batch normalization
-            bottleneck block 3 operations: conv + batch normalization + ReLU
-        """
-        list_layers = []
-        
-        # adapt x to be summed with output of the blocks (downsampling)
-        if stride != 1 or self.input_ch != n_fm*self.exp_coeff: # so downsampling to handle the different shape of x 
-            ds_layer = nn.Sequential(
-                nn.Conv2d(self.input_ch, n_fm*self.exp_coeff, kernel_size=1, stride=stride),
-                nn.BatchNorm2d(n_fm*self.exp_coeff)
-                )
-        else:
-            ds_layer = None
-    
-
-        print("number of blocks fm {} -> {}".format(n_fm, n_blocks))
-        # first layer to get the right feature map
-        if self.depth_level < 2:
-            print("building small block n°1")
-            list_layers.append(Bottleneck_block2D_s(self.input_ch, n_fm, ds_layer= ds_layer, stride = stride))
-        else:
-            print("building big blocks n°1")
-            list_layers.append(Bottleneck_block2D_l(self.input_ch, n_fm, ds_layer= ds_layer, stride = stride))
-        self.input_ch = n_fm * self.exp_coeff
-        
-        # include all the layers from the bottleneck blocks
-        for index, _ in enumerate(range(n_blocks -1)):
-            if self.depth_level < 2:
-                print("building small block n°{}".format(index +2))
-                list_layers.append(Bottleneck_block2D_s(self.input_ch, n_fm))
-            else:
-                print("building big blocks n°{}".format(index +2))
-                list_layers.append(Bottleneck_block2D_l(self.input_ch, n_fm))
-        
-        return nn.Sequential(*list_layers)
-        
-    
-    def forward(self, x):
-        
-        # first block
-        x = self.mp(self.relu(self.bn_1(self.c_1(x))))
-        
-        # body blocks
-        x = self.l1(x)
-        x = self.l2(x)
-        x = self.l3(x)
-        x = self.l4(x)
-    
-        # last block
-        x = self.ap(x)
-        x = x.reshape(x.shape[0], -1)  #(batch_size, all_values)
-        x = self.do(x)
-        x = self.fc(x)
-        
-        return x
-    
-#_____________________________________ResNet 50 ImageNet___________________________________________
-
+#                                       ResNet 50 ImageNet
 class ResNet_ImageNet(Project_DFD_model):   # not nn.Module subclass, but still implement forward method calling the one of the model
     """ 
     This is a wrap class for pretraiend Resnet use the getModel function to get the nn.module implementation.
@@ -417,309 +190,8 @@ class ResNet_ImageNet(Project_DFD_model):   # not nn.Module subclass, but still 
     def forward(self, x):
         x = self.model(x)
         return x
-    
-# _____________________________________ U net ______________________________________________________
 
-# Default U-net based model setting:
-UNET_EXP_FMS    = 4    # U-net power of 2 exponent for feature maps (starting)
-
-class Conv_block(nn.Module):
-    def __init__(self, in_c, out_c):
-        super().__init__()
-        self.conv1 = nn.Conv2d(in_c, out_c, kernel_size=3, padding=1)
-        self.bn1 = nn.BatchNorm2d(out_c)
-        self.conv2 = nn.Conv2d(out_c, out_c, kernel_size=3, padding=1)
-        self.bn2 = nn.BatchNorm2d(out_c)
-        self.relu = nn.ReLU()
-        
-    def forward(self, inputs):
-        x = self.conv1(inputs)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.conv2(x)
-        x = self.bn2(x)
-        x = self.relu(x)
-        return x
-
-class Encoder_block(nn.Module):
-    def __init__(self, in_c, out_c):
-        super().__init__()
-        self.conv = Conv_block(in_c, out_c)
-        self.pool = nn.MaxPool2d((2, 2))
-        
-    def forward(self, inputs):
-        x = self.conv(inputs)
-        p = self.pool(x)
-        return x, p
-        # return p
-
-class Decoder_block(nn.Module):
-    def __init__(self, in_c, out_c, out_pad = 0):
-        super().__init__()
-        self.up = nn.ConvTranspose2d(in_c, out_c, kernel_size=2, stride=2, padding=0, output_padding = out_pad)
-        self.conv = Conv_block(out_c+out_c, out_c)
-        
-    def forward(self, inputs, skip):
-        x = self.up(inputs)
-        x = T.cat([x, skip], axis=1)
-        x = self.conv(x)
-        return x
-
-class Unet4(Project_DFD_model):
-    """
-        U-net 4, 4 encoders and 4 decoders
-    """
-    
-    def __init__(self):
-        super(Unet4,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = None)
-        
-        print("Initializing {} ...".format(self.__class__.__name__))
-        self.features_order = UNET_EXP_FMS   # orders greater and equal than 5 saturates the GPU!
-        self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
-        self.n_levels = 4
-        
-        # create net and initialize
-        self._createNet()
-        self._init_weights_kaimingNormal()
-        
-
-        
-    def _createNet(self):
-        # encoder
-        self.e1 = Encoder_block(self.n_channels, self.feature_maps(0))
-        self.e2 = Encoder_block(self.feature_maps(0) , self.feature_maps(1))
-        self.e3 = Encoder_block(self.feature_maps(1) , self.feature_maps(2))
-        self.e4 = Encoder_block(self.feature_maps(2) , self.feature_maps(3))
-        
-        # bottlenech (encoding)
-        self.b = Conv_block(self.feature_maps(3) , self.feature_maps(4))
-        
-        # Flatten the encoding
-        self.flatten = nn.Flatten()
-    
-        # decoder 
-        self.d1 = Decoder_block(self.feature_maps(4) , self.feature_maps(3))
-        self.d2 = Decoder_block(self.feature_maps(3) , self.feature_maps(2))
-        self.d3 = Decoder_block(self.feature_maps(2) , self.feature_maps(1))
-        self.d4 = Decoder_block(self.feature_maps(1) , self.feature_maps(0))
-            
-        # self.out= decoder_block(64, self.n_channels)
-        self.out = nn.Conv2d(self.feature_maps(0), self.n_channels, kernel_size=1, padding=0)
-        self.decoder_out_fn = nn.Sigmoid()
-            
-        # self.model = nn.Sequential(self.encoder, self.decoder)
-
-    def forward(self, x):
-        """
-            Returns: reconstruction, encoding
-        """
-        
-        # encoder
-        s1, p1 = self.e1(x)
-        s2, p2 = self.e2(p1)
-        s3, p3 = self.e3(p2)
-        s4, p4 = self.e4(p3)
-    
-        # bottlenech (encoding)
-        bottleneck = self.b(p4)
-        enc = self.flatten(bottleneck)
-
-        # decoder 
-        d1 = self.d1(bottleneck, s4)
-        d2 = self.d2(d1, s3)
-        d3 = self.d3(d2, s2)
-        d4 = self.d4(d3, s1)
-
-        # reconstuction
-        rec = self.decoder_out_fn(self.out(d4))  # check sigmoid vs tanh
-    
-        return rec, enc
-
-class Unet5(Project_DFD_model):
-    """
-        U-net 5, 5 encoders and 5 decoders
-    """
-    
-    def __init__(self):
-        super(Unet5,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = None)
-        print("Initializing {} ...".format(self.__class__.__name__))
-
-        self.features_order = UNET_EXP_FMS   # orders greater and equal than 5 saturates the GPU!
-        self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
-        self.n_levels = 5
-        
-        # create net and initialize
-        self._createNet()
-        self._init_weights_kaimingNormal()
-
-        
-    def _createNet(self):
-        
-        # encoder
-        self.e1 = Encoder_block(self.n_channels, self.feature_maps(0))
-        self.e2 = Encoder_block(self.feature_maps(0) , self.feature_maps(1))
-        self.e3 = Encoder_block(self.feature_maps(1) , self.feature_maps(2))
-        self.e4 = Encoder_block(self.feature_maps(2) , self.feature_maps(3))
-        self.e5 = Encoder_block(self.feature_maps(3) , self.feature_maps(4))
-        
-        # bottlenech (encoding)
-        self.b = Conv_block(self.feature_maps(4) , self.feature_maps(5))
-        
-        # Flatten the encoding
-        self.flatten = nn.Flatten()
-    
-        # decoder 
-        
-        # define conditions for padding 
-        c = INPUT_WIDTH/(math.pow(2,self.n_levels))
-        
-        if c%1!=0:
-            self.d1 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1) # 112x112 addition
-        else:
-            self.d1 = Decoder_block(self.feature_maps(5) , self.feature_maps(4))
-        self.d2 = Decoder_block(self.feature_maps(4) , self.feature_maps(3))
-        self.d3 = Decoder_block(self.feature_maps(3) , self.feature_maps(2))
-        self.d4 = Decoder_block(self.feature_maps(2) , self.feature_maps(1))
-        self.d5 = Decoder_block(self.feature_maps(1) , self.feature_maps(0))
-            
-        # self.out= decoder_block(64, self.n_channels)
-        self.out = nn.Conv2d(self.feature_maps(0), self.n_channels, kernel_size=1, padding=0)
-        self.decoder_out_fn = nn.Sigmoid()
-            
-        # self.model = nn.Sequential(self.encoder, self.decoder)
-
-    def forward(self, x):
-        """
-            Returns: reconstruction, encoding
-        """
-        
-        # encoder
-        s1, p1 = self.e1(x)
-        s2, p2 = self.e2(p1)
-        s3, p3 = self.e3(p2)
-        s4, p4 = self.e4(p3)
-        s5, p5 = self.e5(p4)
-        
-        # bottlenech (encoding)
-        bottleneck = self.b(p5)
-        enc = self.flatten(bottleneck)
-        
-        print(p1.shape)
-        print(p2.shape)
-        print(p3.shape)
-        print(p4.shape)
-        print(p5.shape)
-        print(bottleneck.shape)
-        
-        
-        
-        # decoder 
-        d1 = self.d1(bottleneck, s5)
-        d2 = self.d2(d1, s4)
-        d3 = self.d3(d2, s3)
-        d4 = self.d4(d3, s2)
-        d5 = self.d5(d4, s1)
-    
-        # reconstuction
-        rec = self.decoder_out_fn(self.out(d5))  # check sigmoid vs tanh
-    
-        return rec, enc
-
-class Unet6(Project_DFD_model):
-    """
-        U-net 6, 6 encoders and 6 decoders
-    """
-    
-    def __init__(self):
-        super(Unet6,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = None)
-        print("Initializing {} ...".format(self.__class__.__name__))
-        
-        self.features_order = UNET_EXP_FMS   # orders greater and equal than 5 saturates the GPU!
-        self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
-        self.n_levels = 6
-        
-        # create net and initialize
-        self._createNet()
-        self._init_weights_kaimingNormal()
-        
-
-        
-    def _createNet(self):
-        
-        # encoder
-        self.e1 = Encoder_block(self.n_channels, self.feature_maps(0))
-        self.e2 = Encoder_block(self.feature_maps(0) , self.feature_maps(1))
-        self.e3 = Encoder_block(self.feature_maps(1) , self.feature_maps(2))
-        self.e4 = Encoder_block(self.feature_maps(2) , self.feature_maps(3))
-        self.e5 = Encoder_block(self.feature_maps(3) , self.feature_maps(4))
-        self.e6 = Encoder_block(self.feature_maps(4) , self.feature_maps(5))
-        
-        # bottlenech (encoding)
-        self.b = Conv_block(self.feature_maps(5) , self.feature_maps(6))
-        
-        # Flatten the encoding
-        self.flatten = nn.Flatten()
-    
-        # decoder 
-        
-        # define conditions for padding 
-        c1 = INPUT_WIDTH/(math.pow(2,self.n_levels))
-        c2 = INPUT_WIDTH/(math.pow(2,self.n_levels-1))
-        
-        if c1%1!=0:
-            self.d1 = Decoder_block(self.feature_maps(6) , self.feature_maps(5), out_pad=1) # for odd spatial dimensions
-        else:
-            self.d1 = Decoder_block(self.feature_maps(6) , self.feature_maps(5)) # for odd spatial dimensions
-        if c2%1!=0:
-            self.d2 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1) # 112x112 addition
-        else:
-            self.d2 = Decoder_block(self.feature_maps(5) , self.feature_maps(4)) # 112x112 addition
-        self.d3 = Decoder_block(self.feature_maps(4) , self.feature_maps(3))
-        self.d4 = Decoder_block(self.feature_maps(3) , self.feature_maps(2))
-        self.d5 = Decoder_block(self.feature_maps(2) , self.feature_maps(1))
-        self.d6 = Decoder_block(self.feature_maps(1) , self.feature_maps(0))
-            
-        # self.out= decoder_block(64, self.n_channels)
-        self.out = nn.Conv2d(self.feature_maps(0), self.n_channels, kernel_size=1, padding=0)
-        self.decoder_out_fn = nn.Sigmoid()
-            
-        # self.model = nn.Sequential(self.encoder, self.decoder)
-
-    def forward(self, x):
-        """
-            Returns: reconstruction, encoding
-        """
-        
-        # encoder
-        s1, p1 = self.e1(x)
-        s2, p2 = self.e2(p1)
-        s3, p3 = self.e3(p2)
-        s4, p4 = self.e4(p3)
-        s5, p5 = self.e5(p4)
-        s6, p6 = self.e6(p5)
-        
-        # bottlenech (encoding)
-        bottleneck = self.b(p6)
-        enc = self.flatten(bottleneck)
-
-        # decoder 
-        d1 = self.d1(bottleneck, s6)
-        d2 = self.d2(d1, s5)
-        d3 = self.d3(d2, s4)
-        d4 = self.d4(d3, s3)
-        d5 = self.d5(d4, s2)
-        d6 = self.d6(d5, s1)
-        
-        # reconstuction
-        rec = self.decoder_out_fn(self.out(d6))  # check sigmoid vs tanh
-    
-        return rec, enc
-
-    
-#_____________________________________ OOD custom models: ResNet and Unet based ___________________
-
-#                                       custom ResNet
-
+#                                       custom ResNet with encodign and image reconstruction (OOD detection related)
 class ResNet_EDS(Project_DFD_model): 
     """ ResNet multi head module with Encoder, Decoder and scorer (Classifier) """
     def __init__(self, n_classes = 10, use_upsample = False):               # expect image of shape 224x224
@@ -1022,6 +494,307 @@ class ResNet_EDS(Project_DFD_model):
         reconstruction = self.decoder_module(features)
         
         return features, logits, reconstruction
+
+    
+# _____________________________________ U net ______________________________________________________
+
+# Default U-net based model setting:
+UNET_EXP_FMS    = 4    # U-net power of 2 exponent for feature maps (starting)
+
+class Conv_block(nn.Module):
+    def __init__(self, in_c, out_c):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_c, out_c, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(out_c)
+        self.conv2 = nn.Conv2d(out_c, out_c, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(out_c)
+        self.relu = nn.ReLU()
+        
+    def forward(self, inputs):
+        x = self.conv1(inputs)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.conv2(x)
+        x = self.bn2(x)
+        x = self.relu(x)
+        return x
+
+class Encoder_block(nn.Module):
+    def __init__(self, in_c, out_c):
+        super().__init__()
+        self.conv = Conv_block(in_c, out_c)
+        self.pool = nn.MaxPool2d((2, 2))
+        
+    def forward(self, inputs):
+        x = self.conv(inputs)
+        p = self.pool(x)
+        return x, p
+        # return p
+
+class Decoder_block(nn.Module):
+    def __init__(self, in_c, out_c, out_pad = 0):
+        super().__init__()
+        self.up = nn.ConvTranspose2d(in_c, out_c, kernel_size=2, stride=2, padding=0, output_padding = out_pad)
+        self.conv = Conv_block(out_c+out_c, out_c)
+        
+    def forward(self, inputs, skip):
+        x = self.up(inputs)
+        x = T.cat([x, skip], axis=1)
+        x = self.conv(x)
+        return x
+
+class Unet4(Project_DFD_model):
+    """
+        U-net 4, 4 encoders and 4 decoders
+    """
+    
+    def __init__(self):
+        super(Unet4,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = None)
+        
+        print("Initializing {} ...".format(self.__class__.__name__))
+        self.features_order = UNET_EXP_FMS   # orders greater and equal than 5 saturates the GPU!
+        self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
+        self.n_levels = 4
+        
+        # create net and initialize
+        self._createNet()
+        self._init_weights_kaimingNormal()
+        
+
+        
+    def _createNet(self):
+        # encoder
+        self.e1 = Encoder_block(self.n_channels, self.feature_maps(0))
+        self.e2 = Encoder_block(self.feature_maps(0) , self.feature_maps(1))
+        self.e3 = Encoder_block(self.feature_maps(1) , self.feature_maps(2))
+        self.e4 = Encoder_block(self.feature_maps(2) , self.feature_maps(3))
+        
+        # bottlenech (encoding)
+        self.b = Conv_block(self.feature_maps(3) , self.feature_maps(4))
+        
+        # Flatten the encoding
+        self.flatten = nn.Flatten()
+    
+        # decoder 
+        self.d1 = Decoder_block(self.feature_maps(4) , self.feature_maps(3))
+        self.d2 = Decoder_block(self.feature_maps(3) , self.feature_maps(2))
+        self.d3 = Decoder_block(self.feature_maps(2) , self.feature_maps(1))
+        self.d4 = Decoder_block(self.feature_maps(1) , self.feature_maps(0))
+            
+        # self.out= decoder_block(64, self.n_channels)
+        self.out = nn.Conv2d(self.feature_maps(0), self.n_channels, kernel_size=1, padding=0)
+        self.decoder_out_fn = nn.Sigmoid()
+            
+        # self.model = nn.Sequential(self.encoder, self.decoder)
+
+    def forward(self, x):
+        """
+            Returns: reconstruction, encoding
+        """
+        
+        # encoder
+        s1, p1 = self.e1(x)
+        s2, p2 = self.e2(p1)
+        s3, p3 = self.e3(p2)
+        s4, p4 = self.e4(p3)
+    
+        # bottlenech (encoding)
+        bottleneck = self.b(p4)
+        enc = self.flatten(bottleneck)
+
+        # decoder 
+        d1 = self.d1(bottleneck, s4)
+        d2 = self.d2(d1, s3)
+        d3 = self.d3(d2, s2)
+        d4 = self.d4(d3, s1)
+
+        # reconstuction
+        rec = self.decoder_out_fn(self.out(d4))  # check sigmoid vs tanh
+    
+        return rec, enc
+
+class Unet5(Project_DFD_model):
+    """
+        U-net 5, 5 encoders and 5 decoders
+    """
+    
+    def __init__(self):
+        super(Unet5,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = None)
+        print("Initializing {} ...".format(self.__class__.__name__))
+
+        self.features_order = UNET_EXP_FMS   # orders greater and equal than 5 saturates the GPU!
+        self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
+        self.n_levels = 5
+        
+        # create net and initialize
+        self._createNet()
+        self._init_weights_kaimingNormal()
+
+        
+    def _createNet(self):
+        
+        # encoder
+        self.e1 = Encoder_block(self.n_channels, self.feature_maps(0))
+        self.e2 = Encoder_block(self.feature_maps(0) , self.feature_maps(1))
+        self.e3 = Encoder_block(self.feature_maps(1) , self.feature_maps(2))
+        self.e4 = Encoder_block(self.feature_maps(2) , self.feature_maps(3))
+        self.e5 = Encoder_block(self.feature_maps(3) , self.feature_maps(4))
+        
+        # bottlenech (encoding)
+        self.b = Conv_block(self.feature_maps(4) , self.feature_maps(5))
+        
+        # Flatten the encoding
+        self.flatten = nn.Flatten()
+    
+        # decoder 
+        
+        # define conditions for padding 
+        c = INPUT_WIDTH/(math.pow(2,self.n_levels))
+        
+        if c%1!=0:
+            self.d1 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1) # 112x112 addition
+        else:
+            self.d1 = Decoder_block(self.feature_maps(5) , self.feature_maps(4))
+        self.d2 = Decoder_block(self.feature_maps(4) , self.feature_maps(3))
+        self.d3 = Decoder_block(self.feature_maps(3) , self.feature_maps(2))
+        self.d4 = Decoder_block(self.feature_maps(2) , self.feature_maps(1))
+        self.d5 = Decoder_block(self.feature_maps(1) , self.feature_maps(0))
+            
+        # self.out= decoder_block(64, self.n_channels)
+        self.out = nn.Conv2d(self.feature_maps(0), self.n_channels, kernel_size=1, padding=0)
+        self.decoder_out_fn = nn.Sigmoid()
+            
+        # self.model = nn.Sequential(self.encoder, self.decoder)
+
+    def forward(self, x):
+        """
+            Returns: reconstruction, encoding
+        """
+        
+        # encoder
+        s1, p1 = self.e1(x)
+        s2, p2 = self.e2(p1)
+        s3, p3 = self.e3(p2)
+        s4, p4 = self.e4(p3)
+        s5, p5 = self.e5(p4)
+        
+        # bottlenech (encoding)
+        bottleneck = self.b(p5)
+        enc = self.flatten(bottleneck)
+        
+        print(p1.shape)
+        print(p2.shape)
+        print(p3.shape)
+        print(p4.shape)
+        print(p5.shape)
+        print(bottleneck.shape)
+        
+        
+        
+        # decoder 
+        d1 = self.d1(bottleneck, s5)
+        d2 = self.d2(d1, s4)
+        d3 = self.d3(d2, s3)
+        d4 = self.d4(d3, s2)
+        d5 = self.d5(d4, s1)
+    
+        # reconstuction
+        rec = self.decoder_out_fn(self.out(d5))  # check sigmoid vs tanh
+    
+        return rec, enc
+
+class Unet6(Project_DFD_model):
+    """
+        U-net 6, 6 encoders and 6 decoders
+    """
+    
+    def __init__(self):
+        super(Unet6,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = None)
+        print("Initializing {} ...".format(self.__class__.__name__))
+        
+        self.features_order = UNET_EXP_FMS   # orders greater and equal than 5 saturates the GPU!
+        self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
+        self.n_levels = 6
+        
+        # create net and initialize
+        self._createNet()
+        self._init_weights_kaimingNormal()
+        
+
+        
+    def _createNet(self):
+        
+        # encoder
+        self.e1 = Encoder_block(self.n_channels, self.feature_maps(0))
+        self.e2 = Encoder_block(self.feature_maps(0) , self.feature_maps(1))
+        self.e3 = Encoder_block(self.feature_maps(1) , self.feature_maps(2))
+        self.e4 = Encoder_block(self.feature_maps(2) , self.feature_maps(3))
+        self.e5 = Encoder_block(self.feature_maps(3) , self.feature_maps(4))
+        self.e6 = Encoder_block(self.feature_maps(4) , self.feature_maps(5))
+        
+        # bottlenech (encoding)
+        self.b = Conv_block(self.feature_maps(5) , self.feature_maps(6))
+        
+        # Flatten the encoding
+        self.flatten = nn.Flatten()
+    
+        # decoder 
+        
+        # define conditions for padding 
+        c1 = INPUT_WIDTH/(math.pow(2,self.n_levels))
+        c2 = INPUT_WIDTH/(math.pow(2,self.n_levels-1))
+        
+        if c1%1!=0:
+            self.d1 = Decoder_block(self.feature_maps(6) , self.feature_maps(5), out_pad=1) # for odd spatial dimensions
+        else:
+            self.d1 = Decoder_block(self.feature_maps(6) , self.feature_maps(5)) # for odd spatial dimensions
+        if c2%1!=0:
+            self.d2 = Decoder_block(self.feature_maps(5) , self.feature_maps(4), out_pad=1) # 112x112 addition
+        else:
+            self.d2 = Decoder_block(self.feature_maps(5) , self.feature_maps(4)) # 112x112 addition
+        self.d3 = Decoder_block(self.feature_maps(4) , self.feature_maps(3))
+        self.d4 = Decoder_block(self.feature_maps(3) , self.feature_maps(2))
+        self.d5 = Decoder_block(self.feature_maps(2) , self.feature_maps(1))
+        self.d6 = Decoder_block(self.feature_maps(1) , self.feature_maps(0))
+            
+        # self.out= decoder_block(64, self.n_channels)
+        self.out = nn.Conv2d(self.feature_maps(0), self.n_channels, kernel_size=1, padding=0)
+        self.decoder_out_fn = nn.Sigmoid()
+            
+        # self.model = nn.Sequential(self.encoder, self.decoder)
+
+    def forward(self, x):
+        """
+            Returns: reconstruction, encoding
+        """
+        
+        # encoder
+        s1, p1 = self.e1(x)
+        s2, p2 = self.e2(p1)
+        s3, p3 = self.e3(p2)
+        s4, p4 = self.e4(p3)
+        s5, p5 = self.e5(p4)
+        s6, p6 = self.e6(p5)
+        
+        # bottlenech (encoding)
+        bottleneck = self.b(p6)
+        enc = self.flatten(bottleneck)
+
+        # decoder 
+        d1 = self.d1(bottleneck, s6)
+        d2 = self.d2(d1, s5)
+        d3 = self.d3(d2, s4)
+        d4 = self.d4(d3, s3)
+        d5 = self.d5(d4, s2)
+        d6 = self.d6(d5, s1)
+        
+        # reconstuction
+        rec = self.decoder_out_fn(self.out(d6))  # check sigmoid vs tanh
+    
+        return rec, enc
+
+    
+#_____________________________________ OOD custom models: Unet based ___________________
 
 #                                       custom Unet
 
@@ -3082,321 +2855,16 @@ class Abnormality_module_Encoder_v4(Project_abnorm_model):
         out = self.gelu(self.bn_risk_final(self.fc_risk_final(x_concat)))
         return out   
 
-class Abnormality_module_Encoder_VIT_v3(Project_abnorm_model):
-    
-    """ 
-        based on Abnormality_module_Encoder_v3:
-        - use a smaleller encoding as input (from fc layes of the scorer)
-        - higher reduction for the residual before the fc layers (more encoding blocks)
-        - consequent reduced n. params for the final fc risk section.
-        
-        **requires** output from a classifier with: classifier_name.large_encoding = False
-    """
-    
-    def __init__(self, shape_softmax_probs, shape_encoding, shape_residual):
-        super().__init__()
-        
-        self.probs_softmax_shape   = shape_softmax_probs
-        self.encoding_shape = shape_encoding
-        self.residual_shape = shape_residual
-        self.input_shape = (shape_softmax_probs, shape_encoding, shape_residual)   # input_shape doesn't consider the batch
-        self._createNet()
-        self._init_weights_normal()
-    
-    def _createNet(self):
-        
-        n_encoder_block             = 5
-        n_features_latent_residual  = 64
-        residual_length  = math.floor(self.residual_shape[2]/(2**n_encoder_block))**2 * n_features_latent_residual # flatten residual (after encoding) should have same dim of the encoding
-        
-        tot_features_0   = self.probs_softmax_shape[1] +  self.encoding_shape[1] + residual_length
-
-        # conv section, the encoder block must be equal to the number specified in n_encoder_block above
-        self.e1 = Encoder_block_v2(in_c =  self.residual_shape[1] , out_c = 4)
-        self.e2 = Encoder_block_v2(in_c =  4, out_c = 8)
-        self.e3 = Encoder_block_v2(in_c =  8, out_c = 16)
-        self.e4 = Encoder_block_v2(in_c =  16, out_c = 32)
-        self.e5 = Encoder_block_v2(in_c =  32 , out_c = n_features_latent_residual)
-
-        tot_features_1      = 1024       
-         
-        # taken from official work 
-        tot_feaures_risk_1  = 512
-        tot_feaures_risk_2  = 128
-        tot_feaures_final   = 1
-        
-        self.gelu = T.nn.GELU()
-        self.sigmoid = T.nn.Sigmoid()
-        
-        # preliminary layers
-        self.fc1 = T.nn.Linear(tot_features_0,tot_features_1)
-        self.bn1 = T.nn.BatchNorm1d(tot_features_1)
-        
-        # risk section
-        self.fc_risk_1      = T.nn.Linear(tot_features_1,tot_feaures_risk_1)
-        self.bn_risk_1      = T.nn.BatchNorm1d(tot_feaures_risk_1)
-        self.fc_risk_2      = T.nn.Linear(tot_feaures_risk_1,tot_feaures_risk_2)
-        self.bn_risk_2      = T.nn.BatchNorm1d(tot_feaures_risk_2)
-        self.fc_risk_final  = T.nn.Linear(tot_feaures_risk_2,tot_feaures_final)
-        self.bn_risk_final  = T.nn.BatchNorm1d(tot_feaures_final)
-        
-    def forward(self, probs_softmax, encoding, residual, verbose = False):
-        
-        # for 224p images
-        # conv forward for the 
-        residual_out = self.e1(residual)
-        residual_out = self.e2(residual_out)
-        residual_out = self.e3(residual_out)
-        residual_out = self.e4(residual_out)
-        residual_out = self.e5(residual_out)    # 64, 7, 7 shape
-        
-        # print(residual_out.shape)
-        
-        # flat the residual
-        flatten_residual = T.flatten(residual_out, start_dim=1)
-        
-        # print(flatten_residual.shape)
-        
-        # # build the vector input 
-        x = T.cat((probs_softmax, encoding, flatten_residual), dim = 1)
-        if verbose: print("input module b shape -> ", x.shape)
-        
-        # # preliminary layers
-        x = self.gelu(self.bn1(self.fc1(x)))
-        
-        # # risk section
-        x = self.gelu(self.bn_risk_1(self.fc_risk_1(x)))
-        x = self.gelu(self.bn_risk_2(self.fc_risk_2(x)))
-        x = self.gelu(self.bn_risk_final(self.fc_risk_final(x)))
-        
-        return x
 
 #_____________________________________Vision Transformer (ViT)_____________________________________        
 
 
 # Default transformer model settings:
 
-# PATCH_SIZE = 16
-# EMB_SIZE    = 768  # 128 adjust based on patch dimension
-
 PATCH_SIZE  = 16
 EMB_SIZE    = 1024
 
-# _____________________________ViT base: 1st implementation _______________________________________
-
-class FCPatchEmbedding(nn.Module):
-    def __init__(self, in_channels = INPUT_CHANNELS, patch_size = PATCH_SIZE, emb_size = EMB_SIZE):
-        """ FC linear projection
-        
-        
-        intended for squared patches of size in_channels x patch_size x patch_size
-        
-        """
-        super().__init__()
-        self.in_channels    = in_channels
-        self.patch_size     = patch_size
-        self.emb_size       = emb_size
-        self.projection     = nn.Sequential(
-            # break-down the image in s1 x s2 patches and flat them
-            Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1=self.patch_size, p2=self.patch_size),
-            nn.Linear(self.patch_size * self.patch_size * self.in_channels, self.emb_size)
-        )
-
-    def forward(self, x: T.Tensor) -> T.Tensor:
-        x = self.projection(x)
-        return x
-
-class Attention(nn.Module):
-    def __init__(self, dim, n_heads, dropout_percentage):
-        super(Attention, self).__init__()
-        self.dim                = dim
-        self.n_heads            = n_heads
-        self.dropout_percentage = dropout_percentage
-        self.multi_head         = T.nn.MultiheadAttention(
-            embed_dim   =   self.dim,
-            num_heads   =   self.n_heads,
-            dropout     =   self.dropout_percentage,
-            batch_first =   True)     # ??
-        self.q                  = T.nn.Linear(self.dim, self.dim)
-        self.k                  = T.nn.Linear(self.dim, self.dim)
-        self.v                  = T.nn.Linear(self.dim, self.dim)
-        
-    def forward(self, x):
-        q = self.q(x)
-        k = self.k(x)
-        v = self.v(x)
-        
-        out, _ = self.multi_head(q,k,v)
-        return out
-        
-class PreNorm(nn.Module):
-    """ a simple wrapper class that applies Layer normalization before forwarding a specified function fn """     
-    
-    def __init__(self, dim, fn):
-        super(PreNorm,self).__init__()
-        self.norm   = nn.LayerNorm(dim)
-        self.fn     = fn
-    
-    def forward(self,x, **kwargs):
-        return self.fn(self.norm(x), **kwargs)  
-
-class FeedForward(nn.Sequential):
-    def __init__(self, dim, hidden_dim, dropout_percentage = 0.0):
-        super(FeedForward, self).__init__(
-            nn.Linear(dim, hidden_dim),
-            nn.GELU(),
-            nn.Dropout(dropout_percentage),
-            nn.Linear(hidden_dim, dim),
-            nn.Dropout(dropout_percentage)     
-        )
-
-class ResidualBlock(nn.Module):
-    def __init__(self, fn):
-        super().__init__()
-        self.fn = fn
-    
-    def forward(self, x, **kwargs):
-        res = x
-        x = self.fn(x, **kwargs)
-        x += res
-        return x 
-
-class ViT_base(Project_DFD_model):
-    
-    def __init__(self, n_channels = INPUT_CHANNELS, img_width = INPUT_WIDTH, img_height = INPUT_HEIGHT, 
-                 patch_size = PATCH_SIZE, emb_size = EMB_SIZE, n_layers = 4, n_classes = 10,
-                 dropout = 0.1, n_heads = 2):
-        
-        super(ViT_base, self).__init__(c = n_channels,h = img_height,w = img_width, n_classes = n_classes)
-        
-        self.n_channels = n_channels
-        self.width          = img_width
-        self.height         = img_height
-        self.img_size       = img_height   # supposing squred image take arbitrarily width or height
-        self.input_shape    = (self.n_channels, self.height, self.width)
-        self.patch_size     = patch_size
-        self.emb_size       = emb_size
-        self.n_layers       = n_layers 
-        self.n_classes      = n_classes
-        self.dropout        = dropout
-        self.n_heads        = n_heads
-        
-        # compute the total number of patches for each image and the define the CLS token
-        self.n_patches = (self.img_size//self.patch_size)**2
-        self.cls_token = nn.Parameter(T.rand(1,1,self.emb_dim))
-        
-        # Embeddings
-        self.patch_embedding    = FCPatchEmbedding(in_channels= self.n_channels, patch_size= self.patch_size, emb_size= self.emb_dim)
-        self.pos_embedding      = nn.Parameter(T.rand(1, self.n_patches +1, self.emb_dim))                                             # +1 for [CLS] token
-        
-        # Transformer Encoder
-        self.layers = nn.ModuleList([])
-        for _ in range(self.n_layers):
-            transformer_block = nn.Sequential(
-                ResidualBlock(PreNorm(self.emb_dim, Attention(dim = self.emb_dim, n_heads= self.n_heads, dropout_percentage= self.dropout))),
-                ResidualBlock(PreNorm(self.emb_dim, FeedForward(dim = self.emb_dim, hidden_dim= self.emb_dim, dropout_percentage= self.dropout)))
-            )
-            self.layers.append(transformer_block)
-            
-        # Classification Head
-        self.head = nn.Sequential(nn.LayerNorm(self.emb_dim), nn.Linear(self.emb_dim, self.n_classes))
-        
-        self._init_weights_normal()
-    
-        
-    def forward(self, x):
-        # patch embedding 
-        x = self.patch_embedding(x)
-        # get shape data
-        b, n, _ = x.shape
-        
-        # include the CLS token to inputs, repeating for the number of batches
-        cls_token = repeat(self.cls_token, '1 1 d -> b 1 d', b = b)
-        x = T.cat((cls_token, x), dim = 1)
-        x += self.pos_embedding[:, :(n+1)]   # x += self.pos_embedding ? 
-        
-        # Forward thorugh Transformer layers
-        for i in range(self.n_layers):
-            x = self.layers[i](x)
-           
-        # classification head forward only for the cls token
-        logits = self.head(x[:, 0, :])
-        
-        return logits
-
-
-# _____________________________ViT base: 2nd implementation _______________________________________
-
-class ConvPatchEmbedding(nn.Module):
-    def __init__(self, img_size = INPUT_WIDTH, patch_size= PATCH_SIZE, in_channels= INPUT_CHANNELS, emb_size=768):
-        super(ConvPatchEmbedding, self).__init__()
-        self.patch_embed = nn.Conv2d(in_channels, emb_size, kernel_size=patch_size, stride=patch_size)
-        self.img_size = img_size
-        
-    def forward(self, x):
-        # print(x.shape)
-        x = self.patch_embed(x)
-        # print(x.shape)
-        x = x.flatten(2).transpose(1, 2)   # transpose change the dimension between encoding and sequence of patches
-        # print(x.shape)
-        return x
-
-class ViT_base_2(Project_DFD_model):
-    def __init__(self, img_size = INPUT_WIDTH, patch_size= PATCH_SIZE, in_channels= INPUT_CHANNELS, emb_size=768, n_heads=12, n_layers=12, n_classes=10):
-        super(ViT_base_2, self).__init__(c = in_channels,h = img_size,w = img_size, n_classes = n_classes)
-        
-        # 
-        self.emb_size   = emb_size 
-        self.patch_size = patch_size
-        self.n_heads    = n_heads
-        self.n_layers   = n_layers
-        self.patch_embedding = ConvPatchEmbedding(img_size, patch_size, in_channels, emb_size)
-        self.num_patches = (img_size // patch_size) ** 2
-        # self.pos_embedding = nn.Parameter(T.randn(1, self.num_patches + 1, emb_size))  # +1 for [CLS] token
-        
-        
-        
-        self.transformer = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(
-                d_model=emb_size,
-                nhead=n_heads,
-                dim_feedforward=4 * emb_size,
-                batch_first= True
-            ),
-            num_layers=n_layers,
-        )
-        self.head = nn.Linear(emb_size, n_classes)
-        # self.cls_token = nn.Parameter(T.randn(1, 1, emb_size))
-        
-        self._init_weights_normal()
-        
-        self.pos_embedding = nn.Parameter(self._get_positional_encoding(emb_size, self.num_patches))
-
-
-    def _get_positional_encoding(self, emb_size, num_patches):
-        position = T.arange(0, num_patches).unsqueeze(1).float()
-        div_term = T.exp(T.arange(0, emb_size, 2).float() * -(math.log(10000.0) / emb_size))
-        pos_encoding = T.zeros(1, num_patches, emb_size)
-        pos_encoding[:, :, 0::2] = T.sin(position * div_term)
-        pos_encoding[:, :, 1::2] = T.cos(position * div_term)
-        return pos_encoding
-
-
-    def forward(self, x):
-        x = self.patch_embedding(x)
-        # cls_token = self.cls_token.expand(x.size(0), -1, -1)  # Expand cls_token to match batch size
-        # x = T.cat((cls_token, x), dim=1)
-        
-        x = x + self.pos_embedding[:, :x.size(1)]  # Add positional encoding
-        x = self.transformer(x)
-        x = x.mean(dim=1)  # Global average pooling
-        # x = self.fc(x)
-        # logits = self.head(x[:, 0, :])
-        logits = self.head(x)
-
-        return logits
-
-# _____________________________ViT base: 3rd implementation _______________________________________
+# _____________________________ViT base from scratch_______________________________________
 
 def pair(t):
     return t if isinstance(t, tuple) else (t, t)
@@ -3470,7 +2938,7 @@ class Transformer(nn.Module):
 
         return self.norm(x)
 
-class ViT_base_3(Project_DFD_model):
+class ViT_b_scratch(Project_DFD_model):
     """ Implementation of a classic ViT model (base) for classification """
     
     def __init__(self, *, img_size = INPUT_WIDTH, patch_size = PATCH_SIZE, n_classes = 10, emb_size = EMB_SIZE, n_layers = 6,
@@ -3549,8 +3017,7 @@ class ViT_base_3(Project_DFD_model):
         
         return logits
 
-# _____________________________ViT base 4th implementation (WildCapture-timm) __________________________
-
+# _____________________________ViT base pre-trained  _______________________________________________
 
 def get_vitTimm_models(print_it = True, pretrained = True):
     models = [model for model in timm.list_models(pretrained=pretrained) if "vit_" in model.lower().strip()]
@@ -3601,8 +3068,6 @@ class ViT_timm(Project_DFD_model):
 
         return output
 
-
-# _____________________________ViT base pre-trained  _______________________________________________
 
 class ViT_b16_ImageNet(Project_DFD_model):
     """ 
@@ -3761,12 +3226,13 @@ class ViT_timm_EA(Project_DFD_model):
         self.models_avaiable = ['vit_base_patch16_224', 'vit_base_patch16_224.augreg_in21k']
         self.name = self.models_avaiable[prog_model]
         self.model_vit = timm.create_model(model_name=self.name, pretrained=True, num_classes=n_classes, drop_rate=dropout)
-        # data_config = timm.data.resolve_model_data_config(self.model_vit)
         
-        # get trasnform ops to adapt input
-        # self.transforms = timm.data.create_transform(**data_config, is_training=True)
+        # data trasnformation 
+        data_config = timm.data.resolve_model_data_config(self.model_vit.pretrained_cfg)
+        self.transform = timm.data.create_transform(**data_config)
+
         
-        # print(data_config)
+        print(data_config)
         
         self.resize_att_map         = resize_att_map
         self.use_attnmap_cls        = use_attnmap_cls
@@ -3861,38 +3327,7 @@ class ViT_timm_EA(Project_DFD_model):
         if verbose: print("logits shape: ",logits.shape)
 
         #                                       3) get attention map
-        
-        if False:
-            # compute a mean attention map over all the head emb relative to the token [cls]
-            cls_weight = self.model_vit.blocks[-1].attn.cls_attn_map
-            cls_weight =  cls_weight.mean(dim=1)
-            if verbose: print("attention encoding [cls] token: ",cls_weight.shape)
-            
-            # neceassary this part? look ff wrapper, i can take directly values of att_map between 0 and 196
-            a = T.empty(cls_weight.shape[0], 1)
-            a[:,0] = cls_weight[:,165]
-            # print(a.shape)
-            att_map = T.cat((cls_weight, a.cuda()), dim  =1)
-            if verbose: print("attention encoding [cls] token, repeating one more value as last: ",att_map.shape)
-            
-            
-            # get attention map over patches and reorganize
-            # att_map = att_map.view(-1, 14, 14, 1).detach().cpu().numpy()
-            # att_map = att_map.view(-1, 14, 14, 1)
-            att_map = att_map.view(-1, 1, 14, 14)
-            if verbose: print("attention map [cls] token, as a patch-pixel image: ",att_map.shape)
-            
-            if self.resize_att_map:
-                att_map = F.interpolate(input=att_map, size=(224, 224), mode='area')
-                if verbose: print("attention map [cls] token (interpolated): ",att_map.shape)
-                # att_map = att_map.permute(0, 3, 1, 2)
-                
-            # scale map between 0 and 1
-            att_map /= T.max(att_map)
-            
-        # attn_map_full   = self.model_vit.blocks[-1].attn.attn_map.mean(dim=1).detach()
-        # print(attn_map_full.shape)
-        
+    
         if self.use_attnmap_cls:
             att_map     = self.model_vit.blocks[-1].attn.cls_attn_map.mean(dim=1).view(-1, 14, 14).detach()  # mean over heads results
             att_map     = att_map.unsqueeze(dim = 1)
@@ -3900,22 +3335,15 @@ class ViT_timm_EA(Project_DFD_model):
             att_map     = self.model_vit.blocks[-1].attn.attn_map.mean(dim=1).detach()
             att_map     = att_map[:, 1:, 1:].view(-1,1,196,196)
         
-        
-        # print(att_map_cls.shape)
+    
         if self.resize_att_map:
             att_map     = F.interpolate(att_map, (224, 224), mode='bilinear')
             
-        # print(att_map_cls.shape)
-        
-        
-        # print(T.max(att_map_cls), T.min(att_map_cls))
-        
-        
         return logits, encoding, att_map
 
-class AutoEncoder_Attention(Project_DFD_model):
+class AutoEncoder(Project_DFD_model):
     def __init__(self):
-        super(AutoEncoder_Attention, self).__init__(c = 1, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = None)
+        super(AutoEncoder, self).__init__(c = 1, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = None)
         self.flc = 32
         self.zdim = 512
         self.encoder = nn.Sequential(
@@ -3971,6 +3399,165 @@ class AutoEncoder_Attention(Project_DFD_model):
         x2 = self.decoder(x1)
         # print(x2.shape)
         return x2
+
+class VAE(Project_DFD_model):
+    # suitable loss function BCE, KL divergence or both, or classic regression loss
+    
+    def __init__(self, image_size=224, latent_dim=100):
+        super(VAE, self).__init__(c = 1, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = None)
+
+        self.image_size = image_size
+        self.latent_dim = latent_dim
+
+        # Encoder
+        self.encoder = nn.Sequential(
+            nn.Conv2d(1, 32, kernel_size=4, stride=2, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(64, 128, kernel_size=4, stride=2, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(128, 256, kernel_size=4, stride=2, padding=1),
+            nn.ReLU()
+        )
+
+        self.fc_mu = nn.Linear(256 * (image_size // 16) ** 2, latent_dim)
+        self.fc_logvar = nn.Linear(256 * (image_size // 16) ** 2, latent_dim)
+
+        # Decoder
+        self.decoder = nn.Sequential(
+            nn.Linear(latent_dim, 256 * (image_size // 16) ** 2),
+            nn.ReLU(),
+            nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),
+            nn.ReLU(),
+            nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
+            nn.ReLU(),
+            nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
+            nn.ReLU(),
+            nn.ConvTranspose2d(32, 1, kernel_size=4, stride=2, padding=1),
+            nn.Sigmoid()
+        )
+
+    def encode(self, x):
+        x = self.encoder(x)
+        x = x.view(x.size(0), -1)
+        mu = self.fc_mu(x)
+        logvar = self.fc_logvar(x)
+        return mu, logvar
+
+    def reparameterize(self, mu, logvar):
+        std = T.exp(0.5 * logvar)
+        eps = T.randn_like(std)
+        return mu + eps * std
+
+    def decode(self, z):
+        z = self.decoder_input(z)
+        z = z.view(z.size(0), 256, (self.image_size // 16), (self.image_size // 16))
+        x_recon = self.decoder(z)
+        return x_recon
+
+    def forward(self, x):
+        mu, logvar = self.encode(x)
+        z = self.reparameterize(mu, logvar)
+        x_recon = self.decode(z)
+        return x_recon, mu, logvar
+    
+    def loss_function(recon_x, x, mu, logvar):
+        
+        BCE =  nn.BCELoss(reduction='sum')(recon_x, x)
+        KLD = -0.5 * T.sum(1 + logvar - mu.pow(2) - logvar.exp())
+        return BCE + KLD
+
+class Abnormality_module_Encoder_VIT_v3(Project_abnorm_model):
+    
+    """ 
+        based on Abnormality_module_Encoder_v3:
+        - use a smaleller encoding as input (from fc layes of the scorer)
+        - higher reduction for the residual before the fc layers (more encoding blocks)
+        - consequent reduced n. params for the final fc risk section.
+        
+        **requires** output from a classifier with: classifier_name.large_encoding = False
+    """
+    
+    def __init__(self, shape_softmax_probs, shape_encoding, shape_residual):
+        super().__init__()
+        
+        self.probs_softmax_shape   = shape_softmax_probs
+        self.encoding_shape = shape_encoding
+        self.residual_shape = shape_residual
+        self.input_shape = (shape_softmax_probs, shape_encoding, shape_residual)   # input_shape doesn't consider the batch
+        self._createNet()
+        self._init_weights_normal()
+    
+    def _createNet(self):
+        
+        n_encoder_block             = 5
+        n_features_latent_residual  = 64
+        residual_length  = math.floor(self.residual_shape[2]/(2**n_encoder_block))**2 * n_features_latent_residual # flatten residual (after encoding) should have same dim of the encoding
+        
+        tot_features_0   = self.probs_softmax_shape[1] +  self.encoding_shape[1] + residual_length
+
+        # conv section, the encoder block must be equal to the number specified in n_encoder_block above
+        self.e1 = Encoder_block_v2(in_c =  self.residual_shape[1] , out_c = 4)
+        self.e2 = Encoder_block_v2(in_c =  4, out_c = 8)
+        self.e3 = Encoder_block_v2(in_c =  8, out_c = 16)
+        self.e4 = Encoder_block_v2(in_c =  16, out_c = 32)
+        self.e5 = Encoder_block_v2(in_c =  32 , out_c = n_features_latent_residual)
+
+        tot_features_1      = 1024       
+         
+        # taken from official work 
+        tot_feaures_risk_1  = 512
+        tot_feaures_risk_2  = 128
+        tot_feaures_final   = 1
+        
+        self.gelu = T.nn.GELU()
+        self.sigmoid = T.nn.Sigmoid()
+        
+        # preliminary layers
+        self.fc1 = T.nn.Linear(tot_features_0,tot_features_1)
+        self.bn1 = T.nn.BatchNorm1d(tot_features_1)
+        
+        # risk section
+        self.fc_risk_1      = T.nn.Linear(tot_features_1,tot_feaures_risk_1)
+        self.bn_risk_1      = T.nn.BatchNorm1d(tot_feaures_risk_1)
+        self.fc_risk_2      = T.nn.Linear(tot_feaures_risk_1,tot_feaures_risk_2)
+        self.bn_risk_2      = T.nn.BatchNorm1d(tot_feaures_risk_2)
+        self.fc_risk_final  = T.nn.Linear(tot_feaures_risk_2,tot_feaures_final)
+        self.bn_risk_final  = T.nn.BatchNorm1d(tot_feaures_final)
+        
+    def forward(self, probs_softmax, encoding, residual, verbose = False):
+        
+        # for 224p images
+        # conv forward for the 
+        residual_out = self.e1(residual)
+        residual_out = self.e2(residual_out)
+        residual_out = self.e3(residual_out)
+        residual_out = self.e4(residual_out)
+        residual_out = self.e5(residual_out)    # 64, 7, 7 shape
+        
+        # print(residual_out.shape)
+        
+        # flat the residual
+        flatten_residual = T.flatten(residual_out, start_dim=1)
+        
+        # print(flatten_residual.shape)
+        
+        # # build the vector input 
+        x = T.cat((probs_softmax, encoding, flatten_residual), dim = 1)
+        if verbose: print("input module b shape -> ", x.shape)
+        
+        # # preliminary layers
+        x = self.gelu(self.bn1(self.fc1(x)))
+        
+        # # risk section
+        x = self.gelu(self.bn_risk_1(self.fc_risk_1(x)))
+        x = self.gelu(self.bn_risk_2(self.fc_risk_2(x)))
+        x = self.gelu(self.bn_risk_final(self.fc_risk_final(x)))
+        
+        return x
+
+
 #_____________________________________Test models_________________________________________________ 
 
 class FC_classifier(nn.Module):
@@ -4162,7 +3749,7 @@ if __name__ == "__main__":
     # deepfake detection
     
     def test_ResNet():
-        resnet = ResNet()
+        resnet = ResNet_scratch()
         resnet.to(device)
         print(resnet.isCuda())
         
@@ -4260,17 +3847,9 @@ if __name__ == "__main__":
         # define test input
         x = T.rand((32, INPUT_CHANNELS, INPUT_HEIGHT, INPUT_WIDTH)).to(device)
         
-        tests = [0, 1]
-        
-        # test patch embedding
+        tests = [1]
+
         if tests[0]:
-            emb = FCPatchEmbedding()
-            emb.to(device)
-            print("x : ",  x.shape)
-            x_prime = emb.forward(x)
-            print("x':", x_prime.shape)
-        
-        if tests[1]:
             # vit = ViT_base(n_classes=2)
             # vit = ViT(n_classes=2)
             # vit = ViT_b16_ImageNet().to(device=device)
@@ -4284,35 +3863,30 @@ if __name__ == "__main__":
     def test_ViTEA():
         # define test input
         x = T.rand((32, INPUT_CHANNELS, INPUT_HEIGHT, INPUT_WIDTH)).to(device)
-        tests = [0, 1, 0, 0]
+        tests = [1, 0, 0]
         
-        # test patch embedding
         if tests[0]:
-            emb = FCPatchEmbedding()
-            emb.to(device)
-            print("x : ",  x.shape)
-            x_prime = emb.forward(x)
-            print("x':", x_prime.shape)
-        
-        elif tests[1]:
             vit = ViT_timm_EA(use_attnmap_cls=False, resize_att_map=True).to(device = device)
             # vit.getSummary()
             # print(vit.getAttributes())
             logits, encoding, attention = vit.forward(x)
+            
+            # vit.getSummary()
+            print(vit.transform)
             # print(out[0])
             print(attention[0].shape)
             showImage(attention[0], has_color= False)
             # print(out[0].shape)
             # print(out[1].shape)
 
-        elif tests[2]:
-            ae = AutoEncoder_Attention()
+        elif tests[1]:
+            ae = AutoEncoder()
             ae.getSummary()
         
         
-        elif tests[3]:
+        elif tests[2]:
             vit = ViT_timm_EA().to(device = device)
-            ae  = AutoEncoder_Attention().to(device=device)
+            ae  = AutoEncoder().to(device=device)
             # vit.getSummary()
             # print(vit.getAttributes())
             logits, encoding, attention = vit.forward(x)
@@ -4419,7 +3993,7 @@ if __name__ == "__main__":
         print(out.shape)
     
         
-    test_abnorm_encoder_vit()
+    test_ViTEA()
     
     
 

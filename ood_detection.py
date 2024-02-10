@@ -3380,7 +3380,6 @@ if __name__ == "__main__":
         # launch test with non-thr metrics
         abn.test_risk()
     
-    
     # train_abn_encoder()
     test_abn("Abnormality_module_encoder_v3_vit_224p_08-02-2024", 20, None)
     
