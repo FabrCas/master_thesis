@@ -285,7 +285,6 @@ def trans_input_base(isTensor = False):
     
     return transform_ops
     
-
 def augment_v1(x):
     
     config = get_inputConfig()
@@ -315,7 +314,6 @@ def augment_v2(x):
     x = v2.Normalize(mean = [0.5000, 0.5000, 0.5000], std=[0.5000, 0.5000, 0.5000])(x)
     return x
 
-
 def alpha_blend_pytorch(image1, image2, alpha):
     """
     Alpha blend two PyTorch tensors representing images.
@@ -331,6 +329,34 @@ def alpha_blend_pytorch(image1, image2, alpha):
     blended_image = (1 - alpha) * image1 + alpha * image2
     return blended_image
 
+def add_attention(img, attention_map, alpha = 0.8):
+    """ include attention to the original image
+    
+    this function returns the img + attention map (also for batch), and the attention map on range [0,1] in RGB format
+    """
+    
+    # improve visualization scaling over full range [0,1]
+    max_value, _ = T.max(attention_map.reshape(attention_map.shape[0], -1), dim = 1)
+    
+    while(not(len(attention_map.shape) == len(max_value.shape))):
+        max_value =  max_value.unsqueeze(-1)
+        
+    attention_map = T.div(attention_map, max_value)
+    
+    # grayscale to color attention map
+    if len(attention_map.shape) == 4:
+        attention_map = attention_map.repeat(1, 3, 1, 1)
+    else:
+        attention_map = attention_map.repeat(3, 1, 1)
+    
+    blend_result = alpha_blend_pytorch(img, attention_map, alpha)
+    
+    return blend_result, attention_map
+            
+    
+    
+    
+    
 def image2int(img_tensor, is_range_zero_one = True):
     """ 
         convert img (T.tensor) to int range 0-255. img can be a single image or a batch
@@ -464,15 +490,19 @@ def add_distortion_noise(x):
     
 ##################################################  Save/Load functions ###############################################################
 
-def saveModel(model, path_save):
+def saveModel(model, path_save, is_dict = False):
     """ function to save weights of pytorch model as checkpoints (dict)
 
     Args:
         model (nn.Module): Pytorch model
         path_save (str): path of the checkpoint file to be saved
+        is_dict(boolean, optional): is True if model parameter is the model dictionary. Defaults to False
     """
-    print("Saving model to: ", path_save)        
-    T.save(model.state_dict(), path_save)
+    print("Saving model to: ", path_save)
+    if is_dict:
+        T.save(model, path_save)
+    else:        
+        T.save(model.state_dict(), path_save)
     
 def loadModel(model, path_load):
     """ function to load weights of pytorch model as checkpoints (dict)

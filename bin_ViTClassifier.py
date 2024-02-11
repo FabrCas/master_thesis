@@ -638,7 +638,7 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
         self._load_data()
         
         #                       transformation for autoencoder
-        self.norm = v2.Normalize(mean= [0.5], std=[0.5])
+        # self.norm = v2.Normalize(mean= [0.5], std=[0.5])
 
         #                       activation and loss function
         self.sigmoid    = T.nn.Sigmoid().cuda()
@@ -656,7 +656,7 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
         self.n_epochs               = math.floor(50 * self.learning_coeff)
         self.start_early_stopping   = math.floor(self.n_epochs/2)                       # epoch to start early stopping                         
         self.patience               = max(math.floor(5 * self.learning_coeff),5)        # early stopping patience
-        self.early_stopping_trigger = "loss"                                            # values "acc" or "loss"
+        self.early_stopping_trigger = "loss"                                            # validation metric: values "acc" or "loss"
         
         # learning hyperparameters autoencoder
         if self.train_together:
@@ -1022,6 +1022,20 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
         counter_stopping    = 0
         last_epoch          = 0
         
+        # define best validation results
+        if self.early_stopping_trigger == "loss":
+            best_valid = math.inf                # to minimize
+        elif self.early_stopping_trigger == "acc":
+            best_valid = 0                       # to maximize
+        
+        best_valid_ae = math.inf
+        best_valid_epoch = 0
+        best_valid_ae_epoch = 0
+        
+        # initialize ditctionary best models
+        best_model_dict = self.model.state_dict()
+        best_model_ae_dict = self.autoencoder.state_dict()
+        
         # learned epochs by the model initialization
         self.modelEpochs = 0
         
@@ -1170,6 +1184,23 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
             valid_history.append(criterion)
             valid_ae_history.append(criterion_ae)  
             
+            # look for best models *.*
+            
+            if self.early_stopping_trigger  == "loss":              # ViT
+                if criterion < best_valid:
+                    best_valid = criterion
+                    best_model_dict = self.model.state_dict()
+                    best_valid_epoch = epoch_idx+1
+            elif self.early_stopping_trigger == "acc":
+                if criterion > best_valid:
+                    best_valid = criterion
+                    best_model_dict = self.model.state_dict()
+                    best_valid_ae_epoch = epoch_idx+1     
+            
+            if criterion_ae < best_valid_ae:                        # AE 
+                best_valid_ae = criterion_ae
+                best_model_ae_dict = self.autoencoder.state_dict()
+        
             # initialize not early stopping
             early_exit = False 
             
@@ -1230,10 +1261,14 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
         # create path for the model save
         # classifier
         name_model_file         = str(last_epoch) +'.ckpt'
+        name_best_model_file    = str(best_valid_epoch) + +'.ckpt'
         path_model_save         = os.path.join(path_model_folder, name_model_file)  # path folder + name file
+        path_best_model_save    = os.path.join(path_model_folder, name_best_model_file)
         # autoencoder
         name_model_ae_file      = "ae_" + str(last_epoch) +'.ckpt'
+        name_best_model_ae_file = "ae_" + str(best_valid_ae_epoch) +'.ckpt'
         path_model_ae_save      = os.path.join(path_model_folder, name_model_ae_file)
+        path_best_model_ae_save = os.path.join(path_model_folder, name_best_model_ae_file)
         
         # create path for the model results
         path_results_folder     = os.path.join(self.path_results, name_train + "_v{}_".format(str(self.version)) + current_date)
@@ -1244,7 +1279,6 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
         # autoencoder
         name_loss_ae_file          = 'loss_ae_'+ str(last_epoch) +'.png'
         name_valid_ae_file         = "valid_ae_loss_{}.png".format(str(last_epoch))
-        
         
         
         # save info for the new model trained
@@ -1273,7 +1307,12 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
             plot_valid(valid_ae_history, title_plot= "AE loss", path_save = os.path.join(path_results_folder, name_valid_ae_file))
             plot_valid(valid_ae_history, title_plot= "AE loss", path_save = os.path.join(path_model_folder,name_valid_ae_file), show=False)
             
-        # save models
+        #                   save models
+        # save bests
+        saveModel(best_model_dict, path_best_model_save, is_dict= True)
+        saveModel(best_model_ae_dict, path_best_model_ae_save, is_dict= True)
+        
+        # save latest
         saveModel(self.model, path_model_save)
         saveModel(self.autoencoder, path_model_ae_save)
         

@@ -5,11 +5,14 @@ import  torch.nn.functional             as F
 import  numpy                           as np
 import  math
 import  torch.nn                        as nn
+from    PIL                             import Image
+
 from    torchsummary                    import summary
 from    torchvision                     import models
+from    torchvision                     import transforms
 from    torchvision.models              import ResNet50_Weights, ViT_B_16_Weights
 from    utilities                       import print_dict, print_list, expand_encoding, convTranspose2d_shapes, get_inputConfig, \
-                                            showImage
+                                            showImage, trans_input_base, alpha_blend_pytorch, add_attention
 from    einops.layers.torch             import Rearrange
 from    einops                          import repeat, rearrange
 # import  cv2
@@ -3026,7 +3029,6 @@ def get_vitTimm_models(print_it = True, pretrained = True):
         print_list(models)
     return models
      
-    
 class ViT_timm(Project_DFD_model):
     def __init__(self, n_classes = 10, dropout = 0.1, prog_model = 1):
         """_summary_
@@ -3067,7 +3069,6 @@ class ViT_timm(Project_DFD_model):
         output = self.model_vit(x)
 
         return output
-
 
 class ViT_b16_ImageNet(Project_DFD_model):
     """ 
@@ -3128,218 +3129,6 @@ class ViT_b16_ImageNet(Project_DFD_model):
         return out
   
 #_____________________________________ OOD custom models: ViT based ___________________
-  
-class ViT_base_EA(Project_DFD_model):
-    """ Implementation of a classic ViT model (base) for classification, providing image encoding (E) and attention map (A) """
-
-    def __init__(self, *, img_size = INPUT_WIDTH, patch_size = PATCH_SIZE, n_classes = 10, emb_size = EMB_SIZE, n_layers = 6,
-                    n_heads = 16, pool = 'cls', in_channels = INPUT_CHANNELS, dropout = 0.1, emb_dropout = 0.1,
-                    encoding_type = "mean"):
-        
-        """
-            mlp_dim (int): dimension of the hidden representation in the feedforward or multilayer perceptron block
-            encoding_type (str, optional). Use "mean" whether to encode by levaraging all the input token as a single vector, or "cls" to take in account only [cls] token. Defaults to "mean"
-        """
-        
-    
-        super().__init__(c = in_channels,h = img_size,w = img_size, n_classes = n_classes)
-        image_height, image_width = pair(img_size)
-        patch_height, patch_width = pair(patch_size)
-        
-        self.emb_size       = emb_size 
-        self.patch_size     = patch_size
-        self.n_heads        = n_heads
-        self.n_layers       = n_layers
-        self.dropout        = dropout
-        self.encoding_type  = encoding_type
-        
-        # compute head latent space dimensionality
-        dim_head = EMB_SIZE//n_heads
-        self.dim_head = dim_head
-        
-        # compute ff encoding dimensionality
-        mlp_dim = EMB_SIZE*2
-        self.mlp_dim = mlp_dim
-        
-        # bind Transformer dropout to the one of the embedding
-        emb_dropout = self.dropout  
-        
-
-        assert image_height % patch_height == 0 and image_width % patch_width == 0, 'Image dimensions must be divisible by the patch size.'
-
-        num_patches = (image_height // patch_height) * (image_width // patch_width)
-        patch_dim = in_channels * patch_height * patch_width
-        assert pool in {'cls', 'mean'}, 'pool type must be either cls (cls token) or mean (mean pooling)'
-
-        self.to_patch_embedding = nn.Sequential(
-            Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = patch_height, p2 = patch_width),
-            nn.LayerNorm(patch_dim),
-            nn.Linear(patch_dim, emb_size),
-            nn.LayerNorm(emb_size),
-        )
-
-        self.pos_embedding = nn.Parameter(T.randn(1, num_patches + 1, emb_size))
-        self.cls_token = nn.Parameter(T.randn(1, 1, emb_size))
-        self.dropout = nn.Dropout(emb_dropout)
-
-        self.transformer = Transformer(emb_size, n_layers, n_heads, dim_head, mlp_dim, dropout)
-
-        self.pool = pool
-        self.to_latent = nn.Identity()
-
-        self.mlp_head = nn.Linear(emb_size, n_classes)
-
-    def forward(self, img):
-        x = self.to_patch_embedding(img)
-        b, n, _ = x.shape
-
-        cls_tokens = repeat(self.cls_token, '1 1 d -> b 1 d', b = b)
-        x = T.cat((cls_tokens, x), dim=1)
-        x += self.pos_embedding[:, :(n + 1)]
-        x = self.dropout(x)
-
-        x = self.transformer(x)
-
-        # prepare encoding
-        enc = x.mean(dim = 1) if  self.encoding_type == "mean" else x[: 0]
-        
-        # flow through MLP head 
-        x = x.mean(dim = 1) if self.pool == 'mean' else x[:, 0]
-        x = self.to_latent(x)
-        logits  = self.mlp_head(x)
-        
-        return logits, enc 
-  
-class ViT_timm_EA(Project_DFD_model):
-    def __init__(self, n_classes = 10, dropout = 0.1, prog_model = 1, encoding_type = "mean", resize_att_map = True, use_attnmap_cls = True):
-        """_summary_
-
-        Args:
-            num_classes (int, optional): _description_. Defaults to 10.
-            dropout (int, optional): dropout rate used in attention and MLP layers. Defaults to 0.
-            prog_model (int, optional): progressive id to select the model (use getModels for the complete list)
-            resize_att_map(boolean, optinal): select if output attention map should have same dimension of input images, 
-            if false patch_size is used when use_attnmap_cls is True, or lenght of tokens-1, when use_attnmap_cls is False. Defaults to True.
-            use_attnmap_cls (boolean, optinal). Select to use attention map from first token (cls), or from pathces .Defaults to True.
-        """
-        super(ViT_timm_EA, self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = n_classes)
-        self.models_avaiable = ['vit_base_patch16_224', 'vit_base_patch16_224.augreg_in21k']
-        self.name = self.models_avaiable[prog_model]
-        self.model_vit = timm.create_model(model_name=self.name, pretrained=True, num_classes=n_classes, drop_rate=dropout)
-        
-        # data trasnformation 
-        data_config = timm.data.resolve_model_data_config(self.model_vit.pretrained_cfg)
-        self.transform = timm.data.create_transform(**data_config)
-
-        
-        print(data_config)
-        
-        self.resize_att_map         = resize_att_map
-        self.use_attnmap_cls        = use_attnmap_cls
-        self.emb_size               = 768 
-        self.mlp_dim                = 3072
-        self.patch_size             = 16
-        self.n_heads                = 12
-        self.n_layers               = 12
-        self.dropout                = dropout
-        self.dim_head               = self.emb_size //self.n_heads
-        self.encoding_type          = encoding_type
-        
-        # get model parts
-        self.embedding  = self.model_vit.patch_embed
-        self.encoder    = self.model_vit.blocks
-        self.head       = self.model_vit.head    
-
-        # wrapper for attention extraction 
-        self.model_vit.blocks[-1].attn.forward = self.forward_wrapper(self.model_vit.blocks[-1].attn)
-        
-    def getModels(self):
-        print_list(self.models_avaiable)
-    
-    # reference: https://github.com/lcultrera/WildCapture/
-    
-    def forward_wrapper(self, attn_obj):
-        def forward_wrap(x):
-            # get batch, number of elements in the sequence (patches + cls token) and latent representation dims 
-            B, N, C = x.shape    # on last layer the input channels has dim self.emb_size (768)
-            
-            # compute the embedding size for each head
-            head_emb_size = C // attn_obj.num_heads
-
-            # get the 3 different features vector for q, k and v (3 in 3rd dimension stands for this) for each head
-            # and change dimensions order to: qkv dim, batch, head_dim, sequence_dim, head_embedding
-            qkv = attn_obj.qkv(x).reshape(B, N, 3, attn_obj.num_heads, head_emb_size).permute(2, 0, 3, 1, 4)
-            
-            # remove qkv dimension returning the 3 different vectors
-            q, k, v = qkv.unbind(dim = 0)
-
-            # print(q.shape)
-            # compute the matrix calculus for attention
-            
-            # first transposition of key vector between sequence_dim, head_embedding, to make matrix multiplication feasible
-            k_T = k.transpose(-2, -1)
-            
-            # matmul + scaling
-            attn = (q @ k_T) * attn_obj.scale
-            
-            # apply softmax over last dimension
-            attn = attn.softmax(dim=-1)
-            
-            # apply dropout
-            attn = attn_obj.attn_drop(attn)
-            
-            # print("att full", attn.shape)
-            
-            # save the full attention map (used if self.use_attnmap_cls is False)
-            attn_obj.attn_map = attn
-            
-            # get attention map for [cls] token and save, dropping first element in last dimension since is relative to token and not to patches (used if self.use_attnmap_cls is True)
-            # attn_obj.cls_attn_map = attn[:, :, 0, 2:]
-            attn_obj.cls_attn_map = attn[:, :, 0, 1:]
-            
-            # compute the remaining operations for the attention forward
-
-            # matmul + exchange of dim between head_dim and sequence_dim
-            x = (attn @ v).transpose(1, 2)
-            
-            # collapse head dim, and head_embedding in a single dimension
-            x = x.reshape(B, N, C)
-            
-            # apply ap and dropout
-            x = attn_obj.proj(x)                        # linear activation fuction
-            x = attn_obj.proj_drop(x)                 
-            
-            return x
-        return forward_wrap
-    
-    def forward(self, x, verbose = False):
-
-        # print(x.shape)
-        features    = self.model_vit.forward_features(x)
-        if verbose: print("features shape: ", features.shape)
-        
-        #                                       1) get encoding
-        encoding = features.mean(dim = 1) if self.encoding_type == 'mean' else features[:, 0]
-        if verbose: print("encoding shape: ",encoding.shape)
-
-        #                                       2) get logits
-        logits      = self.model_vit.forward_head(features)         # using [cls] token embedding 
-        if verbose: print("logits shape: ",logits.shape)
-
-        #                                       3) get attention map
-    
-        if self.use_attnmap_cls:
-            att_map     = self.model_vit.blocks[-1].attn.cls_attn_map.mean(dim=1).view(-1, 14, 14).detach()  # mean over heads results
-            att_map     = att_map.unsqueeze(dim = 1)
-        else:
-            att_map     = self.model_vit.blocks[-1].attn.attn_map.mean(dim=1).detach()
-            att_map     = att_map[:, 1:, 1:].view(-1,1,196,196)
-        
-    
-        if self.resize_att_map:
-            att_map     = F.interpolate(att_map, (224, 224), mode='bilinear')
-            
-        return logits, encoding, att_map
 
 class AutoEncoder(Project_DFD_model):
     def __init__(self):
@@ -3468,6 +3257,330 @@ class VAE(Project_DFD_model):
         KLD = -0.5 * T.sum(1 + logvar - mu.pow(2) - logvar.exp())
         return BCE + KLD
 
+class ViT_base_EA(Project_DFD_model):
+    """ Implementation of a classic ViT model (base) for classification, providing image encoding (E) and attention map (A) """
+
+    def __init__(self, *, img_size = INPUT_WIDTH, patch_size = PATCH_SIZE, n_classes = 10, emb_size = EMB_SIZE, n_layers = 6,
+                    n_heads = 16, pool = 'cls', in_channels = INPUT_CHANNELS, dropout = 0.1, emb_dropout = 0.1,
+                    encoding_type = "mean"):
+        
+        """
+            mlp_dim (int): dimension of the hidden representation in the feedforward or multilayer perceptron block
+            encoding_type (str, optional). Use "mean" whether to encode by levaraging all the input token as a single vector, or "cls" to take in account only [cls] token. Defaults to "mean"
+        """
+        
+    
+        super().__init__(c = in_channels,h = img_size,w = img_size, n_classes = n_classes)
+        image_height, image_width = pair(img_size)
+        patch_height, patch_width = pair(patch_size)
+        
+        self.emb_size       = emb_size 
+        self.patch_size     = patch_size
+        self.n_heads        = n_heads
+        self.n_layers       = n_layers
+        self.dropout        = dropout
+        self.encoding_type  = encoding_type
+        
+        # compute head latent space dimensionality
+        dim_head = EMB_SIZE//n_heads
+        self.dim_head = dim_head
+        
+        # compute ff encoding dimensionality
+        mlp_dim = EMB_SIZE*2
+        self.mlp_dim = mlp_dim
+        
+        # bind Transformer dropout to the one of the embedding
+        emb_dropout = self.dropout  
+        
+
+        assert image_height % patch_height == 0 and image_width % patch_width == 0, 'Image dimensions must be divisible by the patch size.'
+
+        num_patches = (image_height // patch_height) * (image_width // patch_width)
+        patch_dim = in_channels * patch_height * patch_width
+        assert pool in {'cls', 'mean'}, 'pool type must be either cls (cls token) or mean (mean pooling)'
+
+        self.to_patch_embedding = nn.Sequential(
+            Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = patch_height, p2 = patch_width),
+            nn.LayerNorm(patch_dim),
+            nn.Linear(patch_dim, emb_size),
+            nn.LayerNorm(emb_size),
+        )
+
+        self.pos_embedding = nn.Parameter(T.randn(1, num_patches + 1, emb_size))
+        self.cls_token = nn.Parameter(T.randn(1, 1, emb_size))
+        self.dropout = nn.Dropout(emb_dropout)
+
+        self.transformer = Transformer(emb_size, n_layers, n_heads, dim_head, mlp_dim, dropout)
+
+        self.pool = pool
+        self.to_latent = nn.Identity()
+
+        self.mlp_head = nn.Linear(emb_size, n_classes)
+
+    def forward(self, img):
+        x = self.to_patch_embedding(img)
+        b, n, _ = x.shape
+
+        cls_tokens = repeat(self.cls_token, '1 1 d -> b 1 d', b = b)
+        x = T.cat((cls_tokens, x), dim=1)
+        x += self.pos_embedding[:, :(n + 1)]
+        x = self.dropout(x)
+
+        x = self.transformer(x)
+
+        # prepare encoding
+        enc = x.mean(dim = 1) if  self.encoding_type == "mean" else x[: 0]
+        
+        # flow through MLP head 
+        x = x.mean(dim = 1) if self.pool == 'mean' else x[:, 0]
+        x = self.to_latent(x)
+        logits  = self.mlp_head(x)
+        
+        return logits, enc 
+  
+class ViT_timm_EA(Project_DFD_model):
+    def __init__(self, n_classes = 10, dropout = 0.1, prog_model = 1, encoding_type = "mean", resize_att_map = True, use_attnmap_cls = True):
+        """_summary_
+
+        Args:
+            num_classes (int, optional): _description_. Defaults to 10.
+            dropout (int, optional): dropout rate used in attention and MLP layers. Defaults to 0.
+            prog_model (int, optional): progressive id to select the model (use getModels for the complete list)
+            resize_att_map(boolean, optinal): select if output attention map should have same dimension of input images, 
+            if false patch_size is used when use_attnmap_cls is True, or lenght of tokens-1, when use_attnmap_cls is False. Defaults to True.
+            use_attnmap_cls (boolean, optinal). Select to use attention map from first token (cls), or from pathces .Defaults to True.
+        """
+        super(ViT_timm_EA, self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = n_classes)
+        self.models_avaiable = [
+            'vit_base_patch16_224',
+            'vit_base_patch16_224.augreg_in21k',
+            'deit_small_distilled_patch16_224',
+            'deit_tiny_distilled_patch16_224'
+            ]
+        self.name = self.models_avaiable[prog_model]
+        self.model_vit = timm.create_model(model_name=self.name, pretrained=True, num_classes=n_classes, drop_rate=dropout)
+        
+        # data trasnformation
+        try:
+            data_config = timm.data.resolve_model_data_config(self.model_vit.pretrained_cfg)
+            print("found transformation for the input use by pre-trained model")
+            print_dict(data_config)
+            transform_pretrained = timm.data.create_transform(**data_config)
+            self.transform = transforms.Compose([t for t in transform_pretrained.transforms if not isinstance(t, transforms.ToTensor)])
+        except:
+            print("Not found transformation for the input use by pre-trained model")
+            self.transform = None
+
+        self.resize_att_map         = resize_att_map
+        self.use_attnmap_cls        = use_attnmap_cls
+        
+        if prog_model in [0,1]:
+            self.emb_size               = 768 
+            self.mlp_dim                = 3072
+            self.patch_size             = 16
+            self.n_heads                = 12
+            self.n_layers               = 12
+            self.dim_head               = self.emb_size //self.n_heads
+        elif prog_model == 2:
+            self.emb_size               = 384 
+            self.mlp_dim                = "empty"
+            self.patch_size             = 16
+            self.n_heads                = 6
+            self.n_layers               = 12
+            self.dim_head               = self.emb_size //self.n_heads
+            
+        elif prog_model == 3: 
+            self.emb_size               = 192 
+            self.mlp_dim                = "empty"
+            self.patch_size             = 16
+            self.n_heads                = 3
+            self.n_layers               = 12
+            self.dim_head               = self.emb_size //self.n_heads
+            
+        else:
+            self.emb_size               = "empty"
+            self.mlp_dim                = "empty"
+            self.patch_size             = "empty"
+            self.n_heads                = "empty"
+            self.n_layers               = "empty"
+            self.dim_head               = "empty"
+            
+        
+        self.dropout                = dropout
+        self.encoding_type          = encoding_type
+        
+        # get model parts
+        self.embedding  = self.model_vit.patch_embed
+        self.encoder    = self.model_vit.blocks
+        self.head       = self.model_vit.head    
+
+        # wrapper for attention extraction 
+        self.wrapper_prog = 0
+        
+        if prog_model in [2,3]:
+            self.model_vit.blocks[-1].attn.forward = self.forward_wrapper_2(self.model_vit.blocks[-1].attn)
+        else:
+            if self.wrapper_prog == 0:
+                self.model_vit.blocks[-1].attn.forward = self.forward_wrapper(self.model_vit.blocks[-1].attn)
+            elif self.wrapper_prog == 1:
+                self.model_vit.blocks[-1].attn.forward = self.forward_wrapper_2(self.model_vit.blocks[-1].attn)
+        
+    def getModels(self):
+        print_list(self.models_avaiable)
+    
+    # reference: https://github.com/lcultrera/WildCapture/
+    
+    def forward_wrapper(self, attn_obj):
+        def forward_wrap(x):
+            # get batch, number of elements in the sequence (patches + cls token) and latent representation dims 
+            B, N, C = x.shape    # on last layer the input channels has dim self.emb_size (768)
+            
+            # compute the embedding size for each head
+            head_emb_size = C // attn_obj.num_heads
+
+            # get the 3 different features vector for q, k and v (3 in 3rd dimension stands for this) for each head
+            # and change dimensions order to: qkv dim, batch, head_dim, sequence_dim, head_embedding
+            qkv = attn_obj.qkv(x).reshape(B, N, 3, attn_obj.num_heads, head_emb_size).permute(2, 0, 3, 1, 4)
+            
+            # remove qkv dimension returning the 3 different vectors
+            q, k, v = qkv.unbind(dim = 0)
+
+            # print(q.shape)
+            # compute the matrix calculus for attention
+            
+            # first transposition of key vector between sequence_dim, head_embedding, to make matrix multiplication feasible
+            k_T = k.transpose(-2, -1)
+            
+            # matmul + scaling
+            attn = (q @ k_T) * attn_obj.scale
+            
+            # apply softmax over last dimension
+            attn = attn.softmax(dim=-1)
+            
+            # apply dropout
+            attn = attn_obj.attn_drop(attn)
+            
+            # print("att full", attn.shape)
+            
+            # save the full attention map (used if self.use_attnmap_cls is False)
+            attn_obj.attn_map = attn
+            
+            # get attention map for [cls] token and save, dropping first element in last dimension since is relative to token and not to patches (used if self.use_attnmap_cls is True)
+            # attn_obj.cls_attn_map = attn[:, :, 0, 2:]
+            attn_obj.cls_attn_map = attn[:, :, 0, 1:]
+            
+            # compute the remaining operations for the attention forward
+
+            # matmul + exchange of dim between head_dim and sequence_dim
+            x = (attn @ v).transpose(1, 2)
+            
+            # collapse head dim, and head_embedding in a single dimension
+            x = x.reshape(B, N, C)
+            
+            # apply ap and dropout
+            x = attn_obj.proj(x)                        # linear activation fuction
+            x = attn_obj.proj_drop(x)                 
+            
+            return x
+        return forward_wrap
+    
+    def forward_wrapper_2(self, attn_obj):
+        def forward_wrap(x):
+            # get batch, number of elements in the sequence (patches + cls token) and latent representation dims 
+            B, N, C = x.shape    # on last layer the input channels has dim self.emb_size (768)
+            
+            # compute the embedding size for each head
+            head_emb_size = C // attn_obj.num_heads
+
+            # get the 3 different features vector for q, k and v (3 in 3rd dimension stands for this) for each head
+            # and change dimensions order to: qkv dim, batch, head_dim, sequence_dim, head_embedding
+            qkv = attn_obj.qkv(x).reshape(B, N, 3, attn_obj.num_heads, head_emb_size).permute(2, 0, 3, 1, 4)
+            
+            # remove qkv dimension returning the 3 different vectors
+            q, k, v = qkv.unbind(dim = 0)
+
+            # print(q.shape)
+            # compute the matrix calculus for attention
+            
+            # first transposition of key vector between sequence_dim, head_embedding, to make matrix multiplication feasible
+            k_T = k.transpose(-2, -1)
+            
+            # matmul + scaling
+            attn = (q @ k_T) * attn_obj.scale
+            
+            # apply softmax over last dimension
+            attn = attn.softmax(dim=-1)
+            
+            # apply dropout
+            attn = attn_obj.attn_drop(attn)
+            
+            # print("att full", attn.shape)
+            
+            # save the full attention map (used if self.use_attnmap_cls is False)
+            attn_obj.attn_map = attn
+            
+            # get attention map for [cls] token and save, dropping first element in last dimension since is relative to token and not to patches (used if self.use_attnmap_cls is True)
+            attn_obj.cls_attn_map = attn[:, :, 0, 2:]
+            
+            # compute the remaining operations for the attention forward
+
+            # matmul + exchange of dim between head_dim and sequence_dim
+            x = (attn @ v).transpose(1, 2)
+            
+            # collapse head dim, and head_embedding in a single dimension
+            x = x.reshape(B, N, C)
+            
+            # apply ap and dropout
+            x = attn_obj.proj(x)                        # linear activation fuction
+            x = attn_obj.proj_drop(x)                 
+            
+            return x
+        return forward_wrap
+    
+    def forward(self, x, verbose = False):
+        
+        # transform whether available
+        if not(self.transform is None):
+            x = self.transform(x)
+
+        # print(x.shape)
+        features    = self.model_vit.forward_features(x)
+        if verbose: print("features shape: ", features.shape)
+        
+        #                                       1) get encoding
+        encoding = features.mean(dim = 1) if self.encoding_type == 'mean' else features[:, 0]
+        if verbose: print("encoding shape: ",encoding.shape)
+
+        #                                       2) get logits
+        logits      = self.model_vit.forward_head(features)         # using [cls] token embedding 
+        if verbose: print("logits shape: ",logits.shape)
+
+        #                                       3) get attention map
+    
+        if self.use_attnmap_cls:
+            att_map     = self.model_vit.blocks[-1].attn.cls_attn_map.mean(dim=1) # mean over heads results
+            
+            # if use 2nd wrapper, include a value to have a batch of vectors of size: patch_size**2
+            if self.wrapper_prog == 1:
+                extension_value = T.empty(att_map.shape[0], 1)    # value to be added in the bathes of attention map
+                extension_value[:, 0] = att_map[:, 165]
+                extension_value = extension_value.cuda()
+                att_map = T.cat((att_map, extension_value), dim=1)
+            
+            att_map     = att_map.view(-1, 14, 14).detach()   # transform in images of dim: patch_size x patch_size
+            att_map     = att_map.unsqueeze(dim = 1)          # add channel (grayscale) dim
+        else:
+            att_map     = self.model_vit.blocks[-1].attn.attn_map.mean(dim=1).detach()
+            att_map     = att_map[:, 1:, 1:].view(-1,1,196,196)
+        
+    
+        if self.resize_att_map:
+            att_map     = F.interpolate(att_map, (224, 224), mode='bilinear')
+            
+        return logits, encoding, att_map
+
+#                                       custom abnormality modules
+
 class Abnormality_module_Encoder_VIT_v3(Project_abnorm_model):
     
     """ 
@@ -3556,7 +3669,6 @@ class Abnormality_module_Encoder_VIT_v3(Project_abnorm_model):
         x = self.gelu(self.bn_risk_final(self.fc_risk_final(x)))
         
         return x
-
 
 #_____________________________________Test models_________________________________________________ 
 
@@ -3862,28 +3974,61 @@ if __name__ == "__main__":
         
     def test_ViTEA():
         # define test input
-        x = T.rand((32, INPUT_CHANNELS, INPUT_HEIGHT, INPUT_WIDTH)).to(device)
-        tests = [1, 0, 0]
+        # x = T.rand((32, INPUT_CHANNELS, INPUT_HEIGHT, INPUT_WIDTH)).to(device)
+
+        img_1 = trans_input_base()(Image.open("./static/test_image_attention.png"))
+        img_2 = trans_input_base()(Image.open("./static/test_image_attention2.png"))
+        img_2 = img_2[:-1]
+        
+        print(img_1.shape)
+        print(img_2.shape)
+        
+
+        x = T.stack([img_1, img_2], dim=0).cuda()
+        
+        # showImage(img_1)
+        # showImage(img_2)
+        
+        print(x.shape)
+        
+        tests = [1, 0, 0]  # vit_EA, encoder, vit_EA + encoder
         
         if tests[0]:
-            vit = ViT_timm_EA(use_attnmap_cls=False, resize_att_map=True).to(device = device)
+            vit = ViT_timm_EA(use_attnmap_cls=True, resize_att_map=True, prog_model=3).to(device = device)
             # vit.getSummary()
             # print(vit.getAttributes())
+            
+        
             logits, encoding, attention = vit.forward(x)
+            print("logits shape     -> ", logits.shape)
+            print("encoding shape   -> ", encoding.shape)
+            print("attention shape  -> ", attention.shape)
+
+            print(T.sum(attention[0]))
+            print(T.sum(attention[1]))
             
             # vit.getSummary()
-            print(vit.transform)
-            # print(out[0])
-            print(attention[0].shape)
+            # print(vit.transform)
+            # print(attention[0].shape)
+            
+            # att_map = attention[0]
+            
+            showImage(x[0])
             showImage(attention[0], has_color= False)
-            # print(out[0].shape)
-            # print(out[1].shape)
+            
+            blend, att = add_attention(x[0], attention[0])
+            
+            print(blend.shape)
+            print(att.shape)
+            
+            showImage(blend)
+            showImage(att)
+            
 
         elif tests[1]:
             ae = AutoEncoder()
             ae.getSummary()
-        
-        
+            
         elif tests[2]:
             vit = ViT_timm_EA().to(device = device)
             ae  = AutoEncoder().to(device=device)
@@ -3992,11 +4137,9 @@ if __name__ == "__main__":
         out = abnorm_module.forward(probs_softmax=softmax_prob, residual=residual, encoding=encoding)
         print(out.shape)
     
-        
+    # get_vitTimm_models()
     test_ViTEA()
     
     
-
-    # test_ViTEA()
     #                           [End test section] 
     

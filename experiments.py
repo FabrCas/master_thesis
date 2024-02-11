@@ -15,7 +15,7 @@ from    torch.utils.data                    import DataLoader
 
 
 # local modules
-from    dataset                             import getMNIST_dataset, getCIFAR100_dataset, CDDB_binary_Partial
+from    dataset                             import getMNIST_dataset, getCIFAR100_dataset, getCIFAR10_dataset,CDDB_binary_Partial
 from    models                              import FC_classifier, get_fc_classifier_Keras, ResNet_EDS, Unet4, ViT_b16_ImageNet, \
                                                     ViT_timm_EA
 from    utilities                           import duration, saveModel, loadModel, showImage, check_folder, plot_loss, image2int, \
@@ -786,21 +786,32 @@ class Decoder_Unet(object):
 """
 
 
-class CIFAR100_ViT_Classifier(object):
+class CIFAR_ViT_Classifier(object):
     """ simple classifier for the MNIST dataset on handwritten digits, implemented using pytorch """
-    def __init__(self, batch_size = 32, useGPU = True):
-        super(CIFAR100_ViT_Classifier, self).__init__()
+    def __init__(self, batch_size = 32, useGPU = True, cifar100 = True):
+        super(CIFAR_ViT_Classifier, self).__init__()
         self.useGPU         = useGPU
         if self.useGPU: self.device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
         else: self.device = "cpu"
         
         # load train and test data
-        self.train_data = getCIFAR100_dataset(train = True)# getMNIST_dataset(train = True)
-        self.test_data  = getMNIST_dataset(train = False)
+        if cifar100:
+            self.train_data = getCIFAR100_dataset(train = True)
+            self.test_data  = getCIFAR100_dataset(train = False)
+        else:
+            self.train_data = getCIFAR10_dataset(train = True)
+            self.test_data  = getCIFAR10_dataset(train = False)
+            
         
         # load the model
         # self.model = FC_classifier(n_channel= 1, n_classes = 10)
-        self.model = ViT_b16_ImageNet(n_classes=100)
+        
+        if cifar100: 
+            n_classes = 100
+        else:
+            n_classes = 10
+        
+        self.model = ViT_b16_ImageNet(n_classes=n_classes)
         self.model.to(self.device)
         
         # learning hyper-parameters
@@ -813,7 +824,10 @@ class CIFAR100_ViT_Classifier(object):
         
         # define path
         self.path_test_models   = "./models/test_models"
-        self.name_dataset       = "CIFAR100"
+        if cifar100: 
+             self.name_dataset       = "CIFAR100"
+        else:
+            self.name_dataset       = "CIFAR10"
         self.name_model         = "{}_{}epochs.ckpt".format(self.model.__class__.__name__,self.epochs)
     
     def load(self):
@@ -944,26 +958,37 @@ class CIFAR100_ViT_Classifier(object):
         
         return pred, probs, logits
 
-class CIFAR100_ViTEA_Classifier(object):
+class CIFAR_ViTEA_Classifier(object):
     """ simple classifier for the MNIST dataset on handwritten digits, implemented using pytorch """
-    def __init__(self, batch_size = 32, useGPU = True):
-        super(CIFAR100_ViTEA_Classifier, self).__init__()
+    def __init__(self, prog_model = 2, batch_size = 64, useGPU = True, cifar100 = True):
+        super(CIFAR_ViTEA_Classifier, self).__init__()
         self.useGPU         = useGPU
         if self.useGPU: self.device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
         else: self.device = "cpu"
         
         # load train and test data
-        self.train_data = getCIFAR100_dataset(train = True)# getMNIST_dataset(train = True)
-        self.test_data  = getMNIST_dataset(train = False)
+        if cifar100:
+            self.train_data = getCIFAR100_dataset(train = True)
+            self.test_data  = getCIFAR100_dataset(train = False)
+        else:
+            self.train_data = getCIFAR10_dataset(train = True)
+            self.test_data  = getCIFAR10_dataset(train = False)
+            
         
         # load the model
         # self.model = FC_classifier(n_channel= 1, n_classes = 10)
-        self.model = ViT_timm_EA(n_classes=100) 
+        
+        if cifar100: 
+            n_classes = 100
+        else:
+            n_classes = 10
+            
+        self.model = ViT_timm_EA(n_classes=n_classes, prog_model=prog_model) 
         self.model.to(self.device)
         
         # learning hyper-parameters
         self.batch_size     = batch_size
-        self.epochs         = 10
+        self.epochs         = 50
         self.lr             = 1e-3
         
         self.cce            = F.cross_entropy    # categorical cross-entropy, takes logits X and sparse labels (no encoding just index) as input
@@ -971,10 +996,11 @@ class CIFAR100_ViTEA_Classifier(object):
         
         # define path
         self.path_test_models   = "./models/test_models"
-        self.name_dataset       = "CIFAR100"
+        if cifar100: 
+             self.name_dataset       = "CIFAR100"
+        else:
+            self.name_dataset       = "CIFAR10"
         self.name_model         = "{}_{}epochs.ckpt".format(self.model.__class__.__name__,self.epochs)
-        
-        self.trans              = trans_input_v2(isTensor=True)
     
     def load(self):
         path_model = os.path.join(self.path_test_models, self.name_dataset, self.name_model)
@@ -1023,7 +1049,7 @@ class CIFAR100_ViTEA_Classifier(object):
                 # if step_idx == 2: break
             
                 x = x.to(self.device)
-                x = self.trans(x)
+                # x = self.trans(x)
                 x.requires_grad_(True)
                 y = y.to(self.device)
                 
@@ -1082,7 +1108,7 @@ class CIFAR100_ViTEA_Classifier(object):
         for step_idx,(x,y) in tqdm(enumerate(test_dataloader), total= len(test_dataloader)):
             
             x = x.to(self.device)
-            x = self.trans(x)
+            # x = self.trans(x)
             y = y.to(self.device).cpu().numpy()
             
             with T.no_grad():
@@ -1199,19 +1225,19 @@ if __name__ == "__main__":
         showImage(rec_img, name="reconstructed_"+ str(n_picture) + "_decoding_" + name_model, save_image = True)
     
     def train_ViT_Cifar():
-        classifier = CIFAR100_ViT_Classifier()
+        classifier = CIFAR_ViT_Classifier()
         # classifier.train()
         classifier.load()
         classifier.test_accuracy()
     
     def train_VITEA_CIFAR():
-        classifier = CIFAR100_ViTEA_Classifier()
+        classifier = CIFAR_ViTEA_Classifier(prog_model = 3, cifar100=False)
         classifier.train()
         # classifier.load()
         classifier.test_accuracy()
         
     def test_attention_map():
-        classifier =  CIFAR100_ViTEA_Classifier()
+        classifier =  CIFAR_ViTEA_Classifier()
         # classifier.load()
         data_iter = classifier.train_data
         save    = False
@@ -1250,7 +1276,7 @@ if __name__ == "__main__":
 
         show_imgs_blend(img_d, att_map.cpu(), alpha=0.8, save_image= save, name="attention_blend_" + str(img_id))
     
-    test_attention_map()
+    train_VITEA_CIFAR()
     
     
     #                           [End test section] 

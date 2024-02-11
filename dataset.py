@@ -19,8 +19,9 @@ random.seed(22)
 # Paths and data structure
 CDDB_PATH       = "./data/CDDB"
 CIFAR100_PATH   = "./data/cifar100"
+CIFAR10_PATH    = "./data/cifar10"
 MNIST_PATH      = "./data/MNIST"
-FMNIST_PATH      = "./data/FashionMNIST"
+FMNIST_PATH     = "./data/FashionMNIST"
 
 input_config = get_inputConfig()
 w = input_config['width']
@@ -146,11 +147,15 @@ class ProjectDataset(Dataset):
                     v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
                     v2.Normalize(mean= [0.5000, 0.5000, 0.5000], std=[0.5000, 0.5000, 0.5000])
                 ])
+        
+        elif type_transformation == None:
+            self.transform_ops == T.nn.Identity()
         else: 
                 self.transform_ops = transforms.Compose([
                     v2.ToTensor(),   
                     v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
                 ])
+
             
             
         # initialization of path for the input images and the labels
@@ -1607,6 +1612,37 @@ class CDDB_Partial(ProjectDataset):
                 return img, label
 
 ##################################################### [Out-Of-Distribution Detection] #################################################################
+
+def getCIFAR10_dataset(train, width_img= w, height_img = h):
+    """ get CIFAR10 dataset
+
+    Args:
+        train (bool): choose between the train or test set. Defaults to True.
+        width_img (int, optional): img width for the resize. Defaults to config['width'].
+        height_img (int, optional): img height for the resize. Defaults to config['height'].
+        
+    Returns:
+        torch.Dataset : Cifar10 dataset object
+    """
+    transform_ops = transforms.Compose([
+        transforms.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
+        transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+        lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
+    ])
+    
+    # create folder if not exists and download locally
+    if not(os.path.exists(CIFAR10_PATH)):
+        os.mkdir(CIFAR10_PATH)
+        torchvision.datasets.CIFAR10(root=CIFAR10_PATH, train=True,  download = True, transform=transform_ops)
+        torchvision.datasets.CIFAR10(root=CIFAR10_PATH, train=False, download = True, transform=transform_ops)
+    
+    # load cifar data
+    if train:
+        cifar10 = torchvision.datasets.CIFAR10(root=CIFAR10_PATH, train=True, download = False, transform=transform_ops)
+    else:
+        cifar10 = torchvision.datasets.CIFAR10(root=CIFAR10_PATH, train=False, download = False, transform=transform_ops)
+    
+    return cifar10
 
 def getCIFAR100_dataset(train, width_img= w, height_img = h):
     """ get CIFAR100 dataset
