@@ -1,0 +1,41 @@
+Binary classification:
+    scenario: content (faces)
+        faces_Unet4_Scorer112p_v4_03-12-2023:
+            v3:
+                "AUPR": 93.55,
+                "AUROC": 91.6
+        faces_Unet4_Scorer_Confidence_112p_v5_02-01-2024:
+            v3:
+                "AUPR": 89.86,
+                "AUROC": 87.28
+
+	scenario: group (GAN)
+
+
+	scenario: mix
+
+
+
+Multiclass classification:
+
+	scenario: content (faces)
+
+		real labels grouping: single
+
+
+		real labels grouping: category
+
+
+	scenario: group (GAN)
+
+		real labels grouping: single
+
+
+		real labels grouping: category
+
+
+	scenario: mix
+
+		real labels grouping: single
+
+		real labels grouping: category

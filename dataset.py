@@ -148,13 +148,14 @@ class ProjectDataset(Dataset):
                     v2.Normalize(mean= [0.5000, 0.5000, 0.5000], std=[0.5000, 0.5000, 0.5000])
                 ])
         
-        elif type_transformation == None:
-            self.transform_ops == T.nn.Identity()
-        else: 
+        elif type_transformation == 2:
                 self.transform_ops = transforms.Compose([
                     v2.ToTensor(),   
                     v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
                 ])
+        else: 
+            self.transform_ops = v2.ToTensor()
+
 
             
             

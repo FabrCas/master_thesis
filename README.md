@@ -13,11 +13,15 @@ The dataset can be downloaded at the following [link](https://drive.google.com/f
 
 - **ResNet**, Deep Residual Learning for Image Recognition.
 [paper](https://arxiv.org/abs/1512.03385v1)
-- **U-net**: Convolutional Networks for Biomedical Image Segmentation.
+- **AutoEncoder**, Stacked Convolutional Auto-Encoders for Hierarchical Feature Extraction
+[paper](https://link.springer.com/chapter/10.1007/978-3-642-21735-7_7)
+- **VAE**, Auto-Encoding Variational Bayes
+[paper](https://arxiv.org/abs/1312.6114)
+- **U-net**, Convolutional Networks for Biomedical Image Segmentation.
 [paper](https://arxiv.org/abs/1505.04597)
-- **ViT** (Vision Transformer): An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale
+- **ViT** (Vision Transformer), An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale
 [paper](https://arxiv.org/abs/2010.11929)
-- **DeiT**: Training data-efficient image transformers & distillation through attention
+- **DeiT**, Training data-efficient image transformers & distillation through attention
 [paper](https://arxiv.org/abs/2012.12877)
 
 ## OOD resources

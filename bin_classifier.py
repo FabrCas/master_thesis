@@ -20,7 +20,8 @@ from    torch.utils.data                    import default_collate
 from    utilities                           import plot_loss, plot_valid, saveModel, metrics_binClass, loadModel, test_num_workers, sampleValidSet, \
                                             duration, check_folder, cutmix_image, showImage, image2int, ExpLogger
 from    dataset                             import getScenarioSetting, CDDB_binary, CDDB_binary_Partial
-from    models                              import ResNet_ImageNet, ResNet_scratch, ResNet_EDS, Unet4_Scorer, Unet5_Scorer, Unet6_Scorer, Unet6L_Scorer, \
+from    models_2                            import ResNet_scratch
+from    models                              import ResNet_ImageNet, ResNet_EDS, Unet4_Scorer, Unet5_Scorer, Unet6_Scorer, Unet6L_Scorer, \
                                             Unet4_ResidualScorer, Unet5_ResidualScorer, Unet6_ResidualScorer, Unet6L_ResidualScorer, \
                                             Unet4_Scorer_Confidence, Unet5_Scorer_Confidence \
 
@@ -230,12 +231,12 @@ class BinaryClassifier(object):
             else:
                 return T.mean(T.square(target - reconstruction))
         
-    def init_logger(self, path_model):
+    def init_logger(self, path_model, add2name = ""):
         """
             path_model -> specific path of the current model training
         """
         
-        logger = ExpLogger(path_model=path_model)
+        logger = ExpLogger(path_model=path_model, add2name=add2name)
         logger.write_config(self._dataConf())
         logger.write_hyper(self._hyperParams())
         try:

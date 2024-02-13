@@ -1,0 +1,79 @@
+Binary classification:
+
+	scenario: content (faces)
+
+		U-net based:
+			faces_Unet5_Residual_Scorer+MSE_v4_27-11-2023  		# images 224p
+				"f1-score": 0.94
+			faces_Unet4_Scorer112p_v4_03-12-2023				# images 112p
+				"f1-score": 0.90
+			faces_Unet4_Scorer_Confidence_112p_v5_02-01-2024	# with confidence, image 112p
+				"f1-score":0.93
+				
+		ViT based: 
+
+	scenario: group (GAN)
+
+		U-net based:
+			gan_Unet5_Scorer_v4_07-01-2024						# images 224p
+				"f1-score": 0.90
+			gan_Unet4_Scorer_112p_v4_04-01-2024					# images 112p
+			    "f1-score": 0.82
+
+		ViT based:
+
+
+	scenario: mix
+
+		U-net based:
+		
+		ViT based:
+
+Multiclass classification:
+
+	scenario: content (faces)
+
+		real labels grouping: single
+
+			U-net based:
+			
+			ViT based:
+
+		real labels grouping: category
+
+			U-net based:
+			
+			ViT based:
+
+	scenario: group (GAN)
+
+		real labels grouping: single
+
+			U-net based:
+			
+			ViT based:
+
+		real labels grouping: category
+
+			U-net based:
+			
+			ViT based:
+
+	scenario: mix
+
+		real labels grouping: single
+
+			U-net based:
+			
+			ViT based:
+
+		real labels grouping: category
+
+			U-net based:
+			
+			ViT based:
+
+
+
+
+

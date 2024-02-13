@@ -19,7 +19,7 @@ from    dataset                             import getMNIST_dataset, getCIFAR100
 from    models                              import FC_classifier, get_fc_classifier_Keras, ResNet_EDS, Unet4, ViT_b16_ImageNet, \
                                                     ViT_timm_EA
 from    utilities                           import duration, saveModel, loadModel, showImage, check_folder, plot_loss, image2int, \
-                                                    ExpLogger, trans_input_v2, show_imgs_blend
+                                                    ExpLogger, trans_input_v2, show_imgs_blend, include_attention
 
 
 """ 
@@ -1237,21 +1237,17 @@ if __name__ == "__main__":
         classifier.test_accuracy()
         
     def test_attention_map():
-        classifier =  CIFAR_ViTEA_Classifier()
-        # classifier.load()
+        classifier =  CIFAR_ViTEA_Classifier(prog_model = 3, cifar100=False)
+        classifier.load()
         data_iter = classifier.train_data
         save    = False
         img_id  = 0
         
         img, y = data_iter.__getitem__(img_id)
-        img = classifier.trans(img)
-        img_d = (img +1)/2
-        
-        
-        showImage(img_d, save_image= save, name="attention_original_" + str(img_id))
-        print(img_d.shape)
-        print(T.max(img_d))
-        print(T.min(img_d))
+
+            
+        showImage(img, save_image= save, name="attention_original_" + str(img_id))
+
         
         img = img.unsqueeze(dim=0)
         print(img.shape)
@@ -1263,20 +1259,20 @@ if __name__ == "__main__":
         
         print(att_map.shape, T.max(att_map), T.min(att_map))
         
-        
-        # select image over batch
-        # print(T.max(att_map))
-        # print(T.min(att_map))
-        
-        # att_map = bin_classifier.spread_range(att_map)
     
-        att_map = att_map[0]
-    
-        showImage(att_map, has_color= False, save_image= save, name="attention_map_" + str(img_id))
+        showImage(att_map[0], has_color= False, save_image= save, name="attention_map_" + str(img_id))
 
-        show_imgs_blend(img_d, att_map.cpu(), alpha=0.8, save_image= save, name="attention_blend_" + str(img_id))
+        # show_imgs_blend(img_d, att_map.cpu(), alpha=0.8, save_image= save, name="attention_blend_" + str(img_id))
+        result, att_map  = include_attention(img, att_map, alpha= 0.7)
+        
+        print(att_map.shape, T.max(att_map), T.min(att_map))
+        
+        print(result.shape)
+        
+        showImage(result[0], save_image= save, name="attention_map_" + str(img_id))
+        
     
-    train_VITEA_CIFAR()
+    test_attention_map()
     
     
     #                           [End test section] 

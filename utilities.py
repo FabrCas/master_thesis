@@ -285,6 +285,10 @@ def trans_input_base(isTensor = False):
     
     return transform_ops
     
+def trans_toTensor():
+    return transforms.ToTensor()
+    
+    
 def augment_v1(x):
     
     config = get_inputConfig()
@@ -329,7 +333,23 @@ def alpha_blend_pytorch(image1, image2, alpha):
     blended_image = (1 - alpha) * image1 + alpha * image2
     return blended_image
 
-def add_attention(img, attention_map, alpha = 0.8):
+
+def spread_range_tensor(x):
+    """ take a tensor and spread is range between 0 and 1 """
+    max_value, _ = T.max(x.reshape(x.shape[0], -1), dim = 1)
+    min_value, _ = T.min(x.reshape(x.shape[0], -1), dim = 1)
+    
+    while(not(len(x.shape) == len(max_value.shape))):
+        min_value =  min_value.unsqueeze(-1)
+        max_value =  max_value.unsqueeze(-1)
+        
+    # attention_map = T.div(attention_map, max_value)
+    x = (x - min_value)/(max_value - min_value)
+    
+    return x
+    
+
+def include_attention(img, attention_map, alpha = 0.8):
     """ include attention to the original image
     
     this function returns the img + attention map (also for batch), and the attention map on range [0,1] in RGB format
@@ -337,11 +357,14 @@ def add_attention(img, attention_map, alpha = 0.8):
     
     # improve visualization scaling over full range [0,1]
     max_value, _ = T.max(attention_map.reshape(attention_map.shape[0], -1), dim = 1)
+    min_value, _ = T.min(attention_map.reshape(attention_map.shape[0], -1), dim = 1)
     
     while(not(len(attention_map.shape) == len(max_value.shape))):
+        min_value =  min_value.unsqueeze(-1)
         max_value =  max_value.unsqueeze(-1)
         
-    attention_map = T.div(attention_map, max_value)
+    # attention_map = T.div(attention_map, max_value)
+    attention_map = (attention_map - min_value)/(max_value - min_value)
     
     # grayscale to color attention map
     if len(attention_map.shape) == 4:
@@ -353,10 +376,7 @@ def add_attention(img, attention_map, alpha = 0.8):
     
     return blend_result, attention_map
             
-    
-    
-    
-    
+
 def image2int(img_tensor, is_range_zero_one = True):
     """ 
         convert img (T.tensor) to int range 0-255. img can be a single image or a batch
@@ -732,7 +752,7 @@ def plot_valid(valid_history, title_plot = None, path_save = None, duration_time
         
     plt.clf()  # clear plot data
 
-def plot_cm(cm, labels, title_plot = None, path_save = None, duration_timer = 2500):
+def plot_cm(cm, labels, title_plot = None, path_save = None, epoch = None, duration_timer = 2500):
     """ sava and plot the confusion matrix
 
     Args:
@@ -768,7 +788,11 @@ def plot_cm(cm, labels, title_plot = None, path_save = None, duration_timer = 25
         plt.title('Confusion Matrix', fontsize=18)
         
     if path_save is not None:
-        plt.savefig(os.path.join(path_save, "confusion_matrix.png"))
+        if epoch is not None:
+            plt.savefig(os.path.join(path_save, "confusion_matrix_" + str(epoch) + ".png"))
+        else:
+            plt.savefig(os.path.join(path_save, "confusion_matrix.png"))
+            
     
 
     # initialize timer to close plot
@@ -783,7 +807,7 @@ def plot_cm(cm, labels, title_plot = None, path_save = None, duration_timer = 25
     # else:
     #    
     
-def plot_ROC_curve(fpr, tpr, path_save = None, duration_timer = 2500):
+def plot_ROC_curve(fpr, tpr, path_save = None, epoch = None, duration_timer = 2500):
     def close_event():
         plt.close()
         # plt.clf()  # clear plot data
@@ -799,7 +823,10 @@ def plot_ROC_curve(fpr, tpr, path_save = None, duration_timer = 2500):
     plt.legend(loc='lower right')
     
     if path_save is not None:
-        plt.savefig(os.path.join(path_save, "ROC_curve.png"))
+        if epoch is not None:
+            plt.savefig(os.path.join(path_save, "ROC_curve_" + str(epoch) + ".png"))
+        else:
+            plt.savefig(os.path.join(path_save, "ROC_curve.png"))
         
     fig = plt.gcf()
     
@@ -811,7 +838,7 @@ def plot_ROC_curve(fpr, tpr, path_save = None, duration_timer = 2500):
     plt.show()
     # plt.clf()  # clear plot data
     
-def plot_PR_curve(recalls, precisions, path_save = None, duration_timer = 2500):
+def plot_PR_curve(recalls, precisions, path_save = None, epoch = None, duration_timer = 2500):
    
     def close_event():
         plt.close()
@@ -827,7 +854,10 @@ def plot_PR_curve(recalls, precisions, path_save = None, duration_timer = 2500):
     plt.legend(loc='lower right')
     
     if path_save is not None:
-        plt.savefig(os.path.join(path_save, "PR_curve.png"))
+        if epoch is not None:
+            plt.savefig(os.path.join(path_save, "PR_curve_" + str(epoch) + ".png"))
+        else:
+            plt.savefig(os.path.join(path_save, "PR_curve.png"))
         
     fig = plt.gcf()
     
@@ -842,7 +872,7 @@ def plot_PR_curve(recalls, precisions, path_save = None, duration_timer = 2500):
         
 ##################################################  Metrics functions #################################################################
 
-def metrics_binClass(preds, targets, pred_probs, epoch_model="unknown", path_save = None, average = "macro",  save = True, name_ood_file  = None, ood_labels_reversed = False):
+def metrics_binClass(preds, targets, pred_probs, epoch_model= None, path_save = None, average = "macro",  save = True, name_ood_file  = None, ood_labels_reversed = False):
     """ 
         Computation of metrics for binary classification tasks.
         use name_ood_file parameter to save for OOD binary classification, otherwise is saved for classic binary classification
@@ -854,14 +884,14 @@ def metrics_binClass(preds, targets, pred_probs, epoch_model="unknown", path_sav
         roc_auc = auc(fpr, tpr)
         
         # plot and save ROC curve
-        plot_ROC_curve(fpr, tpr, path_save)
+        plot_ROC_curve(fpr, tpr, path_save, epoch= epoch_model)
         
         # pr curve/ aupr computation
         p,r, thresholds = precision_recall_curve(targets, pred_probs, pos_label=1,  drop_intermediate= False)
         aupr = auc(r,p)    # almost the same of average precision score
         
         # plot PR curve
-        plot_PR_curve(r,p,path_save) 
+        plot_PR_curve(r,p,path_save,  epoch= epoch_model) 
         
         # compute everage precision (almost equal to AUPR)
         avg_precision = average_precision_score(targets, pred_probs, average= average, pos_label=1),         \
@@ -897,12 +927,12 @@ def metrics_binClass(preds, targets, pred_probs, epoch_model="unknown", path_sav
     
     # plot and save (if path specified) confusion matrix
     if name_ood_file is None:
-        plot_cm(cm = metrics_results['confusion_matrix'], labels = ["real", "fake"], title_plot = None, path_save = path_save)
+        plot_cm(cm = metrics_results['confusion_matrix'], labels = ["real", "fake"], title_plot = None, path_save = path_save, epoch= epoch_model)
     else:
         if ood_labels_reversed:
-            plot_cm(cm = metrics_results['confusion_matrix'], labels = ["ID", "OOD"], title_plot = None, path_save = path_save)
+            plot_cm(cm = metrics_results['confusion_matrix'], labels = ["ID", "OOD"], title_plot = None, path_save = path_save, epoch= epoch_model)
         else:
-            plot_cm(cm = metrics_results['confusion_matrix'], labels = ["OOD", "ID"], title_plot = None, path_save = path_save)
+            plot_cm(cm = metrics_results['confusion_matrix'], labels = ["OOD", "ID"], title_plot = None, path_save = path_save, epoch= epoch_model)
     
     print(path_save)
     
@@ -915,7 +945,11 @@ def metrics_binClass(preds, targets, pred_probs, epoch_model="unknown", path_sav
         # metrics_results_['confusion_matrix'] = metrics_results_['confusion_matrix'].tolist()
         
         if name_ood_file is None:    # save for binary classification real/fake
-            saveJson(os.path.join(path_save, 'binaryMetrics_' + epoch_model + '.json'), metrics_results)
+            
+            if not(epoch_model is None):
+                saveJson(os.path.join(path_save, 'binaryMetrics_' + epoch_model + '.json'), metrics_results)
+            else:
+                saveJson(os.path.join(path_save, 'binaryMetrics.json'), metrics_results)
         else:                       # save for binary classification ID/OOD
             saveJson(os.path.join(path_save, name_ood_file), metrics_results)
     
@@ -998,7 +1032,7 @@ def detection_error(preds, labels, pos_label = 1, verbose = False):   # look als
     
     return detection_error, threshold_de
 
-def metrics_multiClass(preds, targets, labels_indices, labels_name, average = "macro", epoch_model="unknown", path_save = None, save = True):
+def metrics_multiClass(preds, targets, labels_indices, labels_name, average = "macro", epoch_model = None, path_save = None, save = True):
     """ 
         Computation of metrics for multi-label classification task.
         "average" parameter, choose between "macro" (over classes) and "micro" (over samples)
@@ -1035,7 +1069,7 @@ def metrics_multiClass(preds, targets, labels_indices, labels_name, average = "m
     
     
     # plot and save (if path specified) confusion matrix
-    plot_cm(cm = metrics_results['confusion_matrix'], labels = labels_name, title_plot = None, path_save = path_save)
+    plot_cm(cm = metrics_results['confusion_matrix'], labels = labels_name, title_plot = None, path_save = path_save, epoch= epoch_model)
     
     
     metrics_results['confusion_matrix'] = metrics_results['confusion_matrix'].tolist()
@@ -1044,9 +1078,11 @@ def metrics_multiClass(preds, targets, labels_indices, labels_name, average = "m
     if path_save is not None and save:
         # metrics_results_ = metrics_results.copy()
         # metrics_results_['confusion_matrix'] = metrics_results_['confusion_matrix'].tolist()
-        saveJson(os.path.join(path_save, 'binaryMetrics_' + epoch_model + '.json'), metrics_results)
+        if not(epoch_model is None):
+            saveJson(os.path.join(path_save, 'multiMetrics_' + epoch_model + '.json'), metrics_results)
+        else:
+            saveJson(os.path.join(path_save, 'multiMetrics.json'), metrics_results)
 
-    
     return metrics_results
 
 ##################################################  performance testing functions #####################################################
@@ -1233,14 +1269,18 @@ class expand_encoding(T.nn.Module):
 class ExpLogger(object):
     """ Simple class to keep track of learning and experiment information"""
     
-    def __init__(self, path_model):
+    def __init__(self, path_model, add2name = ""):
         """ constructtor ExpLogger
 
         Args:
             path_model (str): path to model folder
         """
         super(ExpLogger, self).__init__()
-        self.file_name      = "train.log"
+        if add2name == "":
+            self.file_name      = "train.log"
+        else:
+            self.file_name      = "train_" + add2name + ".log"
+            
         self.path_model     = path_model
         self.path_save      = os.path.join(self.path_model, self.file_name)
         self.delimiter_len  = 33

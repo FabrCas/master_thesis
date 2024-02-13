@@ -12,7 +12,7 @@ from    torchvision                     import models
 from    torchvision                     import transforms
 from    torchvision.models              import ResNet50_Weights, ViT_B_16_Weights
 from    utilities                       import print_dict, print_list, expand_encoding, convTranspose2d_shapes, get_inputConfig, \
-                                            showImage, trans_input_base, alpha_blend_pytorch, add_attention
+                                            showImage, trans_input_base, alpha_blend_pytorch, include_attention
 from    einops.layers.torch             import Rearrange
 from    einops                          import repeat, rearrange
 # import  cv2
@@ -3142,7 +3142,6 @@ class AutoEncoder(Project_DFD_model):
             nn.LeakyReLU(0.2),
         )
         # self.sigmoid = nn.Sigmoid()
-        # self.tahn = nn.Tanh()
 
         self.encoder.add_module("final_convs", nn.Sequential(
             nn.Conv2d(self.flc, self.flc, kernel_size=3, stride=1, padding=1),
@@ -3177,7 +3176,7 @@ class AutoEncoder(Project_DFD_model):
             nn.LeakyReLU(0.2),
             nn.ConvTranspose2d(self.flc, self.flc, kernel_size=4, stride=2, padding=1),
             nn.ConvTranspose2d(self.flc, 1, kernel_size=4, stride=2, padding=1)
-            # nn.Tanh()
+            # nn.Sigmoid()
         )
         
         self._init_weights_kaimingNormal()
@@ -3188,6 +3187,52 @@ class AutoEncoder(Project_DFD_model):
         x2 = self.decoder(x1)
         # print(x2.shape)
         return x2
+
+class AutoEncoder_v2(Project_DFD_model):
+    def __init__(self):
+        super(AutoEncoder_v2, self).__init__()
+
+        # Encoder
+        self.encoder = nn.Sequential(
+            nn.Conv2d(1, 32, kernel_size=4, stride=2, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(32),
+            nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(64),
+            nn.Conv2d(64, 128, kernel_size=4, stride=2, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(128),
+            nn.Conv2d(128, 256, kernel_size=4, stride=2, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(256),
+            nn.Conv2d(256, 512, kernel_size=4, stride=2, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(512),
+        )
+
+        # Decoder
+        self.decoder = nn.Sequential(
+            nn.ConvTranspose2d(512, 256, kernel_size=4, stride=2, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(256),
+            nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(128),
+            nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(64),
+            nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(32),
+            nn.ConvTranspose2d(32, 1, kernel_size=4, stride=2, padding=1),
+            nn.Sigmoid(),  # Sigmoid activation for pixel values in [0, 1]
+        )
+
+    def forward(self, x):
+        x = self.encoder(x)
+        x = self.decoder(x)
+        return x
 
 class VAE(Project_DFD_model):
     # suitable loss function BCE, KL divergence or both, or classic regression loss
@@ -3358,7 +3403,19 @@ class ViT_timm_EA(Project_DFD_model):
             'deit_tiny_distilled_patch16_224'
             ]
         self.name = self.models_avaiable[prog_model]
+        print(f"Model architecture select in ViT_EA: {self.name}")
+        
         self.model_vit = timm.create_model(model_name=self.name, pretrained=True, num_classes=n_classes, drop_rate=dropout)
+        """
+            Other ViT timm model parameters:
+            num_classes: Mumber of classes for classification head. (int)
+            global_pool: Type of global pooling for final sequence (String), default is 'token'. Choose btw: 'avg', 'token', 'map'
+            class_token: Use class token (boolean), defaults is True
+            drop_rate: Head dropout rate. (float), defaults is 0.
+            pos_drop_rate: Position embedding dropout rate.(float), defaults is 0.
+            attn_drop_rate: Attention dropout rate. (float), defaults is 0.
+        """
+        
         
         # data trasnformation
         try:
@@ -4016,7 +4073,7 @@ if __name__ == "__main__":
             showImage(x[0])
             showImage(attention[0], has_color= False)
             
-            blend, att = add_attention(x[0], attention[0])
+            blend, att = include_attention(x[0], attention[0])
             
             print(blend.shape)
             print(att.shape)
