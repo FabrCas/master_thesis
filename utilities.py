@@ -564,7 +564,7 @@ def loadJson(path_file):
 
 ##################################################  Plot/show functions ###############################################################
 
-def showImage(img, name= "unknown", has_color = True, save_image = False, convert_range  = False):
+def showImage(img, name= "unknown", has_color = True, save_image = False, convert_range  = False, path_save = None):
     """ plot image using matplotlib
 
     Args:
@@ -578,7 +578,11 @@ def showImage(img, name= "unknown", has_color = True, save_image = False, conver
         img = (img+1)/2
     
     if save_image:
-        check_folder("./static/saved_imgs")
+        if path_save is None:
+            check_folder("./static/saved_imgs")
+        else:
+            check_folder(path_save)
+            
         if name == "unknown":
             name += "_" + date.today().strftime("%d-%m-%Y") + ".png"
     
@@ -610,7 +614,11 @@ def showImage(img, name= "unknown", has_color = True, save_image = False, conver
             plt.imshow(img)
         else: 
             plt.imshow(img, cmap="gray")
-        if save_image: plt.savefig(os.path.join("./static/saved_imgs", name + ".png"))
+        if save_image:
+            if path_save is None:
+                plt.savefig(os.path.join("./static/saved_imgs", name + ".png"))
+            else:
+                plt.savefig(os.path.join(path_save, name + ".png"))
         plt.show()
     else:
         print("img data is not valid for the printing")
@@ -634,7 +642,7 @@ def show_img_grid(imgs, titles):  # in alternative look at torchvision.utils.mak
         # img = (img + 1) / 2  # Denormalize if -1< 1 is the interval
         show_img(img, axs[i // n][i % n], title)
 
-def show_imgs_blend(img1, img2, alpha=0.8, name = "unknown", save_image = False):
+def show_imgs_blend(img1, img2, alpha=0.8, name = "unknown", save_image = False, path_save= None):
     
     if isinstance(img1, T.Tensor):  
         img1 = img1.permute(1,2,0)
@@ -643,7 +651,11 @@ def show_imgs_blend(img1, img2, alpha=0.8, name = "unknown", save_image = False)
     
     
     if save_image:
-        check_folder("./static/saved_imgs")
+        if path_save is None:
+            check_folder("./static/saved_imgs")
+        else:
+            check_folder(path_save)
+            
         if name == "unknown":
             name += "_" + date.today().strftime("%d-%m-%Y") + ".png"
     
@@ -653,7 +665,11 @@ def show_imgs_blend(img1, img2, alpha=0.8, name = "unknown", save_image = False)
     plt.imshow(img1)
     plt.imshow(img2, alpha=alpha)
     plt.axis('off')
-    if save_image: plt.savefig(os.path.join("./static/saved_imgs", name + ".png"))
+    if save_image:
+        if path_save is None: 
+            plt.savefig(os.path.join("./static/saved_imgs", name + ".png"))
+        else:
+                        plt.savefig(os.path.join(path_save, name + ".png"))
     plt.show()
 
 def plot_loss(loss_array, title_plot = None, path_save = None, duration_timer = 2500, show = True):

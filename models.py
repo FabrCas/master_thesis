@@ -3190,7 +3190,7 @@ class AutoEncoder(Project_DFD_model):
 
 class AutoEncoder_v2(Project_DFD_model):
     def __init__(self):
-        super(AutoEncoder_v2, self).__init__()
+        super(AutoEncoder_v2, self).__init__(c = 1, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = None)
 
         # Encoder
         self.encoder = nn.Sequential(
@@ -3235,72 +3235,81 @@ class AutoEncoder_v2(Project_DFD_model):
         return x
 
 class VAE(Project_DFD_model):
-    # suitable loss function BCE, KL divergence or both, or classic regression loss
-    
-    def __init__(self, image_size=224, latent_dim=100):
+    def __init__(self, input_channels=1, image_size=224, latent_dim=512):
         super(VAE, self).__init__(c = 1, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = None)
 
-        self.image_size = image_size
-        self.latent_dim = latent_dim
-
-        # Encoder
+        self.device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
+        # encoder
         self.encoder = nn.Sequential(
-            nn.Conv2d(1, 32, kernel_size=4, stride=2, padding=1),
-            nn.ReLU(),
+            nn.Conv2d(input_channels, 32, kernel_size=4, stride=2, padding=1),
+            nn.LeakyReLU(0.2),
+            nn.BatchNorm2d(32),
             nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=1),
-            nn.ReLU(),
+            nn.LeakyReLU(0.2),
+            nn.BatchNorm2d(64),
             nn.Conv2d(64, 128, kernel_size=4, stride=2, padding=1),
-            nn.ReLU(),
+            nn.LeakyReLU(0.2),
+            nn.BatchNorm2d(128),
             nn.Conv2d(128, 256, kernel_size=4, stride=2, padding=1),
-            nn.ReLU()
+            nn.LeakyReLU(0.2),
+            nn.BatchNorm2d(256),
+            nn.Conv2d(256, 512, kernel_size=4, stride=2, padding=1),
+            nn.LeakyReLU(0.2),
+            nn.BatchNorm2d(512),
+            nn.Flatten(),
+            nn.Linear(512 * (image_size // 32) * (image_size // 32), latent_dim * 2)  # Two times latent_dim for mean and logvar
         )
-
-        self.fc_mu = nn.Linear(256 * (image_size // 16) ** 2, latent_dim)
-        self.fc_logvar = nn.Linear(256 * (image_size // 16) ** 2, latent_dim)
-
-        # Decoder
+        
+        # decoder
         self.decoder = nn.Sequential(
-            nn.Linear(latent_dim, 256 * (image_size // 16) ** 2),
-            nn.ReLU(),
+            nn.Linear(latent_dim, 512 * (image_size // 32) * (image_size // 32)),
+            nn.LeakyReLU(0.2),
+            nn.Unflatten(1, (512, image_size // 32, image_size // 32)),
+            nn.ConvTranspose2d(512, 256, kernel_size=4, stride=2, padding=1),
+            nn.LeakyReLU(0.2),
+            nn.BatchNorm2d(256),
             nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),
-            nn.ReLU(),
+            nn.LeakyReLU(0.2),
+            nn.BatchNorm2d(128),
             nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
-            nn.ReLU(),
+            nn.LeakyReLU(0.2),
+            nn.BatchNorm2d(64),
             nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
-            nn.ReLU(),
-            nn.ConvTranspose2d(32, 1, kernel_size=4, stride=2, padding=1),
+            nn.LeakyReLU(0.2),
+            nn.BatchNorm2d(32),
+            nn.ConvTranspose2d(32, input_channels, kernel_size=4, stride=2, padding=1),
             nn.Sigmoid()
         )
 
     def encode(self, x):
         x = self.encoder(x)
-        x = x.view(x.size(0), -1)
-        mu = self.fc_mu(x)
-        logvar = self.fc_logvar(x)
-        return mu, logvar
+        mean, logvar = T.chunk(x, 2, dim=1)  # Split into mean and logvar
+        return mean, logvar
 
-    def reparameterize(self, mu, logvar):
-        std = T.exp(0.5 * logvar)
-        eps = T.randn_like(std)
-        return mu + eps * std
+    def reparameterization(self, mean, var):
+        epsilon = T.randn_like(var).to(self.device)      
+        z = mean + var * epsilon
+        return z
 
-    def decode(self, z):
-        z = self.decoder_input(z)
-        z = z.view(z.size(0), 256, (self.image_size // 16), (self.image_size // 16))
-        x_recon = self.decoder(z)
-        return x_recon
+    def decode(self, x):
+        return self.decoder(x)
 
-    def forward(self, x):
-        mu, logvar = self.encode(x)
-        z = self.reparameterize(mu, logvar)
-        x_recon = self.decode(z)
-        return x_recon, mu, logvar
-    
-    def loss_function(recon_x, x, mu, logvar):
-        
-        BCE =  nn.BCELoss(reduction='sum')(recon_x, x)
+    def loss_function(self,recon_x, x, mu, logvar, use_bce = True):
+        if use_bce:
+            rec_loss =  nn.BCELoss(reduction='sum')(recon_x, x)
+        else: 
+            rec_loss = nn.functional.l1_loss(recon_x, x)
         KLD = -0.5 * T.sum(1 + logvar - mu.pow(2) - logvar.exp())
-        return BCE + KLD
+        return rec_loss + KLD
+    
+    def forward(self, x):
+        mean, logvar = self.encode(x)
+        z = self.reparameterization(mean, logvar)
+        x_hat = self.decode(z)
+        
+
+        return x_hat,  mean, logvar
+    
 
 class ViT_base_EA(Project_DFD_model):
     """ Implementation of a classic ViT model (base) for classification, providing image encoding (E) and attention map (A) """

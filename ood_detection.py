@@ -2643,7 +2643,6 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
         
         return output
                 
-
     def _forward_B(self, probs_softmax, encoding, residual, verbose = False):
         """ if self.use_confidence is True probs_softmax should include the confidence value (Stacked) """
         
@@ -3143,14 +3142,13 @@ if __name__ == "__main__":
     # [1] load deep fake classifier
     # choose classifier model as module A associated with a certain scenario
     classifier_model = 2
-
+    scenario = "content"
 
     if classifier_model == 0:      # Unet + classifiier 
         
         classifier_name = "faces_Unet4_Scorer112p_v4_03-12-2023"
         classifier_type = "Unet4_Scorer"
         classifier_epoch = 73
-        scenario = "content"
         classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
         classifier.load(classifier_name, classifier_epoch)
         resolution = "112p"
@@ -3160,20 +3158,32 @@ if __name__ == "__main__":
         classifier_name = "faces_Unet4_Scorer_Confidence_112p_v5_02-01-2024"
         classifier_type = "Unet4_Scorer_Confidence"
         classifier_epoch = 98
-        scenario = "content"
         classifier = DFD_BinClassifier_v5(scenario="content", model_type=classifier_type)
         classifier.load(classifier_name, classifier_epoch)
         conf_usage_mode = "ignore" # ignore, merge or alone
         resolution = "112p"
     
     elif classifier_model == 2:         # ViT + Autoencoder
-        classifier_name = "faces_ViTEA_timm_v7_07-02-2024"
-        classifier_type = "ViTEA_timm"
-        classifier_epoch = 21
-        scenario = "content"
-        classifier = DFD_BinViTClassifier_v7(scenario="content", model_type=classifier_type)
-        classifier.load(classifier_name, classifier_epoch)
+        # classifier_name = "faces_ViTEA_timm_v7_07-02-2024"
+        # classifier_type = "ViTEA_timm"
+        # classifier_epoch = 21
+        # scenario = "content"
+        # classifier = DFD_BinViTClassifier_v7(scenario="content", model_type=classifier_type)
+        # classifier.load(classifier_name, classifier_epoch)
+        # resolution = "224p"
+        classifier_name     = "faces_ViTEA_timm_DeiT_tiny_separateTrain_v7_13-02-2024"
+        classifier_type     = "ViTEA_timm"
+        autoencoder_type    = "vae"
+        prog_model_timm     = 3 # (tiny DeiT)
+        classifier_epoch    = 25
+        autoencoder_epoch   = 25
+        classifier = DFD_BinViTClassifier_v7(scenario="content", model_type=classifier_type, autoencoder_type = autoencoder_type,\
+                                             prog_pretrained_model= prog_model_timm)
+        # load classifier & autoencoder
+        classifier.load_both(classifier_name, classifier_epoch, autoencoder_epoch)
         resolution = "224p"
+    
+    
     
     
     # ________________________________ baseline  _______________________________________
@@ -3381,7 +3391,10 @@ if __name__ == "__main__":
         abn.test_risk()
     
     # train_abn_encoder()
-    test_abn("Abnormality_module_encoder_v3_vit_224p_08-02-2024", 20, None)
+    # test_abn("Abnormality_module_encoder_v3_vit_224p_08-02-2024", 20, None)
+    
+    
+    
     
     pass
     #                           [End test section] 
@@ -3482,6 +3495,21 @@ if __name__ == "__main__":
         test_abn("Abnormality_module_encoder_v3_112p_fullExtendedOOD_09-01-2024", 50, "encoder_v3")
     
     
-    classifier: faces_ViTEA_timm_v7_07-02-2024:
+    classifier: "faces_ViTEA_timm_DeiT_tiny_separateTrain_v7_13-02-2024":
+    
+                                    ABNORMALITY MODULE ENCODER  (Synthetic ood data, no extension)
+
+                                    
+                                    ABNORMALITY MODULE ENCODER  (Synthetic ood data, + extension, max merging)
+
+                                    
+                                    ABNORMALITY MODULE ENCODER  (CDDB OOD data)
+
+                                
+                                    ABNORMALITY MODULE ENCODER  (Synthetic ood data, + extension, all merging)
+
+    
+    
+    
     
     """

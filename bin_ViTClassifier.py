@@ -21,7 +21,7 @@ from    PIL                                 import Image
 
 from    utilities                           import plot_loss, plot_valid, saveModel, metrics_binClass, loadModel, sampleValidSet, \
                                             duration, check_folder, cutmix_image, showImage, image2int, ExpLogger, alpha_blend_pytorch,\
-                                            show_imgs_blend, include_attention, trans_input_base
+                                            show_imgs_blend, include_attention, trans_input_base, saveJson
 from    dataset                             import getScenarioSetting, CDDB_binary, CDDB_binary_Partial
 from    models                              import ViT_b_scratch, ViT_b16_ImageNet, ViT_timm, ViT_timm_EA,\
                                                 AutoEncoder, AutoEncoder_v2, VAE
@@ -580,7 +580,7 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
         Together with the ViT is also trained an autoencoder to reconstruct the attention map, this is used for OOD detection inference.
     """
     def __init__(self, scenario, useGPU = True, patch_size = None, emb_size = None,  batch_size = 64,
-                 model_type = "ViTEA_timm", prog_pretrained_model= 3, model_ae_type = "AE_v1" , train_together = True, transform_prog = 0):  # batch_size = 32 or 64
+                 model_type = "ViTEA_timm", prog_pretrained_model= 3, model_ae_type = "VAE" , train_together = True, transform_prog = 0):  # batch_size = 32 or 64
         """ init classifier
 
         Args:
@@ -604,11 +604,11 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
                 -"AE_v1"
                 -"AE_V2"
                 -"VAE"
-            Defaults is "AE_v1". 
+            Defaults is "VAE". 
             
             transform_prog (int, optional). Select the prog for input data trasnformation.Defaults is 0 (normalization values btw 0 and 1). (pre-trained models can use its own trasnformation compose)
             train_together (boolean, optional). Choose whether train classifier and autoencoder together. Defaults is True
-            prog_pretrained_model (int, optional). Select the prog for ViT pretrained model.Defaults is 3.
+            prog_pretrained_model (int, optional). Select the prog for ViT pretrained model.Defaults is 3 (tiny DeiT).
 
         """
         super(DFD_BinViTClassifier_v7, self).__init__(useGPU = useGPU, batch_size = batch_size, model_type = model_type)
@@ -680,10 +680,10 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
         self.early_stopping_trigger = "loss"                                            # validation metric: values "acc" or "loss"
         
         # learning hyperparameters autoencoder
-        if self.train_both:
+        if self.train_together:
             self.n_epochs_AE             = self.n_epochs
         else:
-            self.n_epochs_AE             = math.floor(50 * self.learning_coeff) 
+            self.n_epochs_AE             = 100 # math.floor(50 * self.learning_coeff) 
         
         
         # loss definition + interpolation values for the new loss
@@ -722,12 +722,12 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
         return {
             "lr": self.lr,
             "batch_size": self.batch_size,
-            "epochs_max": self.n_epochs,
+            "epochs_max (classifier)": self.n_epochs,
             "epochs_max_AE" : self.n_epochs_AE,
             "weight_decay": self.weight_decay,
-            "early_stopping_patience": self.patience,
-            "early_stopping_trigger": self.early_stopping_trigger,
-            "early_stopping_start_epoch": self.start_early_stopping,
+            "early_stopping_patience (classifier)": self.patience,
+            "early_stopping_trigger (classifier)": self.early_stopping_trigger,
+            "early_stopping_start_epoch (classifier)": self.start_early_stopping,
                 }
     
     def _dataConf(self):
@@ -973,8 +973,12 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
                 # Autoencoder criterion
                 x_ae = att_maps.clone().to(device =self.device)
                 
-                rec_att_map = self.autoencoder(x_ae)
+                if self.model_ae_type == "vae":
+                    rec_att_map, _, _ = self.autoencoder(x_ae)
+                else:
+                    rec_att_map = self.autoencoder(x_ae)
                 loss_ae     = self.mae(rec_att_map, x_ae)
+                
                 losses_ae.append(loss_ae.cpu().item())
                         
         # go back to train mode 
@@ -985,6 +989,8 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
         return loss_ae_valid
     
     # ------------------------------- training 
+    
+    # training wrapper
     def train(self, name_train, test_loop = False):
         # wrapper function to train
         if self.train_together:
@@ -993,7 +999,8 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
             name_folder_train = self.trainViT(name_train, test_loop)
             # self.trainAE(path_model_folder, path_results_folder, test_loop)
             self.trainAE(name_folder_train, test_loop)
-
+    
+    # train together classifier and autoencoder     
     @duration
     def train_both(self, name_train, test_loop = False):
         """
@@ -1373,6 +1380,7 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
         self.autoencoder.eval()
         self.model.eval()
 
+    # train separately
     @duration
     def trainViT(self, name_train, test_loop = False):
         """
@@ -1664,14 +1672,13 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
             name_train (str) should include the scenario selected and the model name (i.e. ResNet50), keep this convention {scenario}_{model_name}
         """
 
+        # define paths for saving models
         path_model_folder       = os.path.join(self.path_models,  name_folder)
         self.path_model_folder  = path_model_folder
-        check_folder(path_model_folder, is_model= True)
-        # create path for the model results
+
         path_results_folder     = os.path.join(self.path_results, name_folder)
         self.path_results_folder = path_results_folder
-        check_folder(path_results_folder) # create if doesn't exist
-        
+
         # define train dataloader
         train_dataloader = DataLoader(self.train_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
 
@@ -1687,7 +1694,7 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
 
         self.optimizer_ae       =  Adam(self.autoencoder.parameters(), lr = self.lr, weight_decay = self.weight_decay)
         
-        self.scheduler_ae = lr_scheduler.OneCycleLR(self.optimizer_ae, max_lr=self.lr, steps_per_epoch=n_steps, epochs=self.n_epochs, pct_start=0.3)
+        self.scheduler_ae = lr_scheduler.OneCycleLR(self.optimizer_ae, max_lr=self.lr, steps_per_epoch=n_steps, epochs=self.n_epochs_AE, pct_start=0.3)
        
         # define the gradient scaler to avoid weigths explosion
         scaler_ae   = GradScaler()
@@ -1734,7 +1741,6 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
                 # check there is any nan value in the input that causes instability
                 
                 # model forward and loss computation
-                # with autocast():   
                 with T.no_grad():
                     
                     _, _, att_map  = self.model.forward(x) 
@@ -1746,10 +1752,14 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
                 x_ae.requires_grad_(True)
                 x_ae.to(device=self.device)
 
-                with T.autograd():
-                    rec_att_map = self.autoencoder(x_ae)
-
-                    loss_ae     = self.mae(rec_att_map, x_ae)
+                
+                if self.model_ae_type == "vae":
+                    rec_att_map, mean, logvar = self.autoencoder(x_ae)
+                    loss_ae     = self.autoencoder.loss_function(rec_att_map, x_ae, mean, logvar)
+                else: 
+                    with autocast():
+                        rec_att_map = self.autoencoder(x_ae)
+                        loss_ae     = self.mae(rec_att_map, x_ae)
                 
                 loss_value_ae = loss_ae.cpu().item()
                 
@@ -1771,7 +1781,6 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
                 # T.nn.utils.clip_grad_norm_(self.autoencoder.parameters(), 10) 
                            
             # compute average loss for the epoch
-            
             avg_loss_ae = round(loss_epoch_ae/n_steps,4)
             loss_epochs_ae.append(avg_loss_ae)
             print("Average loss autoencoder: {}".format(avg_loss_ae))
@@ -1831,6 +1840,8 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
         # call same test function but don't load again the data
         super().test(load_data=False)
     
+    # load specific functions
+    
     def load_both(self, folder_model, epoch, epoch_ae = None):
         """ load both ViT model and autoencoder"""
         # load main model
@@ -1855,7 +1866,83 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
         except Exception as e:
             print(e)
             print("No model: {} found for the epoch: {} in the folder: {}".format(folder_model, epoch, self.path_models))
+    
+    def test_ae(self):
+        """
+            Void function that computes test on the autoencoder
+
+            Params:
+            load_data (boolean): parameter used to specify if is required to load data or has been already done, Default is True
+            
+            Returns:
+            None 
+        """    
         
+        # define test dataloader
+        test_dataloader = DataLoader(self.test_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= False, pin_memory= True)
+
+        # compute number of batches for test
+        n_steps = len(test_dataloader)
+        print("Number of batches for test: {}".format(n_steps))
+        
+        # model in evaluation mode
+        self.model.eval()  
+        
+        # define the array to store the result
+        losses_mae              = np.empty((0), dtype= np.float32)
+        losses_mse              = np.empty((0), dtype= np.float32)
+        
+        T.cuda.empty_cache()
+        
+        # loop over steps
+        for _,(x,y) in tqdm(enumerate(test_dataloader), total= n_steps):
+            
+            # prepare samples/targets batches 
+            x = x.to(self.device)
+                    
+            with T.no_grad():
+                
+                _, _, att_map  = self.model.forward(x) 
+
+                #                                      compute reconstruction loss
+                
+                x_ae = att_map.detach().clone()
+                x_ae.requires_grad_(True)
+                x_ae.to(device=self.device)
+
+                
+                if self.model_ae_type == "vae":
+                    rec_att_map, _, _  = self.autoencoder(x_ae)
+                else: 
+                    rec_att_map = self.autoencoder(x_ae)
+                    
+                mae_loss     = np.expand_dims(self.mae(rec_att_map, x_ae).cpu().item(), axis = 0)
+                mse_loss     = np.expand_dims(self.mse(rec_att_map, x_ae).cpu().item(), axis = 0)
+                
+        
+            losses_mae  = np.append(losses_mae, mae_loss, axis  =0)
+            losses_mse  = np.append(losses_mse, mse_loss, axis  =0)
+            
+              
+        # compute metrics 
+        
+        mae_metric = float(np.mean(losses_mae, axis=0))
+        mse_metric = float(np.mean(losses_mse, axis=0))
+        
+        
+        metrics = {"MAE": mae_metric, "MSE": mse_metric}
+        
+        print("Reconstruction error from test:\n", metrics)
+        
+        saveJson(os.path.join(self.path_models, self.classifier_name, "metrics_ae.json"), metrics)
+        
+        # create folder for the results
+        # check_folder(self.path2model_results)
+            
+        # compute metrics from test data
+        # metrics_binClass(predictions, targets, predicted_probabilities, epoch_model= str(self.modelEpochs), path_save = self.path2model_results)
+    
+
     
     # Override of superclass forward method
     def forward(self, x):
@@ -1940,16 +2027,21 @@ if __name__ == "__main__":
         
         bin_classifier = DFD_BinViTClassifier_v7(scenario = data_scenario, useGPU= True, model_type= model_type,\
                                                  transform_prog=0, prog_pretrained_model=prog_model, model_ae_type= autoencoder_type)
+        
         bin_classifier.load_both(name_model, epoch, epoch_ae= epoch_ae)
         data_iter = bin_classifier.test_dataset
-        save    = False
+        save    = True
         img_id  = 0
+        
+        path_save_images = os.path.join(bin_classifier.path_models, bin_classifier.classifier_name)
+        
+        print(f"path save for images: {path_save_images}")
         
         img, y = data_iter.__getitem__(img_id)
         
         # img = trans_input_base()(Image.open("./static/test_image_attention.png"))
         
-        showImage(img, save_image= save, name="attention_original_" + str(img_id))
+        showImage(img, save_image= save, name="attention_original_" + str(img_id), path_save=path_save_images)
     
         img = img.unsqueeze(dim=0)
     
@@ -1959,24 +2051,25 @@ if __name__ == "__main__":
         
         print("att_map: shape, max, min: ", att_map.shape, T.max(att_map), T.min(att_map))
         
-        showImage(att_map[0], has_color= False, save_image= save, name="attention_map_" + str(img_id))
+        showImage(att_map[0], has_color= False, save_image= save, name="attention_map_" + str(img_id), path_save=path_save_images)
         
         blended_results, _  = include_attention(img, att_map, alpha= 0.7)
         
-        showImage(blended_results[0], save_image= save, name="attention_fused_" + str(img_id))
+        showImage(blended_results[0], save_image= save, name="attention_fused_" + str(img_id), path_save=path_save_images)
         
-        show_imgs_blend(img[0].cpu(), att_map[0].cpu(), alpha=0.8, save_image= save, name="attention_blend_" + str(img_id))
-        
+        show_imgs_blend(img[0].cpu(), att_map[0].cpu(), alpha=0.8, save_image= save, name="attention_blend_" + str(img_id), path_save=path_save_images)
         
         # reconstruction 
-        
-        rec_att_map = bin_classifier.autoencoder.forward(att_map)
+        if bin_classifier.model_ae_type == "vae":
+            rec_att_map, _, _  = bin_classifier.autoencoder.forward(att_map)
+        else:    
+            rec_att_map = bin_classifier.autoencoder.forward(att_map)
                 
         print("rec_att_map: shape, max, min: ", rec_att_map.shape, T.max(rec_att_map), T.min(rec_att_map))
 
-        showImage(rec_att_map[0], has_color= False, save_image= save, name="attention_map_AE_" + str(img_id))
+        showImage(rec_att_map[0], has_color= False, save_image= save, name="attention_map_AE_" + str(img_id), path_save=path_save_images)
         
-    def test_attention_map():
+    def test_generic_attention_map():
 
         from PIL import Image
         import matplotlib.pyplot as plt
@@ -2143,8 +2236,7 @@ if __name__ == "__main__":
         else:
             bin_classifier.trainViT(name_train= scenario_setting + "_" + model_type, test_loop = test_loop)
         
-    def trainAE_v7_scenario(name_folder_train, epoch_vit, prog_vit, model_type = "ViTEA_timm", autoencoder_type = "ae_v1"\
-                            ,test_loop = False):
+    def trainAE_v7_scenario(name_folder_train, epoch_vit, prog_vit, model_type = "ViTEA_timm", autoencoder_type = "ae_v1", test_loop = False):
             bin_classifier = DFD_BinViTClassifier_v7(scenario = data_scenario, useGPU= True, model_type=model_type,\
                                         train_together=False, prog_pretrained_model= prog_vit, model_ae_type= autoencoder_type)
             
@@ -2156,26 +2248,29 @@ if __name__ == "__main__":
     
     # ------- test
      
-    def test_v7_metrics(prog_model, name_folder_train, epoch, epoch_ae = None, model_type = "ViTEA_timm"):
-        bin_classifier = DFD_BinViTClassifier_v7(scenario = data_scenario, useGPU= True, model_type= model_type, prog_pretrained_model= prog_model)
-        if epoch_ae is None:
-            epoch_ae = bin_classifier.n_epochs_AE
-            
-        bin_classifier.load_both(name_folder_train, epoch, epoch_ae= epoch_ae)
+    def test_v7_metrics(prog_model, name_folder_train, epoch, model_type = "ViTEA_timm"):
+        bin_classifier = DFD_BinViTClassifier_v7(scenario = data_scenario, useGPU= True, model_type= model_type, prog_pretrained_model= prog_model, train_together= False)
+        bin_classifier.load(name_folder_train, epoch)
         bin_classifier.test()
+    
+    def test_v7_ae_metrics(prog_model, name_folder_train, epoch, epoch_ae, model_type = "ViTEA_timm", autoencoder_type = "ae_v1"):
+        bin_classifier = DFD_BinViTClassifier_v7(scenario = data_scenario, useGPU= True, model_type= model_type, model_ae_type=autoencoder_type, 
+                                                 prog_pretrained_model= prog_model, train_together= False)
         
+        bin_classifier.load_both(name_folder_train,epoch=epoch, epoch_ae= epoch_ae)
+        
+        bin_classifier.test_ae()
     
-    # test_attention_map_v7("faces_ViTEA_timm_DeiT_small_v7_12-02-2024", epoch=39, epoch_ae=39, prog_model=2)
-    # test_attention_map_v7("faces_ViTEA_timm_DeiT_tiny_v7_12-02-2024", epoch=34, epoch_ae=34, prog_model=3)
-    
-    # test_attention_map()
-    
-    trainViT_v7_scenario(prog_vit=3, add_name="DeiT_tiny_separateTrain")
-
-    
+   
     
 
+
+    # trainAE_v7_scenario(name_folder_train = "faces_ViTEA_timm_DeiT_tiny_separateTrain_v7_13-02-2024", epoch_vit=25, prog_vit =3, autoencoder_type = "vae")
     
+    # test_v7_ae_metrics(prog_model=3, name_folder_train="faces_ViTEA_timm_DeiT_tiny_separateTrain_v7_13-02-2024",\
+                    #    epoch= 25, epoch_ae= 100, autoencoder_type="vae")
+    # test_attention_map_v7("faces_ViTEA_timm_DeiT_tiny_separateTrain_v7_13-02-2024", epoch=25, epoch_ae=100, prog_model=3, autoencoder_type = "vae")
+        
     
     
 
@@ -2204,14 +2299,21 @@ if __name__ == "__main__":
         
         #                                           v7
         train_v7_scenario()
-        train_v7_scenario_separately()
-        train_v7_scenario(add_name="DeiT_tiny", prog_model=3)
-        train_v7_scenario(add_name="DeiT_small", prog_model=2)
-        
         test_v7_metrics("faces_ViTEA_timm_v7_06-02-2024", 23)
+        
+        train_v7_scenario_separately()
         test_v7_metrics("faces_ViTEA_timm_v7_07-02-2024", 21)
+        
+        train_v7_scenario(add_name="DeiT_tiny", prog_model=3)
         test_v7_metrics(prog_model=3, name_model="faces_ViTEA_timm_DeiT_tiny_v7_12-02-2024", epoch=34, epoch_ae=34)
-        # test_v7_metrics(prog_model=2, name_model="faces_ViTEA_timm_DeiT_small_v7_12-02-2024", epoch=39, epoch_ae=39)
+        
+        train_v7_scenario(add_name="DeiT_small", prog_model=2)
+        test_v7_metrics(prog_model=2, name_model="faces_ViTEA_timm_DeiT_small_v7_12-02-2024", epoch=39, epoch_ae=39)
+        
+        trainViT_v7_scenario(prog_vit=3, add_name="DeiT_tiny_separateTrain")
+        test_v7_metrics(prog_model=3, name_folder_train="faces_ViTEA_timm_DeiT_tiny_separateTrain_v7_13-02-2024", epoch=9)
+        test_v7_metrics(prog_model=3, name_folder_train="faces_ViTEA_timm_DeiT_tiny_separateTrain_v7_13-02-2024", epoch=25) 
+        
     # GAN:
         #                                           v6
 
