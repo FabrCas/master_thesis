@@ -2,6 +2,7 @@ import  os
 import  torch               as T
 import  numpy               as np
 import  math
+import  copy
 from    torch.nn            import functional as F
 from    torch.utils.data    import DataLoader
 from    torch.cuda.amp      import autocast
@@ -14,10 +15,13 @@ from    torch.cuda.amp      import GradScaler, autocast
 # local import
 from    dataset             import getScenarioSetting, CDDB_binary_Partial, CDDB_Partial, OOD_dataset, getCIFAR100_dataset, getMNIST_dataset, getFMNIST_dataset
 from    experiments         import MNISTClassifier_keras
-from    bin_classifier      import DFD_BinClassifier_v4, DFD_BinClassifier_v5
+from    bin_classifier      import DFD_BinClassifier_v4, DFD_BinClassifier_v5       # Unet + cls head, Unet  + cls head + confidence
 from    bin_ViTClassifier   import DFD_BinViTClassifier_v7
+
 from    models              import Abnormality_module_Basic, Abnormality_module_Encoder_v1, Abnormality_module_Encoder_v2,\
-                            Abnormality_module_Encoder_v3, Abnormality_module_Encoder_v4, Abnormality_module_Encoder_VIT_v3
+                            Abnormality_module_Encoder_v3, Abnormality_module_Encoder_v4,\
+                            Abnormality_module_Encoder_ViT_v3, Abnormality_module_Encoder_ViT_v4
+                            
 from    utilities           import saveJson, loadJson, metrics_binClass, metrics_OOD, print_dict, showImage, check_folder, sampleValidSet, \
                             mergeDatasets, ExpLogger, loadModel, saveModel, duration, plot_loss, plot_valid
 
@@ -50,7 +54,6 @@ class OOD_Classifier(object):
         # hyper-params
         self.batch_size     =  256  # 32 -> basic, 64/128 -> encoder
         
-    
     #                                      data aux functions
     def compute_class_weights(self, verbose = False, positive = "ood", multiplier = 1, normalize = True, only_positive_weight = False):
         
@@ -2325,14 +2328,13 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
     """
     
     def __init__(self, classifier: DFD_BinViTClassifier_v7, scenario:str, model_type: str, useGPU: bool= True, binary_dataset: bool = True,
-                 batch_size = 32, use_synthetic:bool = True, extended_ood: bool = False, blind_test: bool = True,
+                 batch_size = 64, use_synthetic:bool = True, extended_ood: bool = False, blind_test: bool = True,
                  balancing_mode: str = "max", ):
         """ 
             ARGS:
             - classifier (DFD_BinViTClassifier_v7): the ViT classifier + Autoencoder (Module A) that produces the input for Module B (abnormality module)
             - scenario (str): choose between: "content", "mix", "group"
-            - model_type (str): choose between avaialbe model for the abnrormality module: "basic", "encoder", "encoder_v2", "encoder_v3"
-            "encoder_v4"
+            - model_type (str): choose between avaialbe model for the abnrormality module:  "encoder_v3", "encoder_v4"
             - batch_size (str/int): the size of the batch, set defaut to use the assigned from superclass, otherwise the int size. Default is "default".
             - use_synthetic (boolean): choose if use ood data generated from ID data (synthetic) with several techniques, or not. Defaults is True.
             - extended_ood (boolean, optional): This has sense if use_synthetic is set to True. Select if extend the ood data for training, using not only synthetic data. Default is True
@@ -2347,9 +2349,9 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
         self.classifier  = classifier
         self.scenario = scenario
         self.binary_dataset = binary_dataset
-        self.model_type = model_type
+        self.model_type = model_type.strip().lower()
         
-        self.name               = "Abnormality_module"
+        self.name               = "Abnormality_module_ViT"
         self.name_classifier    = self.classifier.classifier_name
         self.train_name         = None
         self._meta_data()
@@ -2369,9 +2371,8 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
         if not batch_size == "dafault":   # default batch size is defined in the superclass 
             self.batch_size             = int(batch_size)
             
-        # self.lr                     = 1e-4
-        self.lr                     = 1e-3
-        self.n_epochs               = 20  # 50
+        self.lr                     = 1e-3  # 1e-3, 1e-4
+        self.n_epochs               = 75    # 20, 50
         self.weight_decay           = 1e-3                  # L2 regularization term 
         
         # load data ID/OOD
@@ -2406,9 +2407,13 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
         residual_flatten    = out["residual"]
 
 
-        if self.model_type == "encoder_v3_vit":
-            self.model = Abnormality_module_Encoder_VIT_v3(probs_softmax.shape, encoding.shape, residual_flatten.shape)
-
+        if self.model_type == "encoder_v3":
+            self.model = Abnormality_module_Encoder_ViT_v3(probs_softmax.shape, encoding.shape, residual_flatten.shape)
+        elif self.model_type == "encoder_v4":
+            self.model = Abnormality_module_Encoder_ViT_v4(probs_softmax.shape, encoding.shape, residual_flatten.shape)
+        else:
+            raise ValueError("the model type for the ViT abnormality module is not valid.")
+        
         self.model.to(self.device)
         self.model.eval()
     
@@ -2434,7 +2439,7 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
         
         self.name_ood_data  = "CDDB_" + self.scenario + "_" + setting + "_scenario"
         
-    def _prepare_data_synt(self,verbose = False):
+    def _prepare_data_synt(self,verbose = False, type_transf = 2 ):
         """ method used to prepare Dataset class used for both training and testing, synthetizing OOD data for training
         
             ARGS:
@@ -2443,14 +2448,14 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
         
         # synthesis of OOD data (train and valid)
         print("\n\t\t[Loading OOD (synthetized) data]\n")
-        ood_data_train_syn    = self.dataset_class(scenario = self.scenario, train = True,  ood = False, augment = False, transform2ood = True)
-        tmp        = self.dataset_class(scenario = self.scenario, train = False, ood = False, augment = False, transform2ood = True)
+        ood_data_train_syn    = self.dataset_class(scenario = self.scenario, train = True,  ood = False, augment = False, transform2ood = True, type_transformation = type_transf)
+        tmp        = self.dataset_class(scenario = self.scenario, train = False, ood = False, augment = False, transform2ood = True, type_transformation = type_transf)
         ood_data_valid_syn , ood_data_test_syn      = sampleValidSet(trainset = ood_data_train_syn, testset= tmp, useOnlyTest = True, verbose = True)
         
         # fetch ID data (train, valid and test)
         print("\n\t\t[Loading ID data]\n")
-        id_data_train      = self.dataset_class(scenario = self.scenario, train = True,  ood = False, augment = False, transform2ood = False)
-        tmp            = self.dataset_class(scenario = self.scenario, train = False, ood = False, augment = False, transform2ood = False)
+        id_data_train      = self.dataset_class(scenario = self.scenario, train = True,  ood = False, augment = False, transform2ood = False, type_transformation = type_transf)
+        tmp            = self.dataset_class(scenario = self.scenario, train = False, ood = False, augment = False, transform2ood = False, type_transformation = type_transf)
         id_data_valid , id_data_test   = sampleValidSet(trainset = id_data_train, testset= tmp, useOnlyTest = True, verbose = True)
         
         
@@ -2464,7 +2469,7 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
                 
         if self.extended_ood:
             print("\n\t\t[Extending OOD data with CDDB samples]\n")
-            ood_train_expansion = self.dataset_class(scenario = self.scenario, train = True,   ood = True, augment = False)            
+            ood_train_expansion = self.dataset_class(scenario = self.scenario, train = True,   ood = True, augment = False, type_transformation = type_transf)            
             ood_data_train = mergeDatasets(ood_data_train_syn, ood_train_expansion) 
            
             if verbose: print("length OOD dataset after extension (train) -> ", len(ood_data_train))
@@ -2476,7 +2481,7 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
             self.dataset_train = OOD_dataset(id_data_train, ood_data_train_syn, balancing_mode= self.balancing_mode)
             
         if self.blind_test:
-            ood_data_test  = self.dataset_class(scenario = self.scenario, train = False,  ood = True, augment = False)
+            ood_data_test  = self.dataset_class(scenario = self.scenario, train = False,  ood = True, augment = False, type_transformation = type_transf)
             if verbose: print("length OOD dataset (test) -> ", len(ood_data_test))
             # test set: id data test + ood data test
             self.dataset_test  = OOD_dataset(id_data_test , ood_data_test,  balancing_mode= self.balancing_mode)
@@ -2490,7 +2495,7 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
         if verbose: print("length full dataset (train/valid/test) with balancing -> ", len(self.dataset_train), len(self.dataset_valid), len(self.dataset_test))
         print("\n")
     
-    def _prepare_data(self, verbose = False):
+    def _prepare_data(self, verbose = False, type_transf = 2 ):
         
         """ method used to prepare Dataset class used for both training and testing, both ID and OOD comes from CDDB dataset
         
@@ -2500,14 +2505,14 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
         
         # fetch ID data (train, valid and test)
         print("\n\t\t[Loading ID data]\n")
-        id_data_train      = self.dataset_class(scenario = self.scenario, train = True,  ood = False, augment = False, transform2ood = False)
-        tmp            = self.dataset_class(scenario = self.scenario, train = False, ood = False, augment = False, transform2ood = False)
+        id_data_train      = self.dataset_class(scenario = self.scenario, train = True,  ood = False, augment = False, transform2ood = False, type_transformation=type_transf)
+        tmp            = self.dataset_class(scenario = self.scenario, train = False, ood = False, augment = False, transform2ood = False, type_transformation=type_transf)
         id_data_valid , id_data_test   = sampleValidSet(trainset = id_data_train, testset= tmp, useOnlyTest = True, verbose = True)
         
 
         print("\n\t\t[Loading OOD data]\n")
-        ood_data_train = self.dataset_class(scenario = self.scenario, train = True,   ood = True, augment = False) 
-        tmp  = self.dataset_class(scenario = self.scenario, train = False,  ood = True, augment = False)
+        ood_data_train = self.dataset_class(scenario = self.scenario, train = True,   ood = True, augment = False, type_transformation=type_transf) 
+        tmp  = self.dataset_class(scenario = self.scenario, train = False,  ood = True, augment = False, type_transformation=type_transf)
         ood_data_valid , ood_data_test   = sampleValidSet(trainset = ood_data_train, testset= tmp, useOnlyTest = True, verbose = True)
         
         
@@ -2604,7 +2609,7 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
         
         return logger
     
-    def _forward_A(self, x, verbose = False):
+    def _forward_A(self, x, verbose = False, show = False):
         """ this method return a dictionary with the all the outputs from the model branches
             keys: "probabilities", "encding", "residual", "confidence"
             the confidence key-value pair is present if and only if is a confidence model (check the name)
@@ -2613,6 +2618,10 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
         # logits, reconstruction, encoding = self.classifier.model.forward(x)
         
         # with T.no_grad():
+
+        
+        # if show:showImage(x[1], "original")
+            
         output_model = self.classifier.model.forward(x)  # logits, encoding, att_map
         
         # unpack the output based on the model
@@ -2620,9 +2629,12 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
         encoding        = output_model[1]
         att_map         = output_model[2]
         
+        # if show: showImage(att_map[1], "attention_map", has_color=False)
+        
         # generate att_map from autoencoder
-        att_map = self.classifier.norm(att_map)
         rec_att_map = self.classifier.autoencoder.forward(att_map)
+        
+        # if show: showImage(rec_att_map[1], "rec_attention_map", has_color=False)
             
         output = {"encoding": encoding}
         probs_softmax = T.nn.functional.softmax(logits, dim=1)
@@ -2633,8 +2645,8 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
         
         # from reconstuction to residual
         residual = T.square(rec_att_map - att_map)
-        # residual_flatten = T.flatten(residual, start_dim=1)
         
+        # if show: showImage(residual[1], "residual", has_color=False)
         output["probabilities"] = probs_softmax
         output["residual"]      = residual
         
@@ -2745,11 +2757,15 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
                         # logit = self._forward_B(prob_softmax, encoding, residual)
                         # logit = T.squeeze(logit)
                         logit = T.squeeze(self.model.forward(probs_softmax, encoding, residual))
+                        # print(logit)
                     else:
                         raise ValueError("Forward not defined in valid function for model: {}".format(self.model_type))
                     
 
                     loss = self.bce(input=logit, target=y, pos_weight=pos_weight)   # logits bce version, peforms first sigmoid and binary cross entropy on the output
+                    if T.isnan(loss):
+                        continue
+                    
                 losses.append(loss.item())
 
                         
@@ -2757,7 +2773,12 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
         self.model.train()
         
         # return the average loss
-        loss_valid = sum(losses)/len(losses)
+        try:
+            loss_valid = sum(losses)/len(losses)
+        except Exception as e:
+            print(e)
+            loss_valid = 1
+            
         print(f"Loss from validation: {loss_valid}")
         return loss_valid
 
@@ -2806,6 +2827,13 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
         loss_epochs     = []
         valid_history   = []
         
+        
+        # define best validation results
+        best_valid          = math.inf
+        best_valid_epoch    = 0
+        # initialize ditctionary best models
+        best_model_dict     = copy.deepcopy(self.model.state_dict())
+        
         # learned epochs by the model initialization
         self.modelEpochs = 0
         
@@ -2822,11 +2850,10 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
             
             time1 = []
             time2 = []
-            
+
+
             # loop over steps
             for step_idx,(x,y) in tqdm(enumerate(train_dl), total= n_steps):
-                
-                # if step_idx >= 50: break
                 
                 # test steps loop for debug
                 if test_loop and step_idx+1 == 5: break
@@ -2841,8 +2868,6 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
                 # x.requires_grad_(True)
                 y = y[:,1]                           # take only label for the positive class (fake)
                 
-                # compute weights for the full batch
-                # weights     = T.tensor([self.weights_labels[elem] for elem in y ]).to(self.device)   #TODO check this usage of the class weight, try pos_weight
                 
                 # compute weight for the positive class
                 # pos_weight  = T.tensor([self.weights_labels[1]]).to(self.device)
@@ -2929,9 +2954,16 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
             criterion = self.valid(epoch=epoch_idx+1, valid_dl = valid_dl)
             # criterion = 0
             
-            valid_history.append(criterion)  
+            valid_history.append(criterion)
+            
+            
+            if criterion < best_valid:
+                best_valid = criterion
+                best_model_dict = copy.deepcopy(self.model.state_dict())
+                best_valid_epoch = epoch_idx+1
+                print("** new best abnormality module **")
 
-                        
+        
             # create dictionary with info frome epoch: loss + valid, and log it
             epoch_data = {"epoch": last_epoch, "avg_loss": avg_loss, "max_loss": max_loss_epoch, \
                           "min_loss": min_loss_epoch, "valid_loss": criterion}
@@ -2963,7 +2995,13 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
         print("\n\t\t[Saving model]\n")
         name_model_file         = str(last_epoch) +'.ckpt'
         path_model_save         = os.path.join(path_save_model, name_model_file)  # path folder + name file
+        
+        name_best_model_file    = str(best_valid_epoch) +'.ckpt'
+        path_best_model_save    = os.path.join(path_save_model, name_best_model_file)
+        
+        
         saveModel(self.model, path_model_save)
+        saveModel(best_model_dict, path_best_model_save, is_dict= True)
     
         # terminate the logger
         logger.end_log()
@@ -3164,27 +3202,20 @@ if __name__ == "__main__":
         resolution = "112p"
     
     elif classifier_model == 2:         # ViT + Autoencoder
-        # classifier_name = "faces_ViTEA_timm_v7_07-02-2024"
-        # classifier_type = "ViTEA_timm"
-        # classifier_epoch = 21
-        # scenario = "content"
-        # classifier = DFD_BinViTClassifier_v7(scenario="content", model_type=classifier_type)
-        # classifier.load(classifier_name, classifier_epoch)
-        # resolution = "224p"
         classifier_name     = "faces_ViTEA_timm_DeiT_tiny_separateTrain_v7_13-02-2024"
         classifier_type     = "ViTEA_timm"
         autoencoder_type    = "vae"
         prog_model_timm     = 3 # (tiny DeiT)
         classifier_epoch    = 25
         autoencoder_epoch   = 25
-        classifier = DFD_BinViTClassifier_v7(scenario="content", model_type=classifier_type, autoencoder_type = autoencoder_type,\
+        classifier = DFD_BinViTClassifier_v7(scenario="content", model_type=classifier_type, model_ae_type = autoencoder_type,\
                                              prog_pretrained_model= prog_model_timm)
         # load classifier & autoencoder
         classifier.load_both(classifier_name, classifier_epoch, autoencoder_epoch)
         resolution = "224p"
     
     
-    
+    add2name = lambda name, add_name: name + "_" + add_name if add_name!="" else name
     
     # ________________________________ baseline  _______________________________________
     def test_baseline_implementation():
@@ -3313,42 +3344,42 @@ if __name__ == "__main__":
         # y = abn.forward(x)
         # print(y)
     
-    def train_abn_encoder(type_encoder = "encoder"):
+    def train_abn_encoder(type_encoder = "encoder_v3", add_name = ""):
         
         if classifier_model == 2:
-            abn = Abnormality_module_ViT(classifier, scenario = scenario, model_type= "encoder_v3_vit")
+            abn = Abnormality_module_ViT(classifier, scenario = scenario, model_type= type_encoder)
         else: 
             abn = Abnormality_module(classifier, scenario = scenario, model_type= type_encoder, conf_usage_mode = conf_usage_mode)
         # abn.train(additional_name= resolution + "_ignored_confidence" , test_loop=False)
-        abn.train(additional_name= resolution, test_loop=False)
+        abn.train(additional_name= add2name(resolution, add_name)  , test_loop=False)
         
-    def train_extended_abn_encoder(type_encoder = "encoder"):
+    def train_extended_abn_encoder(type_encoder = "encoder_v3", add_name = ""):
         """ uses extended OOD data"""
         if classifier_model == 2:
-            abn = Abnormality_module_ViT(classifier, scenario = scenario, model_type= "encoder_v3_vit", extended_ood = True)
+            abn = Abnormality_module_ViT(classifier, scenario = scenario, model_type= type_encoder, extended_ood = True)
         else: 
             abn = Abnormality_module(classifier, scenario = scenario, model_type= type_encoder, extended_ood = True,  conf_usage_mode = conf_usage_mode)
-        abn.train(additional_name= resolution + "_extendedOOD", test_loop=False)
+        abn.train(additional_name= add2name(resolution, add_name) + "_extendedOOD", test_loop=False)
         
-    def train_nosynt_abn_encoder(type_encoder = "encoder"):
+    def train_nosynt_abn_encoder(type_encoder = "encoder_v3", add_name = ""):
         """ uses extended OOD data"""
         
         if classifier_model == 2:
-            abn = Abnormality_module_ViT(classifier, scenario = scenario, model_type="encoder_v3_vit", use_synthetic= False)
+            abn = Abnormality_module_ViT(classifier, scenario = scenario, model_type= type_encoder, use_synthetic= False)
         else: 
             abn = Abnormality_module(classifier, scenario = scenario, model_type=type_encoder, use_synthetic= False,  conf_usage_mode = conf_usage_mode)
-        abn.train(additional_name= resolution + "_nosynt", test_loop=False)
+        abn.train(additional_name= add2name(resolution, add_name) + "_nosynt", test_loop=False)
     
-    def train_full_extended_abn_encoder(type_encoder = "encoder"):
+    def train_full_extended_abn_encoder(type_encoder = "encoder_v3", add_name = ""):
         
         """ uses extended OOD data"""
         if classifier_model == 2:
-            abn = Abnormality_module_ViT(classifier, scenario = scenario, model_type= "encoder_v3_vit", extended_ood = True, balancing_mode="all")
+            abn = Abnormality_module_ViT(classifier, scenario = scenario, model_type= type_encoder, extended_ood = True, balancing_mode="all")
         else: 
             abn = Abnormality_module(classifier, scenario = scenario, model_type= type_encoder, extended_ood = True, balancing_mode="all",  conf_usage_mode = conf_usage_mode)
-        abn.train(additional_name = resolution + "_fullExtendedOOD", test_loop=False)
+        abn.train(additional_name = add2name(resolution, add_name) + "_fullExtendedOOD", test_loop=False)
     
-    def test_abn(name_model, epoch, type_encoder):
+    def test_abn(name_model, epoch, type_encoder = "encoder_v3"):
         
         def test_forward():
             dl =  DataLoader(abn.dataset_train, batch_size = 16,  num_workers = 8,  shuffle= True,   pin_memory= False)
@@ -3379,7 +3410,7 @@ if __name__ == "__main__":
         
         # load model
         if classifier_model == 2:
-            abn = Abnormality_module_ViT(classifier, scenario=scenario, model_type="encoder_v3_vit")
+            abn = Abnormality_module_ViT(classifier, scenario=scenario, model_type= type_encoder)
         else: 
             abn = Abnormality_module(classifier, scenario=scenario, model_type=type_encoder,  conf_usage_mode = conf_usage_mode)
             
@@ -3389,13 +3420,25 @@ if __name__ == "__main__":
     
         # launch test with non-thr metrics
         abn.test_risk()
+
+
+
+    train_abn_encoder("encoder_v3", add_name = "75epochs")
+
+
+
     
-    # train_abn_encoder()
-    # test_abn("Abnormality_module_encoder_v3_vit_224p_08-02-2024", 20, None)
+
+    
+
     
     
     
     
+
+    
+    
+                                                                                                            
     pass
     #                           [End test section] 
    
@@ -3415,7 +3458,6 @@ if __name__ == "__main__":
                                     
                                     ABNORMALITY MODULE BASIC  (Synthetic ood data, no extension)
         train_abn_basic()
-        
         test_abn_content_faces("Abnormality_module_basic_112p_05-12-2023", 30,"basic")
         
                                     ABNORMALITY MODULE ENCODER  (Synthetic ood data, no extension)
@@ -3481,33 +3523,52 @@ if __name__ == "__main__":
                                     
                                     ABNORMALITY MODULE ENCODER  (Synthetic ood data, + extension, max merging)
         train_extended_abn_encoder(type_encoder= "encoder_v3")
-        
         test_abn("Abnormality_module_encoder_v3_112p_extendedOOD_09-01-2024", 50, "encoder_v3")
                                     
                                     ABNORMALITY MODULE ENCODER  (CDDB OOD data)
         train_nosynt_abn_encoder(type_encoder= "encoder_v3")
-        
         test_abn("Abnormality_module_encoder_v3_112p_nosynt_09-01-2024", 50, "encoder_v3")
                                 
                                     ABNORMALITY MODULE ENCODER  (Synthetic ood data, + extension, all merging)
         train_full_extended_abn_encoder(type_encoder= "encoder_v3")
-        
         test_abn("Abnormality_module_encoder_v3_112p_fullExtendedOOD_09-01-2024", 50, "encoder_v3")
     
     
     classifier: "faces_ViTEA_timm_DeiT_tiny_separateTrain_v7_13-02-2024":
     
                                     ABNORMALITY MODULE ENCODER  (Synthetic ood data, no extension)
-
-                                    
+        train_abn_encoder(type_encoder="encoder_v3"    # 20 epochs
+        test_abn("Abnormality_module_ViT_encoder_v3_224p_14-02-2024", 20, "encoder_v3")        
+        
+        
+        train_abn_encoder("encoder_v3", add_name = "50epochs")
+        
+        
+        train_abn_encoder(type_encoder="encoder_v4") # epochs
+        test_abn("Abnormality_module_ViT_encoder_v4_224p_15-02-2024", 20, "encoder_v4")  
+        
+        train_abn_encoder("encoder_v4", add_name = "50epochs")
+                 
                                     ABNORMALITY MODULE ENCODER  (Synthetic ood data, + extension, max merging)
-
+        train_extended_abn_encoder(type_encoder="encoder_v3") # 20 epochs
+        test_abn("Abnormality_module_ViT_encoder_v3_224p_extendedOOD_14-02-2024", 20, "encoder_v3")
+        
+        train_extended_abn_encoder(type_encoder="encoder_v4") # 20 epocsh
+        test_abn("Abnormality_module_ViT_encoder_v4_224p_extendedOOD_15-02-2024", 20, "encoder_v4") 
                                     
                                     ABNORMALITY MODULE ENCODER  (CDDB OOD data)
-
+        train_nosynt_abn_encoder(type_encoder="encoder_v3") # 20 epochs
+        test_abn("Abnormality_module_ViT_encoder_v3_224p_nosynt_14-02-2024", 20, "encoder_v3")
+        
+        train_nosynt_abn_encoder(type_encoder="encoder_v4") # 20 epochs
+        test_abn("Abnormality_module_ViT_encoder_v4_224p_nosynt_15-02-2024", 20, "encoder_v4") 
                                 
                                     ABNORMALITY MODULE ENCODER  (Synthetic ood data, + extension, all merging)
-
+        train_full_extended_abn_encoder(type_encoder="encoder_v3") # 20 epochs
+        test_abn("Abnormality_module_ViT_encoder_v3_224p_fullExtendedOOD_14-02-2024", 20, "encoder_v3")   
+        
+        train_full_extended_abn_encoder(type_encoder="encoder_v4") # 20 epocsh
+        test_abn("Abnormality_module_ViT_encoder_v4_224p_fullExtendedOOD_15-02-2024", 20, "encoder_v4") 
     
     
     

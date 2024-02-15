@@ -122,7 +122,7 @@ class ProjectDataset(Dataset):
                     v2.RandomHorizontalFlip(0.5),
                     v2.RandomVerticalFlip(0.1),
                     v2.RandAugment(num_ops = 1, magnitude= 7, num_magnitude_bins= 51, interpolation = InterpolationMode.BILINEAR),
-                    lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
+                    lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1], why do this? useful for OOD synthetizaion of data
                 ])
             else:
                 self.transform_ops = transforms.Compose([
@@ -148,10 +148,11 @@ class ProjectDataset(Dataset):
                     v2.Normalize(mean= [0.5000, 0.5000, 0.5000], std=[0.5000, 0.5000, 0.5000])
                 ])
         
-        elif type_transformation == 2:
+        elif type_transformation == 2:          # This is for ViT models from timm, they uses their own input transformation with augmentation
                 self.transform_ops = transforms.Compose([
                     v2.ToTensor(),   
                     v2.Resize((self.width_img, self.height_img), interpolation= InterpolationMode.BILINEAR, antialias= True),
+                    lambda x: T.clamp(x, 0, 1)
                 ])
         else: 
             self.transform_ops = v2.ToTensor()

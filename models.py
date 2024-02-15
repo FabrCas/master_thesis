@@ -3302,15 +3302,16 @@ class VAE(Project_DFD_model):
         KLD = -0.5 * T.sum(1 + logvar - mu.pow(2) - logvar.exp())
         return rec_loss + KLD
     
-    def forward(self, x):
+    def forward(self, x, train = False):
         mean, logvar = self.encode(x)
         z = self.reparameterization(mean, logvar)
         x_hat = self.decode(z)
         
-
-        return x_hat,  mean, logvar
+        if train:
+            return x_hat,  mean, logvar
+        else:
+            return x_hat
     
-
 class ViT_base_EA(Project_DFD_model):
     """ Implementation of a classic ViT model (base) for classification, providing image encoding (E) and attention map (A) """
 
@@ -3392,6 +3393,7 @@ class ViT_base_EA(Project_DFD_model):
         
         return logits, enc 
   
+
 class ViT_timm_EA(Project_DFD_model):
     def __init__(self, n_classes = 10, dropout = 0.1, prog_model = 1, encoding_type = "mean", resize_att_map = True, use_attnmap_cls = True):
         """_summary_
@@ -3647,7 +3649,7 @@ class ViT_timm_EA(Project_DFD_model):
 
 #                                       custom abnormality modules
 
-class Abnormality_module_Encoder_VIT_v3(Project_abnorm_model):
+class Abnormality_module_Encoder_ViT_v3(Project_abnorm_model):
     
     """ 
         based on Abnormality_module_Encoder_v3:
@@ -3735,6 +3737,110 @@ class Abnormality_module_Encoder_VIT_v3(Project_abnorm_model):
         x = self.gelu(self.bn_risk_final(self.fc_risk_final(x)))
         
         return x
+
+class Abnormality_module_Encoder_ViT_v4(Project_abnorm_model):
+    
+    """ 
+        based on Abnormality_module_Encoder_v2:
+        - moves the concatenation after several fc layer separately defined for encoding and residual
+    """
+    
+    def __init__(self, shape_softmax_probs, shape_encoding, shape_residual):
+        super().__init__()
+        
+        self.probs_softmax_shape   = shape_softmax_probs
+        self.encoding_shape = shape_encoding
+        self.residual_shape = shape_residual
+        self.input_shape = (shape_softmax_probs, shape_encoding, shape_residual)   # input_shape doesn't consider the batch
+        self._createNet()
+        self._init_weights_normal()
+    
+    def _createNet(self):
+        
+        n_encoder_block             = 5
+        n_features_latent_residual  = 64
+        
+        
+        residual_length  = math.floor(self.residual_shape[2]/(2**n_encoder_block))**2 * n_features_latent_residual
+        
+        tot_feaures_risk_3          = 10  # 10 features for encoding and ten for residual before last layer
+        tot_feature_risk_concat     =  self.probs_softmax_shape[1] + tot_feaures_risk_3*2
+        
+        
+        # # taken from official work 
+        tot_feaures_risk_1  = 512
+        tot_feaures_risk_2  = 128
+
+        
+        tot_feaures_final   = 1
+        
+        self.gelu = T.nn.GELU()
+        self.sigmoid = T.nn.Sigmoid()
+        
+        #                           for Residual 
+        # conv section
+        self.e1 = Encoder_block_v2(in_c =  self.residual_shape[1] , out_c = 4)
+        self.e2 = Encoder_block_v2(in_c =  4, out_c = 8)
+        self.e3 = Encoder_block_v2(in_c =  8, out_c = 16)
+        self.e4 = Encoder_block_v2(in_c =  16, out_c = 32)
+        self.e5 = Encoder_block_v2(in_c =  32 , out_c = n_features_latent_residual)
+        
+        # Linear reduction block residual
+        self.fc_risk_1r      = T.nn.Linear(residual_length,tot_feaures_risk_1)
+        self.bn_risk_1r      = T.nn.BatchNorm1d(tot_feaures_risk_1)
+        self.fc_risk_2r      = T.nn.Linear(tot_feaures_risk_1,tot_feaures_risk_2)
+        self.bn_risk_2r      = T.nn.BatchNorm1d(tot_feaures_risk_2)
+        self.fc_risk_3r      = T.nn.Linear(tot_feaures_risk_2,tot_feaures_risk_3)
+        self.bn_risk_3r      = T.nn.BatchNorm1d(tot_feaures_risk_3)
+        
+        #                           for encoding 
+        # Linear reduction block encoding
+        self.fc_risk_1e      = T.nn.Linear(self.encoding_shape[1],tot_feaures_risk_2)
+        self.bn_risk_1e      = T.nn.BatchNorm1d(tot_feaures_risk_2)
+        self.fc_risk_2e      = T.nn.Linear(tot_feaures_risk_2,tot_feaures_risk_3)
+        self.bn_risk_2e      = T.nn.BatchNorm1d(tot_feaures_risk_3)
+        
+        # final fc layer after contenation 
+        self.fc_risk_final  = T.nn.Linear(tot_feature_risk_concat,tot_feaures_final)
+        self.bn_risk_final  = T.nn.BatchNorm1d(tot_feaures_final)
+        
+    def forward(self, probs_softmax, encoding, residual, verbose = False):
+        
+        #                       residual branch 
+        residual_out = self.e1(residual)
+        residual_out = self.e2(residual_out)
+        residual_out = self.e3(residual_out)
+        residual_out = self.e4(residual_out)
+        residual_out = self.e5(residual_out)
+
+        # flat the residual
+        flatten_residual = T.flatten(residual_out, start_dim=1)
+        
+        # print(flatten_residual.shape)
+        
+        # risk section
+        x = self.gelu(self.bn_risk_1r(self.fc_risk_1r(flatten_residual)))
+        x = self.gelu(self.bn_risk_2r(self.fc_risk_2r(x)))
+        x_r = self.gelu(self.bn_risk_3r(self.fc_risk_3r(x)))
+
+        # print(x_r.shape)
+        
+        #                       encoding branch 
+
+        # risk section
+        x = self.gelu(self.bn_risk_1e(self.fc_risk_1e(encoding)))
+        x_e = self.gelu(self.bn_risk_2e(self.fc_risk_2e(x)))
+        
+        # print(x_e.shape)
+        
+        # # build the vector as input of final fc layer
+        x_concat = T.cat((probs_softmax, x_e, x_r), dim = 1)
+        
+        # print(x_concat.shape)
+        # if verbose: print("input module b shape -> ", x.shape)
+        out = self.gelu(self.bn_risk_final(self.fc_risk_final(x_concat)))
+        return out   
+
 
 #_____________________________________Test models_________________________________________________ 
 
@@ -4175,7 +4281,7 @@ if __name__ == "__main__":
     def test_abnorm_encoder_vit():
         from    bin_ViTClassifier                  import DFD_BinViTClassifier_v7
         classifier = DFD_BinViTClassifier_v7(scenario="content")
-        classifier.load("faces_ViTEA_timm_v7_07-02-2024", 21)
+        classifier.load("faces_ViTEA_timm_DeiT_tiny_separateTrain_v7_13-02-2024", 25)
         x_module_a = T.rand((32, INPUT_CHANNELS, INPUT_HEIGHT, INPUT_WIDTH)).to(device)
         logits, encoding, att_map,  = classifier.model.forward(x_module_a)
         # input("press enter for next step ")
@@ -4198,13 +4304,14 @@ if __name__ == "__main__":
         # test_residual = T.rand((32, 3, 112, 112)).to(device)
         
         
-        abnorm_module = Abnormality_module_Encoder_VIT_v3(shape_softmax_probs = softmax_prob.shape, shape_encoding=encoding.shape, shape_residual=residual.shape).to(device)
+        abnorm_module = Abnormality_module_Encoder_ViT_v4(shape_softmax_probs = softmax_prob.shape, shape_encoding=encoding.shape, shape_residual=residual.shape).to(device)
         # abnorm_module.getSummary()
-        out = abnorm_module.forward(probs_softmax=softmax_prob, residual=residual, encoding=encoding)
+        out = abnorm_module.forward(probs_softmax=softmax_prob, residual=residual, encoding=encoding, verbose = True)
         print(out.shape)
     
     # get_vitTimm_models()
     test_ViTEA()
+    # test_abnorm_encoder_vit()
     
     
     #                           [End test section] 

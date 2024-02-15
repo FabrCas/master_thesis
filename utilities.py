@@ -276,6 +276,7 @@ def trans_input_base(isTensor = False):
     if isTensor:
         transform_ops = transforms.Compose([
                         transforms.Resize((h, w), interpolation= InterpolationMode.BILINEAR, antialias= True),
+                        lambda x: T.clamp(x, 0, 1)
                                                   ])
     else: 
         transform_ops = transforms.Compose([

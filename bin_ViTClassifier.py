@@ -21,7 +21,7 @@ from    PIL                                 import Image
 
 from    utilities                           import plot_loss, plot_valid, saveModel, metrics_binClass, loadModel, sampleValidSet, \
                                             duration, check_folder, cutmix_image, showImage, image2int, ExpLogger, alpha_blend_pytorch,\
-                                            show_imgs_blend, include_attention, trans_input_base, saveJson
+                                            show_imgs_blend, include_attention, saveJson
 from    dataset                             import getScenarioSetting, CDDB_binary, CDDB_binary_Partial
 from    models                              import ViT_b_scratch, ViT_b16_ImageNet, ViT_timm, ViT_timm_EA,\
                                                 AutoEncoder, AutoEncoder_v2, VAE
@@ -973,10 +973,10 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
                 # Autoencoder criterion
                 x_ae = att_maps.clone().to(device =self.device)
                 
-                if self.model_ae_type == "vae":
-                    rec_att_map, _, _ = self.autoencoder(x_ae)
-                else:
-                    rec_att_map = self.autoencoder(x_ae)
+                # if self.model_ae_type == "vae":
+                #     rec_att_map, _, _ = self.autoencoder(x_ae)
+                # else:
+                rec_att_map = self.autoencoder.forward(x_ae)
                 loss_ae     = self.mae(rec_att_map, x_ae)
                 
                 losses_ae.append(loss_ae.cpu().item())
@@ -1754,7 +1754,7 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
 
                 
                 if self.model_ae_type == "vae":
-                    rec_att_map, mean, logvar = self.autoencoder(x_ae)
+                    rec_att_map, mean, logvar = self.autoencoder.forward(x_ae, train=True)
                     loss_ae     = self.autoencoder.loss_function(rec_att_map, x_ae, mean, logvar)
                 else: 
                     with autocast():
@@ -1911,10 +1911,10 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
                 x_ae.to(device=self.device)
 
                 
-                if self.model_ae_type == "vae":
-                    rec_att_map, _, _  = self.autoencoder(x_ae)
-                else: 
-                    rec_att_map = self.autoencoder(x_ae)
+                # if self.model_ae_type == "vae":
+                #     rec_att_map, _, _  = self.autoencoder(x_ae)
+                # else: 
+                rec_att_map = self.autoencoder(x_ae)
                     
                 mae_loss     = np.expand_dims(self.mae(rec_att_map, x_ae).cpu().item(), axis = 0)
                 mse_loss     = np.expand_dims(self.mse(rec_att_map, x_ae).cpu().item(), axis = 0)
@@ -2060,10 +2060,10 @@ if __name__ == "__main__":
         show_imgs_blend(img[0].cpu(), att_map[0].cpu(), alpha=0.8, save_image= save, name="attention_blend_" + str(img_id), path_save=path_save_images)
         
         # reconstruction 
-        if bin_classifier.model_ae_type == "vae":
-            rec_att_map, _, _  = bin_classifier.autoencoder.forward(att_map)
-        else:    
-            rec_att_map = bin_classifier.autoencoder.forward(att_map)
+        # if bin_classifier.model_ae_type == "vae":
+        #     rec_att_map, _, _  = bin_classifier.autoencoder.forward(att_map)
+        # else:    
+        rec_att_map = bin_classifier.autoencoder.forward(att_map)
                 
         print("rec_att_map: shape, max, min: ", rec_att_map.shape, T.max(rec_att_map), T.min(rec_att_map))
 
