@@ -3,6 +3,7 @@ import  re
 import  json
 import  random
 import  math
+import  shutil 
 from    time                                import time
 import  multiprocessing                     as mp
 import  numpy                               as np
@@ -1360,10 +1361,14 @@ class ExpLogger(object):
         self.write_logger(self.delimiter_line)
         self.flush()
     
-    def end_log(self):
+    def end_log(self, model_results_folder_path = None):
         # end saving information about training duration
         self.write_logger("\nTotal model training time: "+ self.get_TrainingTime())
         self.close_logger()
+        
+        if model_results_folder_path is None:
+            shutil.copy(src = self.path_save, dst= model_results_folder_path)
+        
      
     def open_logger(self):
         if os.path.exists(self.path_save):

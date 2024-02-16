@@ -517,13 +517,13 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
         
         # save loss plot
         if test_loop:
-            plot_loss(loss_epochs, title_plot= name_train, path_save = None)
-            plot_valid(valid_history, title_plot= name_train, path_save = None)
+            plot_loss(loss_epochs, title_plot= "classifier", path_save = None)
+            plot_valid(valid_history, title_plot= "classifier  "+ self.early_stopping_trigger, path_save = None)
         else: 
-            plot_loss(loss_epochs, title_plot= name_train, path_save = path_lossPlot_save)
-            plot_loss(loss_epochs, title_plot= name_train, path_save = os.path.join(path_model_folder,name_loss_file), show=False)
-            plot_valid(valid_history, title_plot= name_train, path_save = os.path.join(path_results_folder, name_valid_file))
-            plot_valid(valid_history, title_plot= name_train, path_save = os.path.join(path_model_folder,name_valid_file), show=False)
+            plot_loss(loss_epochs, title_plot= "classifier", path_save = path_lossPlot_save)
+            plot_loss(loss_epochs, title_plot= "classifier", path_save = os.path.join(path_model_folder,name_loss_file), show=False)
+            plot_valid(valid_history, title_plot= "classifier  "+ self.early_stopping_trigger, path_save = os.path.join(path_results_folder, name_valid_file))
+            plot_valid(valid_history, title_plot= "classifier  "+ self.early_stopping_trigger, path_save = os.path.join(path_model_folder,name_valid_file), show=False)
         
         # save model
         saveModel(self.model, path_model_save)

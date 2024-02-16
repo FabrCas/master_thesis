@@ -2129,13 +2129,13 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
         name_loss_file          = 'loss_'+ str(last_epoch) +'.png'
         name_valid_file         = "valid_" + str(last_epoch) + '.png' 
         if test_loop:
-            plot_loss(loss_epochs, title_plot = self.name + "_" + self.model_type, path_save = None)
-            plot_valid(valid_history, title_plot = self.name + "_" + self.model_type, path_save= None)
+            plot_loss(loss_epochs, title_plot = "OOD detector", path_save = None)
+            plot_valid(valid_history, title_plot = "OOD detector loss", path_save= None)
         else: 
-            plot_loss(loss_epochs, title_plot= self.name + "_" + self.model_type, path_save = os.path.join(path_save_results, name_loss_file))
-            plot_loss(loss_epochs, title_plot= self.name + "_" + self.model_type, path_save = os.path.join(path_save_model  ,name_loss_file), show=False)  # just save, not show
-            plot_valid(valid_history, title_plot= self.name + "_" + self.model_type, path_save = os.path.join(path_save_results, name_valid_file))
-            plot_valid(valid_history, title_plot= self.name + "_" + self.model_type, path_save = os.path.join(path_save_model  ,name_valid_file), show=False)  # just save, not show
+            plot_loss(loss_epochs, title_plot= "OOD detector", path_save = os.path.join(path_save_results, name_loss_file))
+            plot_loss(loss_epochs, title_plot= "OOD detector", path_save = os.path.join(path_save_model  ,name_loss_file), show=False)  # just save, not show
+            plot_valid(valid_history, title_plot= "OOD detector loss", path_save = os.path.join(path_save_results, name_valid_file))
+            plot_valid(valid_history, title_plot= "OOD detector loss", path_save = os.path.join(path_save_model  ,name_valid_file), show=False)  # just save, not show
 
 
         # save model
@@ -2982,13 +2982,13 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
         name_loss_file          = 'loss_'+ str(last_epoch) +'.png'
         name_valid_file         = "valid_" + str(last_epoch) + '.png' 
         if test_loop:
-            plot_loss(loss_epochs, title_plot = self.name + "_" + self.model_type, path_save = None)
-            plot_valid(valid_history, title_plot = self.name + "_" + self.model_type, path_save= None)
+            plot_loss(loss_epochs, title_plot = "OOD detector", path_save = None)
+            plot_valid(valid_history, title_plot = "OOD detector loss", path_save= None)
         else: 
-            plot_loss(loss_epochs, title_plot= self.name + "_" + self.model_type, path_save = os.path.join(path_save_results, name_loss_file))
-            plot_loss(loss_epochs, title_plot= self.name + "_" + self.model_type, path_save = os.path.join(path_save_model  ,name_loss_file), show=False)  # just save, not show
-            plot_valid(valid_history, title_plot= self.name + "_" + self.model_type, path_save = os.path.join(path_save_results, name_valid_file))
-            plot_valid(valid_history, title_plot= self.name + "_" + self.model_type, path_save = os.path.join(path_save_model  ,name_valid_file), show=False)  # just save, not show
+            plot_loss(loss_epochs, title_plot= "OOD detector", path_save = os.path.join(path_save_results, name_loss_file))
+            plot_loss(loss_epochs, title_plot= "OOD detector", path_save = os.path.join(path_save_model  ,name_loss_file), show=False)  # just save, not show
+            plot_valid(valid_history, title_plot= "OOD detector loss", path_save = os.path.join(path_save_results, name_valid_file))
+            plot_valid(valid_history, title_plot= "OOD detector loss", path_save = os.path.join(path_save_model  ,name_valid_file), show=False)  # just save, not show
 
 
         # save model
@@ -3005,6 +3005,8 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
     
         # terminate the logger
         logger.end_log()
+        
+        # copy log to results folder
         
     def test_risk(self, task_type_prog = None):
         
