@@ -315,7 +315,7 @@ class OOD_Classifier(object):
         
         return aupr, auroc
 
-    def compute_metrics_ood(self, id_data, ood_data, path_save = None, positive_reversed = False):
+    def compute_metrics_ood(self, id_data, ood_data, path_save = None, positive_reversed = False, epoch = None):
         """_
             aux function used to compute fpr95, detection error and relative threshold.
             con be selected the positive label, the defulat one is for ID data, set to False
@@ -332,7 +332,7 @@ class OOD_Classifier(object):
         
         predictions = np.squeeze(np.vstack((id_data, ood_data)))
         # get metrics and save AUROC plot
-        metrics_ood = metrics_OOD(targets=target, pred_probs= predictions, pos_label= 1, path_save_plot = path_save)
+        metrics_ood = metrics_OOD(targets=target, pred_probs= predictions, pos_label= 1, path_save_plot = path_save, epoch = epoch)
         
         return metrics_ood 
     
@@ -1454,7 +1454,6 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
             - conf_usage_mode (string, optional): This has sense only if model include confidence inference. Choose how use the confidence model. "merge" mode
             combine (stack) the confidence with the probabilities vector, "ignore" avoid the use of confidence for the ood detection, "alone" exchange the probability
             vector with the confidence degree.
-            
         """
         super(Abnormality_module, self).__init__(useGPU=useGPU)
         
@@ -1943,8 +1942,8 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
         path_save_model     = self.get_path2SaveModels(train_name  = train_name)   # specify train_name for an additional depth layer in the models file system
         path_save_results   = self.get_path2SaveResults(train_name = train_name)
 
-        print(path_save_model)
-        print(path_save_results)
+        # print(path_save_model)
+        # print(path_save_results)
         # 2) prepare the training components
         self.model.train()
         
@@ -2118,7 +2117,8 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
             
             # test epochs loop for debug   
             if test_loop and last_epoch == 5: break
-        
+
+            self.modelEpochs = epoch_idx + 1 
         
         # log GPU memory statistics during training
         logger.log_mem(T.cuda.memory_summary(device=self.device))
@@ -2145,7 +2145,7 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
         saveModel(self.model, path_model_save)
     
         # terminate the logger
-        logger.end_log()
+        logger.end_log(model_results_folder_path = path_save_results)
         
     def test_risk(self, task_type_prog = None):
         
@@ -2261,7 +2261,7 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
         # compute fpr95, detection_error and threshold_error 
         metrics_norm = self.compute_metrics_ood(1-risks_id, 1-risks_ood)
         print("OOD metrics:\n", metrics_norm)  
-        metrics_abnorm = self.compute_metrics_ood(risks_id, risks_ood, positive_reversed= True, path_save = path_results_folder)
+        metrics_abnorm = self.compute_metrics_ood(risks_id, risks_ood, positive_reversed= True, path_save = path_results_folder, epoch=self.modelEpochs)
         print("OOD metrics:\n", metrics_abnorm)  
         
         
@@ -2329,7 +2329,7 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
     
     def __init__(self, classifier: DFD_BinViTClassifier_v7, scenario:str, model_type: str, useGPU: bool= True, binary_dataset: bool = True,
                  batch_size = 64, use_synthetic:bool = True, extended_ood: bool = False, blind_test: bool = True,
-                 balancing_mode: str = "max", ):
+                 balancing_mode: str = "max",  att_map_mode = "residual"):
         """ 
             ARGS:
             - classifier (DFD_BinViTClassifier_v7): the ViT classifier + Autoencoder (Module A) that produces the input for Module B (abnormality module)
@@ -2341,6 +2341,7 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
             - blind_test (boolean, optional): This has sense if use_synthetic is set to True. Select if use real ood data (True) or synthetized one from In distributiion data. Default is True
             - balancing_mode (string,optinal): This has sense if use_synthethid is set to True and extended_ood is set to True.
             Choose between "max and "all", max mode give a balance number of OOD same as ID, while, all produces more OOD samples than ID. Default is "max"
+            - att_map_mode (string, optional): select the strategy used to handle attention information. Possible values are: "residual", "cls_attention_map". Defaults to "residual" 
             
         """
         super(Abnormality_module_ViT, self).__init__(useGPU=useGPU)
@@ -2350,6 +2351,7 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
         self.scenario = scenario
         self.binary_dataset = binary_dataset
         self.model_type = model_type.strip().lower()
+        self.att_map_mode = att_map_mode
         
         self.name               = "Abnormality_module_ViT"
         self.name_classifier    = self.classifier.classifier_name
@@ -2372,7 +2374,7 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
             self.batch_size             = int(batch_size)
             
         self.lr                     = 1e-3  # 1e-3, 1e-4
-        self.n_epochs               = 75    # 20, 50
+        self.n_epochs               = 20    # 20, 50, 75
         self.weight_decay           = 1e-3                  # L2 regularization term 
         
         # load data ID/OOD
@@ -2561,6 +2563,7 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
             "loss": self.loss_name,
             "grad_scaler": True,                # always true
             "base_augmentation": self.augment_data_train,
+            "attention map modality": self.att_map_mode, 
             "Use OOD data synthetized":  self.use_synthetic,
             "Use extension OOD from CDDB": self.extended_ood,
             "Balancing mode": self.balancing_mode,
@@ -2611,14 +2614,8 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
     
     def _forward_A(self, x, verbose = False, show = False):
         """ this method return a dictionary with the all the outputs from the model branches
-            keys: "probabilities", "encding", "residual", "confidence"
-            the confidence key-value pair is present if and only if is a confidence model (check the name)
+            keys: "probabilities", "encoding", "residual"
         """
-
-        # logits, reconstruction, encoding = self.classifier.model.forward(x)
-        
-        # with T.no_grad():
-
         
         # if show:showImage(x[1], "original")
             
@@ -2629,27 +2626,34 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
         encoding        = output_model[1]
         att_map         = output_model[2]
         
+        
+        probs_softmax = T.nn.functional.softmax(logits, dim=1)
         # if show: showImage(att_map[1], "attention_map", has_color=False)
         
-        # generate att_map from autoencoder
-        rec_att_map = self.classifier.autoencoder.forward(att_map)
-        
-        # if show: showImage(rec_att_map[1], "rec_attention_map", has_color=False)
-            
-        output = {"encoding": encoding}
-        probs_softmax = T.nn.functional.softmax(logits, dim=1)
+        output = {"probabilities": probs_softmax, "encoding": encoding}
         
         if verbose: 
             print("prob shape -> ", probs_softmax.shape)
             print("encoding shape -> ",encoding.shape)
         
-        # from reconstuction to residual
-        residual = T.square(rec_att_map - att_map)
+        if self.att_map_mode == "residual":
+            # from reconstuction to squared residual
+            rec_att_map = self.classifier.autoencoder.forward(att_map)    # generate att_map from autoencoder
+            residual = T.square(rec_att_map - att_map)
+            output["residual"]      = residual
+            
+            # if show:
+            #   showImage(rec_att_map[1], "rec_attention_map", has_color=False)
+            #   showImage(residual[1], "residual", has_color=False)
         
-        # if show: showImage(residual[1], "residual", has_color=False)
-        output["probabilities"] = probs_softmax
-        output["residual"]      = residual
+        elif self.att_map_mode == "cls_attention_map":
+            # simply use just the attention heatmap information
+            output["residual"]      = att_map        # the key name should be changed to avoid confusion on variable data
+            
         
+       
+        
+    
         if verbose: 
             print("residual shape ->", residual.shape)
         
@@ -2798,8 +2802,9 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
         path_save_model     = self.get_path2SaveModels(train_name  = train_name)   # specify train_name for an additional depth layer in the models file system
         path_save_results   = self.get_path2SaveResults(train_name = train_name)
 
-        print(path_save_model)
-        print(path_save_results)
+        # print(path_save_model)
+        # print(path_save_results)
+        
         # 2) prepare the training components
         self.model.train()
         
@@ -2956,14 +2961,12 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
             
             valid_history.append(criterion)
             
-            
             if criterion < best_valid:
                 best_valid = criterion
                 best_model_dict = copy.deepcopy(self.model.state_dict())
                 best_valid_epoch = epoch_idx+1
                 print("** new best abnormality module **")
 
-        
             # create dictionary with info frome epoch: loss + valid, and log it
             epoch_data = {"epoch": last_epoch, "avg_loss": avg_loss, "max_loss": max_loss_epoch, \
                           "min_loss": min_loss_epoch, "valid_loss": criterion}
@@ -2971,8 +2974,9 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
             
             # test epochs loop for debug   
             if test_loop and last_epoch == 5: break
-        
-        
+            
+            self.modelEpochs = epoch_idx +1
+         
         # log GPU memory statistics during training
         logger.log_mem(T.cuda.memory_summary(device=self.device))
         
@@ -3004,7 +3008,7 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
         saveModel(best_model_dict, path_best_model_save, is_dict= True)
     
         # terminate the logger
-        logger.end_log()
+        logger.end_log(model_results_folder_path = path_save_results)
         
         # copy log to results folder
         
@@ -3114,7 +3118,7 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
         # compute fpr95, detection_error and threshold_error 
         metrics_norm = self.compute_metrics_ood(1-risks_id, 1-risks_ood)
         print("OOD metrics:\n", metrics_norm)  
-        metrics_abnorm = self.compute_metrics_ood(risks_id, risks_ood, positive_reversed= True, path_save = path_results_folder)
+        metrics_abnorm = self.compute_metrics_ood(risks_id, risks_ood, positive_reversed= True, path_save = path_results_folder, epoch= self.modelEpochs)
         print("OOD metrics:\n", metrics_abnorm)  
         
         
@@ -3152,19 +3156,18 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
                 "Prob_AUROC":       float(p_abnorm_auroc),
 
             },
-            "avg_confidence":   float(conf_all),
-            "fpr95_normality":            float(metrics_norm['fpr95']),
-            "detection_error_normality":  float(metrics_norm['detection_error']),
-            "threshold_normality":        float(metrics_norm['thr_de']),
+            "avg_confidence":               float(conf_all),
+            "fpr95_normality":              float(metrics_norm['fpr95']),
+            "detection_error_normality":    float(metrics_norm['detection_error']),
+            "threshold_normality":          float(metrics_norm['thr_de']),
             "fpr95_abnormality":            float(metrics_abnorm['fpr95']),
             "detection_error_abnormality":  float(metrics_abnorm['detection_error']),
             "threshold_abnormality":        float(metrics_abnorm['thr_de'])
-            
         }
         
         # save data (JSON)
         if self.name_ood_data is not None:
-            name_result_file            = 'metrics_ood_{}.json'.format(self.name_ood_data)
+            name_result_file            = 'metrics_ood_{}.json'.format(self.modelEpochs)
             path_result_save            = os.path.join(path_results_folder, name_result_file)   # full path to json file
             
             print(path_result_save)
@@ -3346,10 +3349,10 @@ if __name__ == "__main__":
         # y = abn.forward(x)
         # print(y)
     
-    def train_abn_encoder(type_encoder = "encoder_v3", add_name = ""):
+    def train_abn_encoder(type_encoder = "encoder_v3", add_name = "", att_map_mode = "residual"):
         
         if classifier_model == 2:
-            abn = Abnormality_module_ViT(classifier, scenario = scenario, model_type= type_encoder)
+            abn = Abnormality_module_ViT(classifier, scenario = scenario, model_type= type_encoder, att_map_mode=att_map_mode)
         else: 
             abn = Abnormality_module(classifier, scenario = scenario, model_type= type_encoder, conf_usage_mode = conf_usage_mode)
         # abn.train(additional_name= resolution + "_ignored_confidence" , test_loop=False)
@@ -3424,23 +3427,7 @@ if __name__ == "__main__":
         abn.test_risk()
 
 
-
-    train_abn_encoder("encoder_v3", add_name = "75epochs")
-
-
-
-    
-
-    
-
-    
-    
-    
-    
-
-    
-    
-                                                                                                            
+                                                                      
     pass
     #                           [End test section] 
    
@@ -3542,14 +3529,26 @@ if __name__ == "__main__":
         train_abn_encoder(type_encoder="encoder_v3"    # 20 epochs
         test_abn("Abnormality_module_ViT_encoder_v3_224p_14-02-2024", 20, "encoder_v3")        
         
-        
         train_abn_encoder("encoder_v3", add_name = "50epochs")
+        test_abn("Abnormality_module_ViT_encoder_v3_224p_50epochs_15-02-2024", epoch = 50, type_encoder = "encoder_v3")
         
+        train_abn_encoder("encoder_v3", add_name = "75epochs")
+        test_abn("Abnormality_module_ViT_encoder_v3_224p_75epochs_15-02-2024", epoch = 58, type_encoder = "encoder_v3")
+        test_abn("Abnormality_module_ViT_encoder_v3_224p_75epochs_15-02-2024", epoch = 75, type_encoder = "encoder_v3")
         
+        train_abn_encoder("encoder_v3", add_name = "CLSattn", att_map_mode = "cls_attention_map")
+        test_abn("Abnormality_module_ViT_encoder_v3_224p_CLSattn_16-02-2024", epoch = 20, type_encoder = "encoder_v3")
+
         train_abn_encoder(type_encoder="encoder_v4") # epochs
         test_abn("Abnormality_module_ViT_encoder_v4_224p_15-02-2024", 20, "encoder_v4")  
         
         train_abn_encoder("encoder_v4", add_name = "50epochs")
+        test_abn("Abnormality_module_ViT_encoder_v4_224p_50epochs_15-02-2024", epoch = 50, type_encoder = "encoder_v4")
+
+        train_abn_encoder("encoder_v4", add_name = "CLSattn", att_map_mode = "cls_attention_map")
+        test_abn("Abnormality_module_ViT_encoder_v4_224p_CLSattn_16-02-2024", epoch = 19, type_encoder = "encoder_v4")
+        test_abn("Abnormality_module_ViT_encoder_v4_224p_CLSattn_16-02-2024", epoch = 20, type_encoder = "encoder_v4")
+        
                  
                                     ABNORMALITY MODULE ENCODER  (Synthetic ood data, + extension, max merging)
         train_extended_abn_encoder(type_encoder="encoder_v3") # 20 epochs

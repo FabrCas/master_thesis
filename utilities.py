@@ -973,7 +973,7 @@ def metrics_binClass(preds, targets, pred_probs, epoch_model= None, path_save = 
     
     return metrics_results
 
-def metrics_OOD(targets, pred_probs, pos_label = 1, path_save_json = None, path_save_plot = None, save = True):
+def metrics_OOD(targets, pred_probs, pos_label = 1, path_save_json = None, path_save_plot = None, save = True, epoch = None):
     """ 
         Computation of metrics for the OOD classification task
     """
@@ -981,7 +981,8 @@ def metrics_OOD(targets, pred_probs, pos_label = 1, path_save_json = None, path_
     auroc = auc(fpr, tpr)
     
     # plot and save ROC curve
-    plot_ROC_curve(fpr, tpr, path_save_plot, duration_timer = None)
+    
+    plot_ROC_curve(fpr, tpr, path_save_plot, epoch = epoch, duration_timer = None)
     
     fpr95 = fpr_at_95_tpr(pred_probs, targets, pos_label)
     
@@ -1366,7 +1367,7 @@ class ExpLogger(object):
         self.write_logger("\nTotal model training time: "+ self.get_TrainingTime())
         self.close_logger()
         
-        if model_results_folder_path is None:
+        if not(model_results_folder_path is None):
             shutil.copy(src = self.path_save, dst= model_results_folder_path)
         
      

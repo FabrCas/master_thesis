@@ -2310,14 +2310,12 @@ class Unet5_Scorer_Confidence(Project_DFD_model):
         rec = self.decoder_out_fn(self.out(d5))  # check sigmoid vs tanh
         return logits, rec, encoding, confidence
 
-
 #                                       custom abnormality modules
-
 # 2nd models superclass for OOD detection
 class Project_abnorm_model(nn.Module): 
     def __init__(self):
         super(Project_abnorm_model, self).__init__()
-        print("Initializing {} ...".format(self.__class__.__name__))
+        print("\n\t\tInitializing {} ...\n".format(self.__class__.__name__))
 
     def _createNet(self):
         raise NotImplementedError
@@ -2332,7 +2330,6 @@ class Project_abnorm_model(nn.Module):
                 T.nn.init.normal_(param, mean=0, std=0.01) 
                  
     def getSummary(self, input_shape = None, verbose = True):
-        
         """
             input_shape -> tuple with simulated dimension used for the model summary
             expected input of this type -> color,width,height

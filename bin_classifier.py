@@ -1164,7 +1164,7 @@ class DFD_BinClassifier_v3(BinaryClassifier):
         saveModel(self.model, path_model_save)
     
         # terminate the logger
-        logger.end_log()
+        logger.end_log(model_results_folder_path=path_results_folder)
 
     # Override of superclass forward method
     def forward(self, x):
@@ -1649,7 +1649,7 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         saveModel(self.model, path_model_save)
     
         # terminate the logger
-        logger.end_log()
+        logger.end_log(model_results_folder_path=path_results_folder)
 
     # Override of superclass forward method
     def forward(self, x):
@@ -2149,7 +2149,7 @@ class DFD_BinClassifier_v5(BinaryClassifier):
         saveModel(self.model, path_model_save)
     
         # terminate the logger
-        logger.end_log()
+        logger.end_log(model_results_folder_path=path_results_folder)
 
     def test(self):
         # call same test function but don't load again the data
@@ -2194,13 +2194,15 @@ class DFD_BinClassifier_v5(BinaryClassifier):
 if __name__ == "__main__":
     #                           [Start test section] 
     
-    scenario_prog       = 1
+    scenario_prog       = 2
     data_scenario       = None
     
     if scenario_prog == 0: 
         data_scenario = "content"
     elif scenario_prog == 1:
         data_scenario = "group"
+    elif scenario_prog == 2:
+        data_scenario = "mix"
     
     scenario_setting = getScenarioSetting()[data_scenario]    # type of content/group
     
@@ -2398,6 +2400,10 @@ if __name__ == "__main__":
         bin_classifier.load(name_model, epoch)
         bin_classifier.test()
     
+    # _____________________________________________________________________
+    
+    train_v4_scenario(model_type="Unet5_Scorer")  #224p
+    # train_v4_scenario(model_type="Unet5_Residual_Scorer")  #224p
     
     #                           [End test section] 
     """ 
@@ -2467,6 +2473,10 @@ if __name__ == "__main__":
         test_v4_metrics("gan_Unet5_Residual_Scorer_112p_v4_04-01-2024", 75, "Unet5_Residual_Scorer")
         test_v4_metrics("gan_Unet5_Scorer_v4_07-01-2024", 71, "Unet5_Scorer")
 
+    # MIX:
+    #                                               v4
+        train_v4_scenario(model_type="Unet5_Scorer")  #224p
+    
     
     """
 

@@ -94,7 +94,7 @@ def getScenarioSetting():
     return {
         "content":type_content,
         "group": type_group,
-        "mix": id_mix
+        "mix": "m_" + str(id_mix)
     }
 
 ##################################################### [Project dataset superclass]#####################################################################

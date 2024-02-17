@@ -529,7 +529,7 @@ class DFD_BinViTClassifier_v6(BinaryClassifier):
         saveModel(self.model, path_model_save)
     
         # terminate the log session
-        logger.end_log()
+        logger.end_log(model_results_folder_path=path_results_folder)
 
     def test(self):
         # call same test function but don't load again the data
@@ -1375,7 +1375,7 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
         saveModel(self.autoencoder, path_model_ae_save)
         
         # terminate the log session
-        logger.end_log()
+        logger.end_log(model_results_folder_path=path_results_folder)
         
         self.autoencoder.eval()
         self.model.eval()
@@ -1659,7 +1659,7 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
         saveModel(best_model_dict, path_best_model_save, is_dict= True)
         
         # terminate the log session
-        logger.end_log()
+        logger.end_log(model_results_folder_path=path_results_folder)
         
         self.model.eval()
         
@@ -1830,7 +1830,7 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
         saveModel(self.autoencoder, path_model_ae_save)
 
         # terminate the log session
-        logger.end_log()
+        logger.end_log(model_results_folder_path=path_results_folder)
 
         self.autoencoder.eval()
     
