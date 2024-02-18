@@ -1138,8 +1138,9 @@ def test_num_workers(dataset, batch_size = 32):
 def duration(function):
     def wrapper_duration(*args, **kwargs):
         t_start = time()
-        function(*args, **kwargs)   # to unpack no-keywords (*args) and keywords (**) arguments
-        print("Total time elapsed for the execution of {} function: {} [s]".format(function.__name__, round((time() - t_start),4))) 
+        out = function(*args, **kwargs)   # to unpack no-keywords (*args) and keywords (**) arguments
+        print("Total time elapsed for the execution of {} function: {} [s]".format(function.__name__, round((time() - t_start),4)))
+        return out
     return wrapper_duration
 
     """  how to use

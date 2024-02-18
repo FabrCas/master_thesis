@@ -1202,6 +1202,7 @@ class DFD_BinClassifier_v3(BinaryClassifier):
         
         return pred, fake_prob, logits
 
+#TODO introduce save best model
 class DFD_BinClassifier_v4(BinaryClassifier):
     """
         binary classifier for deepfake detection using partial CDDB dataset for the chosen scenario configuration.
@@ -1292,12 +1293,13 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         self.bce     = F.binary_cross_entropy_with_logits
         
         # learning hyperparameters (default)
-        self.lr                     = 1e-4
-        self.n_epochs               = 50 * 2
-        self.start_early_stopping   = int(self.n_epochs/2)  # epoch to start early stopping
-        self.weight_decay           = 0.001                 # L2 regularization term 
-        self.patience               = 5 * 2                 # early stopping patience
-        self.early_stopping_trigger = "acc"                 # values "acc" or "loss"
+        self.lr                     = 1e-3      # 1e-4
+        self.learning_coeff         = 1.5
+        self.n_epochs               = 50 * self.learning_coeff
+        self.start_early_stopping   = int(self.n_epochs/2)                                  # epoch to start early stopping
+        self.weight_decay           = 0.001                                                 # L2 regularization term 
+        self.patience               = max(math.floor(5 * self.learning_coeff),5)            # early stopping patience
+        self.early_stopping_trigger = "acc"                                                 # values "acc" or "loss"
         
         # loss definition + interpolation values for the new loss
         self.loss_name              = "bce + reconstruction loss"
@@ -1686,13 +1688,13 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         
         return pred, fake_prob, logits
 
+#TODO introduce save best model
 class DFD_BinClassifier_v5(BinaryClassifier):
     """
         binary classifier for deepfake detection using partial CDDB dataset for the chosen scenario configuration.
         Model used: Custom Unet with encoder/decoder structure
         This fifth extends and edits v4:
-        - increased learning rate, from 1e-4 to 1e-3
-        - substituion of bce from logits with one that expects already the output from activation function (i.e. sigmoid)
+        - substituion of bce from logits with the one that expects the output from activation function (i.e. sigmoid)
         - use of confidence branch in the models
         - modified loss, using confidence value
         - weigthed bce counting label frequency 
@@ -1742,11 +1744,13 @@ class DFD_BinClassifier_v5(BinaryClassifier):
 
         # learning hyperparameters (default)
         self.lr                     = 1e-3     # 1e-4
-        self.n_epochs               = 70 * 2
-        self.start_early_stopping   = int(self.n_epochs/2)  # epoch to start early stopping
-        self.weight_decay           = 0.001                 # L2 regularization term 
-        self.patience               = 5 * 2                 # early stopping patience
-        self.early_stopping_trigger = "loss"                 # values "acc" or "loss"
+        
+        self.learning_coeff         = 1.5
+        self.n_epochs               = 50 * self.learning_coeff
+        self.start_early_stopping   = int(self.n_epochs/2)                          # epoch to start early stopping
+        self.weight_decay           = 0.001                                         # L2 regularization term 
+        self.patience               = max(math.floor(5 * self.learning_coeff),5)    # early stopping patience
+        self.early_stopping_trigger = "loss"                                        # values "acc" or "loss"
         
         # loss definition + interpolation values for the new loss
         self.loss_name              = "weighted bce + reconstruction + confidence loss"
@@ -2402,7 +2406,8 @@ if __name__ == "__main__":
     
     # _____________________________________________________________________
     
-    train_v4_scenario(model_type="Unet5_Scorer")  #224p
+    # TODO train these
+    # train_v4_scenario(model_type="Unet5_Scorer")  #224p
     # train_v4_scenario(model_type="Unet5_Residual_Scorer")  #224p
     
     #                           [End test section] 

@@ -67,9 +67,9 @@ def modelCategory2groupClasses(category:str):
     if category.lower().strip() == "known":
         return ["deepfake sources", "non-deepfake sources"]
     
-def mixID2models(id: int):
-    if id == 0:
-        ["biggan","gaugan","stargan_gf", "deepfake", "glow", "crn","wild"] 
+def mixID2models(id: str):
+    if id == "m_0":
+        return ["biggan","gaugan","stargan_gf", "deepfake", "glow", "crn","wild"] 
 
 """ 
                                             *** MODIFY HERE *** 
@@ -77,7 +77,7 @@ to specify how each scenario is composed, i.e what kind of content or what kind 
 """
 type_content = "faces"
 type_group   = "gan"
-id_mix       = 0
+id_mix       = "m_0" # 0
 
         
 # # DON'T MODIFY. This dictionary which defines what content/class use in the different scenarios,
@@ -92,9 +92,9 @@ CATEGORIES_SCENARIOS_ID = {
 
 def getScenarioSetting():
     return {
-        "content":type_content,
-        "group": type_group,
-        "mix": "m_" + str(id_mix)
+        "content":  type_content,
+        "group":    type_group,
+        "mix":      id_mix
     }
 
 ##################################################### [Project dataset superclass]#####################################################################

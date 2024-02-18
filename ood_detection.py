@@ -2322,6 +2322,11 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
         self.model.eval()
         raise NotImplementedError
 
+
+# TODO test changing attention usage:
+# 1) stack original attention map and reconstruction
+# 2) use also the attention map from the other token after interpolation (another 224è grey image)
+
 class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary 
     """ 
         Modification of Abnormality_module for ViT model, using attention map instead of image reconstruction
@@ -2374,7 +2379,7 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
             self.batch_size             = int(batch_size)
             
         self.lr                     = 1e-3  # 1e-3, 1e-4
-        self.n_epochs               = 20    # 20, 50, 75
+        self.n_epochs               = 75    # 20, 50, 75
         self.weight_decay           = 1e-3                  # L2 regularization term 
         
         # load data ID/OOD
@@ -3178,7 +3183,6 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
         self.model.eval()
         raise NotImplementedError
     
-    
 if __name__ == "__main__":
     #                           [Start test section] 
     
@@ -3192,7 +3196,7 @@ if __name__ == "__main__":
         classifier_name = "faces_Unet4_Scorer112p_v4_03-12-2023"
         classifier_type = "Unet4_Scorer"
         classifier_epoch = 73
-        classifier = DFD_BinClassifier_v4(scenario="content", model_type=classifier_type)
+        classifier = DFD_BinClassifier_v4(scenario=scenario, model_type=classifier_type)
         classifier.load(classifier_name, classifier_epoch)
         resolution = "112p"
     
@@ -3201,7 +3205,7 @@ if __name__ == "__main__":
         classifier_name = "faces_Unet4_Scorer_Confidence_112p_v5_02-01-2024"
         classifier_type = "Unet4_Scorer_Confidence"
         classifier_epoch = 98
-        classifier = DFD_BinClassifier_v5(scenario="content", model_type=classifier_type)
+        classifier = DFD_BinClassifier_v5(scenario=scenario, model_type=classifier_type)
         classifier.load(classifier_name, classifier_epoch)
         conf_usage_mode = "ignore" # ignore, merge or alone
         resolution = "112p"
@@ -3213,7 +3217,7 @@ if __name__ == "__main__":
         prog_model_timm     = 3 # (tiny DeiT)
         classifier_epoch    = 25
         autoencoder_epoch   = 25
-        classifier = DFD_BinViTClassifier_v7(scenario="content", model_type=classifier_type, model_ae_type = autoencoder_type,\
+        classifier = DFD_BinViTClassifier_v7(scenario=scenario, model_type=classifier_type, model_ae_type = autoencoder_type,\
                                              prog_pretrained_model= prog_model_timm)
         # load classifier & autoencoder
         classifier.load_both(classifier_name, classifier_epoch, autoencoder_epoch)
@@ -3427,8 +3431,9 @@ if __name__ == "__main__":
         abn.test_risk()
 
 
-                                                                      
-    pass
+                                                                
+
+    
     #                           [End test section] 
    
     """ 
@@ -3526,28 +3531,34 @@ if __name__ == "__main__":
     classifier: "faces_ViTEA_timm_DeiT_tiny_separateTrain_v7_13-02-2024":
     
                                     ABNORMALITY MODULE ENCODER  (Synthetic ood data, no extension)
-        train_abn_encoder(type_encoder="encoder_v3"    # 20 epochs
-        test_abn("Abnormality_module_ViT_encoder_v3_224p_14-02-2024", 20, "encoder_v3")        
-        
-        train_abn_encoder("encoder_v3", add_name = "50epochs")
-        test_abn("Abnormality_module_ViT_encoder_v3_224p_50epochs_15-02-2024", epoch = 50, type_encoder = "encoder_v3")
-        
-        train_abn_encoder("encoder_v3", add_name = "75epochs")
-        test_abn("Abnormality_module_ViT_encoder_v3_224p_75epochs_15-02-2024", epoch = 58, type_encoder = "encoder_v3")
-        test_abn("Abnormality_module_ViT_encoder_v3_224p_75epochs_15-02-2024", epoch = 75, type_encoder = "encoder_v3")
-        
-        train_abn_encoder("encoder_v3", add_name = "CLSattn", att_map_mode = "cls_attention_map")
-        test_abn("Abnormality_module_ViT_encoder_v3_224p_CLSattn_16-02-2024", epoch = 20, type_encoder = "encoder_v3")
+        v3
+            train_abn_encoder(type_encoder="encoder_v3"    # 20 epochs
+            test_abn("Abnormality_module_ViT_encoder_v3_224p_14-02-2024", 20, "encoder_v3")        
+            
+            train_abn_encoder("encoder_v3", add_name = "50epochs")
+            test_abn("Abnormality_module_ViT_encoder_v3_224p_50epochs_15-02-2024", epoch = 50, type_encoder = "encoder_v3")
+            
+            train_abn_encoder("encoder_v3", add_name = "75epochs")
+            test_abn("Abnormality_module_ViT_encoder_v3_224p_75epochs_15-02-2024", epoch = 58, type_encoder = "encoder_v3")
+            test_abn("Abnormality_module_ViT_encoder_v3_224p_75epochs_15-02-2024", epoch = 75, type_encoder = "encoder_v3")
+            
+            train_abn_encoder("encoder_v3", add_name = "CLSattn", att_map_mode = "cls_attention_map")
+            test_abn("Abnormality_module_ViT_encoder_v3_224p_CLSattn_16-02-2024", epoch = 20, type_encoder = "encoder_v3")
 
-        train_abn_encoder(type_encoder="encoder_v4") # epochs
-        test_abn("Abnormality_module_ViT_encoder_v4_224p_15-02-2024", 20, "encoder_v4")  
-        
-        train_abn_encoder("encoder_v4", add_name = "50epochs")
-        test_abn("Abnormality_module_ViT_encoder_v4_224p_50epochs_15-02-2024", epoch = 50, type_encoder = "encoder_v4")
-
-        train_abn_encoder("encoder_v4", add_name = "CLSattn", att_map_mode = "cls_attention_map")
-        test_abn("Abnormality_module_ViT_encoder_v4_224p_CLSattn_16-02-2024", epoch = 19, type_encoder = "encoder_v4")
-        test_abn("Abnormality_module_ViT_encoder_v4_224p_CLSattn_16-02-2024", epoch = 20, type_encoder = "encoder_v4")
+        v4
+            train_abn_encoder(type_encoder="encoder_v4") # epochs
+            test_abn("Abnormality_module_ViT_encoder_v4_224p_15-02-2024", 20, "encoder_v4")  
+            
+            train_abn_encoder("encoder_v4", add_name = "50epochs")
+            test_abn("Abnormality_module_ViT_encoder_v4_224p_50epochs_15-02-2024", epoch = 50, type_encoder = "encoder_v4")     # top model
+    
+            train_abn_encoder("encoder_v4", add_name = "CLSattn", att_map_mode = "cls_attention_map")
+            test_abn("Abnormality_module_ViT_encoder_v4_224p_CLSattn_16-02-2024", epoch = 19, type_encoder = "encoder_v4")
+            test_abn("Abnormality_module_ViT_encoder_v4_224p_CLSattn_16-02-2024", epoch = 20, type_encoder = "encoder_v4")
+            
+            train_abn_encoder("encoder_v4", add_name = "75epochs")
+            test_abn("Abnormality_module_ViT_encoder_v4_224p_75epochs_17-02-2024", epoch=47, type_encoder="encoder_v4")
+            test_abn("Abnormality_module_ViT_encoder_v4_224p_75epochs_17-02-2024", epoch=75, type_encoder="encoder_v4")
         
                  
                                     ABNORMALITY MODULE ENCODER  (Synthetic ood data, + extension, max merging)

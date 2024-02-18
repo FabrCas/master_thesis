@@ -3390,7 +3390,6 @@ class ViT_base_EA(Project_DFD_model):
         
         return logits, enc 
   
-
 class ViT_timm_EA(Project_DFD_model):
     def __init__(self, n_classes = 10, dropout = 0.1, prog_model = 1, encoding_type = "mean", resize_att_map = True, use_attnmap_cls = True):
         """_summary_

@@ -8,7 +8,10 @@ Binary classification:
             v3:
                 "AUPR": 89.86,
                 "AUROC": 87.28
-
+		faces_ViTEA_timm_DeiT_tiny_separateTrain_v7_13-02-2024:
+			v4 (Abnormality_module_ViT_encoder_v4_224p_50epochs_15-02-2024) :
+				"AUPR": 94.55,
+				"AUROC": 93.77
 	scenario: group (GAN)
 
 
