@@ -2338,15 +2338,29 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
         """ 
             ARGS:
             - classifier (DFD_BinViTClassifier_v7): the ViT classifier + Autoencoder (Module A) that produces the input for Module B (abnormality module)
+            
             - scenario (str): choose between: "content", "mix", "group"
+            
             - model_type (str): choose between avaialbe model for the abnrormality module:  "encoder_v3", "encoder_v4"
+            
             - batch_size (str/int): the size of the batch, set defaut to use the assigned from superclass, otherwise the int size. Default is "default".
+            
             - use_synthetic (boolean): choose if use ood data generated from ID data (synthetic) with several techniques, or not. Defaults is True.
+            
             - extended_ood (boolean, optional): This has sense if use_synthetic is set to True. Select if extend the ood data for training, using not only synthetic data. Default is True
+            
             - blind_test (boolean, optional): This has sense if use_synthetic is set to True. Select if use real ood data (True) or synthetized one from In distributiion data. Default is True
+            
             - balancing_mode (string,optinal): This has sense if use_synthethid is set to True and extended_ood is set to True.
             Choose between "max and "all", max mode give a balance number of OOD same as ID, while, all produces more OOD samples than ID. Default is "max"
-            - att_map_mode (string, optional): select the strategy used to handle attention information. Possible values are: "residual", "cls_attention_map". Defaults to "residual" 
+            
+            - att_map_mode (string, optional): select the strategy used to handle attention information. Possible values are:
+            -- "residual", use residual as: (cls_attention_map - rec_cls_attention_map)^2.
+            -- "cls_attention_map", use only the cls_attention_map as latent attention representation
+            -- "cls_rec_attention_maps" use both cls_attention_map and its reconstruction (stacked)
+            -- "full_cls_attention_maps", use cls_attention_map, and the attention map over patches (stacked)
+            -- "full_cls_rec_attention_maps", use cls_attention_map, its reconstruction and the attention map over patches (stacked)
+            Defaults to "residual" 
             
         """
         super(Abnormality_module_ViT, self).__init__(useGPU=useGPU)
@@ -2379,7 +2393,7 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
             self.batch_size             = int(batch_size)
             
         self.lr                     = 1e-3  # 1e-3, 1e-4
-        self.n_epochs               = 75    # 20, 50, 75
+        self.n_epochs               = 20    # 20, 50, 75
         self.weight_decay           = 1e-3                  # L2 regularization term 
         
         # load data ID/OOD
@@ -2627,9 +2641,10 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
         output_model = self.classifier.model.forward(x)  # logits, encoding, att_map
         
         # unpack the output based on the model
-        logits          = output_model[0]
-        encoding        = output_model[1]
-        att_map         = output_model[2]
+        logits              = output_model[0]
+        encoding            = output_model[1]
+        att_maps            = output_model[2]
+        att_maps_patches    = output_model[3]
         
         
         probs_softmax = T.nn.functional.softmax(logits, dim=1)
@@ -2643,22 +2658,32 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
         
         if self.att_map_mode == "residual":
             # from reconstuction to squared residual
-            rec_att_map = self.classifier.autoencoder.forward(att_map)    # generate att_map from autoencoder
-            residual = T.square(rec_att_map - att_map)
+            rec_att_maps = self.classifier.autoencoder.forward(att_maps)    # generate att_map from autoencoder
+            residual = T.square(rec_att_maps - att_maps)
             output["residual"]      = residual
             
-            # if show:
-            #   showImage(rec_att_map[1], "rec_attention_map", has_color=False)
-            #   showImage(residual[1], "residual", has_color=False)
+
         
         elif self.att_map_mode == "cls_attention_map":
             # simply use just the attention heatmap information
-            output["residual"]      = att_map        # the key name should be changed to avoid confusion on variable data
+            output["residual"]      = att_maps        # the key name should be changed to avoid confusion on variable data
+        
+        elif self.att_map_mode == "cls_rec_attention_maps": 
+            rec_att_maps = self.classifier.autoencoder.forward(att_maps)    # generate att_map from autoencoder
+            output["residual"] = T.cat((att_maps, rec_att_maps),dim=1)
             
+        elif self.att_map_mode == "full_cls_attention_maps":
+            output["residual"] = T.cat((att_maps, att_maps_patches),dim=1)
+            
+        elif self.att_map_mode == "full_cls_rec_attention_maps":
+            rec_att_maps = self.classifier.autoencoder.forward(att_maps)    # generate att_map from autoencoder
+            output["residual"] = T.cat((att_maps, rec_att_maps, att_maps_patches),dim=1)
+            
+        else:
+            raise ValueError("The attention forwarding mode selected is incompatible")
         
-       
-        
-    
+        # print(output["residual"].shape)
+
         if verbose: 
             print("residual shape ->", residual.shape)
         
@@ -3352,7 +3377,12 @@ if __name__ == "__main__":
         # x = T.rand((1,3,112,112)).to(abn.device)
         # y = abn.forward(x)
         # print(y)
-    
+
+    # -- "residual", use residual as: (cls_attention_map - rec_cls_attention_map)^2.
+    # -- "cls_attention_map", use only the cls_attention_map as latent attention representation
+    # -- "cls_rec_attention_maps" use both cls_attention_map and its reconstruction (stacked)
+    # -- "full_cls_attention_maps", use cls_attention_map, and the attention map over patches (stacked)
+    # -- "full_cls_rec_attention_maps", use cls_attention_map, its reconstruction and the attention map over patches (stacked)
     def train_abn_encoder(type_encoder = "encoder_v3", add_name = "", att_map_mode = "residual"):
         
         if classifier_model == 2:
@@ -3431,7 +3461,9 @@ if __name__ == "__main__":
         abn.test_risk()
 
 
-                                                                
+    train_abn_encoder("encoder_v3", add_name = "CLSRECattn",        att_map_mode = "cls_rec_attention_maps")   
+    train_abn_encoder("encoder_v3", add_name = "CLS+PATCHattn",     att_map_mode = "full_cls_attention_maps")        
+    train_abn_encoder("encoder_v3", add_name = "CLSREC+PATCHattn",  att_map_mode = "full_cls_rec_attention_maps")                                                     
 
     
     #                           [End test section] 

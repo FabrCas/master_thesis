@@ -579,8 +579,8 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
         not only classification logits, but also an encoding of the image and the attention map.
         Together with the ViT is also trained an autoencoder to reconstruct the attention map, this is used for OOD detection inference.
     """
-    def __init__(self, scenario, useGPU = True, patch_size = None, emb_size = None,  batch_size = 32,
-                 model_type = "ViTEA_timm", prog_pretrained_model= 3, model_ae_type = "VAE" , train_together = True, transform_prog = 0):  # batch_size = 32 or 64
+    def __init__(self, scenario, useGPU = True, patch_size = None, emb_size = None,  batch_size = 32, model_type = "ViTEA_timm", 
+                 prog_pretrained_model= 3, model_ae_type = "VAE" , train_together = True, transform_prog = 0):  # batch_size = 32 or 64
         """ init classifier
 
         Args:
@@ -848,7 +848,14 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
             y = y.to(self.device).to(T.float32)
             
             with T.no_grad():
-                logits, _, att_maps  = self.model.forward(x) 
+                
+                out = self.model.forward(x) 
+                logits      = out[0]
+                att_maps    = out[2]
+                
+                
+                # logits, _, att_maps  = self.model.forward(x) 
+                
                 # pred = self.sigmoid(logits)
                 
                 # classifier criterion
@@ -918,7 +925,9 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
             y = y.to(self.device).to(T.float32)
             
             with T.no_grad():
-                logits, _, _  = self.model.forward(x) 
+                out = self.model.forward(x) 
+                logits      = out[0]
+                
                 # pred = self.sigmoid(logits)
                 # classifier criterion
                 if self.early_stopping_trigger == "loss":
@@ -968,7 +977,8 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
 
             
             with T.no_grad():
-                _, _, att_maps  = self.model.forward(x) 
+                out = self.model.forward(x) 
+                att_maps    = out[2]
               
                 # Autoencoder criterion
                 x_ae = att_maps.clone().to(device =self.device)
@@ -1128,17 +1138,18 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
                 # model forward and loss computation
                 with autocast():   
                 
-                    logits, _, att_map  = self.model.forward(x) 
+                    out = self.model.forward(x) 
+                    logits      = out[0]
+                    att_maps    = out[2]
                     
-                    # apply activation function to logits
+                    #                                       apply activation function to logits
                     # pred = self.sigmoid(logits)
-                        
                     #                                       compute classification loss
                     loss      = self.bce(input=logits, target=y)   # bce from logits (no weights loaded)
                     # loss      = self.bce(input=pred, target=y)   # classic bce with "probabilities"
 
                 # store max value attention maps
-                max_value_att_map.append(T.max(att_map).detach().cpu().item())
+                max_value_att_map.append(T.max(att_maps).detach().cpu().item())
                 
                 if (T.isnan(loss).any().item() or T.isinf(loss).any().item())and not(printed_nan):
                     print(loss)
@@ -1183,14 +1194,14 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
                 #                                      compute reconstruction loss
                 self.optimizer_ae.zero_grad()
                 
-                x_ae = att_map.detach().clone()
+                x_ae = att_maps.detach().clone()
                 x_ae.requires_grad_(True)
                 x_ae.to(device=self.device)
                 
                 with autocast():
-                    rec_att_map = self.autoencoder(x_ae)
+                    rec_att_maps = self.autoencoder(x_ae)
 
-                    loss_ae     = self.mae(rec_att_map, x_ae)
+                    loss_ae      = self.mae(rec_att_maps, x_ae)
                 
                 loss_value_ae = loss_ae.cpu().item()
                 
@@ -1198,7 +1209,7 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
                 
                 if (step_idx+1)%print_every == 1:
                     print(f"avg ae loss every {print_every} epochs ->", sum(tmp_losses_ae)/len(tmp_losses_ae))
-                    print(f"max att map: {T.max(att_map)}", f"min att map: {T.min(att_map)}", f"avg sum att map: {T.mean(T.sum(att_map.view(att_map.shape[0], -1), dim = 0))}")
+                    print(f"max att map: {T.max(att_maps)}", f"min att map: {T.min(att_maps)}", f"avg sum att map: {T.mean(T.sum(att_maps.view(att_maps.shape[0], -1), dim = 0))}")
                     tmp_losses_ae = []
                 
                 if loss_value_ae>max_loss_epoch_ae    : max_loss_epoch_ae = round(loss_value_ae,4)
@@ -1498,7 +1509,11 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
                 self.optimizer.zero_grad()
                 # model forward and loss computation
                 with autocast():   
-                    logits, _, att_map  = self.model.forward(x) 
+
+                    out = self.model.forward(x) 
+                    logits      = out[0]
+                    att_maps    = out[2]
+                    
                     
                     # apply activation function to logits
                     # pred = self.sigmoid(logits)
@@ -1508,7 +1523,7 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
                     # loss      = self.bce(input=pred, target=y)   # classic bce with "probabilities"
 
                 
-                max_value_att_map.append(T.max(att_map).detach().cpu().item())
+                max_value_att_map.append(T.max(att_maps).detach().cpu().item())
                 
                 if (T.isnan(loss).any().item() or T.isinf(loss).any().item())and not(printed_nan):
                     print(loss)
@@ -1530,7 +1545,7 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
                 if (step_idx+1)%print_every == 0:
                     # print("norm logits every 100 epochs ->", T.norm(logits).cpu().item())
                     print(f"avg loss every {print_every} epochs ->", sum(tmp_losses)/len(tmp_losses))
-                    print(f"max att map: {T.max(att_map)}", f"min att map: {T.min(att_map)}", f"avg sum att map: {T.mean(T.sum(att_map.view(att_map.shape[0], -1), dim = 0))}")
+                    print(f"max att map: {T.max(att_maps)}", f"min att map: {T.min(att_maps)}", f"avg sum att map: {T.mean(T.sum(att_maps.view(att_maps.shape[0], -1), dim = 0))}")
                     tmp_losses = []
                 
                 if loss_value>max_loss_epoch    : max_loss_epoch = round(loss_value,4)
@@ -1748,12 +1763,15 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
                 # model forward and loss computation
                 with T.no_grad():
                     
-                    _, _, att_map  = self.model.forward(x) 
-
+                    # _, _, att_maps  = self.model.forward(x) 
+                    out = self.model.forward(x) 
+                    att_maps    = out[2]
+                
+                
                 #                                      compute reconstruction loss
                 self.optimizer_ae.zero_grad()
                 
-                x_ae = att_map.detach().clone()
+                x_ae = att_maps.detach().clone()
                 x_ae.requires_grad_(True)
                 x_ae.to(device=self.device)
 
@@ -1907,11 +1925,11 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
                     
             with T.no_grad():
                 
-                _, _, att_map  = self.model.forward(x) 
+                _, _, att_maps  = self.model.forward(x) 
 
                 #                                      compute reconstruction loss
                 
-                x_ae = att_map.detach().clone()
+                x_ae = att_maps.detach().clone()
                 x_ae.requires_grad_(True)
                 x_ae.to(device=self.device)
 
@@ -1947,8 +1965,6 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
         # compute metrics from test data
         # metrics_binClass(predictions, targets, predicted_probabilities, epoch_model= str(self.modelEpochs), path_save = self.path2model_results)
     
-
-    
     # Override of superclass forward method
     def forward(self, x):
         """ network forward
@@ -1980,7 +1996,8 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
          
         x = x.to(self.device)
         
-        logits, _, _  = self.model.forward(x) 
+        out = self.model.forward(x) 
+        logits = out[0]
         
         probs       = self.sigmoid(logits)    # change to softmax in multi-class context
         pred        = T.argmax(probs, -1)
@@ -2030,52 +2047,7 @@ if __name__ == "__main__":
     # ________________________________ v7  ________________________________
     
     # ------- attention map test
-    def test_attention_map_v7(name_model, epoch, epoch_ae, prog_model = 3, model_type = "ViTEA_timm", autoencoder_type = "vae"):
-        
-        bin_classifier = DFD_BinViTClassifier_v7(scenario = data_scenario, useGPU= True, model_type= model_type,\
-                                                 transform_prog=0, prog_pretrained_model=prog_model, model_ae_type= autoencoder_type)
-        
-        bin_classifier.load_both(name_model, epoch, epoch_ae= epoch_ae)
-        data_iter = bin_classifier.test_dataset
-        save    = True
-        img_id  = 0
-        
-        path_save_images = os.path.join(bin_classifier.path_models, bin_classifier.classifier_name)
-        
-        print(f"path save for images: {path_save_images}")
-        
-        img, y = data_iter.__getitem__(img_id)
-        
-        # img = trans_input_base()(Image.open("./static/test_image_attention.png"))
-        
-        showImage(img, save_image= save, name="attention_original_" + str(img_id), path_save=path_save_images)
     
-        img = img.unsqueeze(dim=0)
-    
-        img = img.to(device = bin_classifier.device)
-        
-        _, _, att_map = bin_classifier.model.forward(img)
-        
-        print("att_map: shape, max, min: ", att_map.shape, T.max(att_map), T.min(att_map))
-        
-        showImage(att_map[0], has_color= False, save_image= save, name="attention_map_" + str(img_id), path_save=path_save_images)
-        
-        blended_results, _  = include_attention(img, att_map, alpha= 0.7)
-        
-        showImage(blended_results[0], save_image= save, name="attention_fused_" + str(img_id), path_save=path_save_images)
-        
-        show_imgs_blend(img[0].cpu(), att_map[0].cpu(), alpha=0.8, save_image= save, name="attention_blend_" + str(img_id), path_save=path_save_images)
-        
-        # reconstruction 
-        # if bin_classifier.model_ae_type == "vae":
-        #     rec_att_map, _, _  = bin_classifier.autoencoder.forward(att_map)
-        # else:    
-        rec_att_map = bin_classifier.autoencoder.forward(att_map)
-                
-        print("rec_att_map: shape, max, min: ", rec_att_map.shape, T.max(rec_att_map), T.min(rec_att_map))
-
-        showImage(rec_att_map[0], has_color= False, save_image= save, name="attention_map_AE_" + str(img_id), path_save=path_save_images)
-        
     def test_generic_attention_map():
 
         from PIL import Image
@@ -2209,9 +2181,59 @@ if __name__ == "__main__":
         
         show_img2(x_show, att_map_cls_up, alpha=0.8)
     
-      
+    def test_attention_map_v7(name_model, epoch, epoch_ae, prog_model = 3, model_type = "ViTEA_timm", autoencoder_type = "vae"):
         
-        # bin_classifier.model
+        bin_classifier = DFD_BinViTClassifier_v7(scenario = data_scenario, useGPU= True, model_type= model_type,\
+                                                 transform_prog=0, prog_pretrained_model=prog_model, model_ae_type= autoencoder_type)
+        
+        bin_classifier.load_both(name_model, epoch, epoch_ae= epoch_ae)
+        data_iter = bin_classifier.test_dataset
+        save    = True
+        img_id  = 0
+        
+        path_save_images = os.path.join(bin_classifier.path_models, bin_classifier.classifier_name)
+        
+        print(f"path save for images: {path_save_images}")
+        
+        img, y = data_iter.__getitem__(img_id)
+        
+        # img = trans_input_base()(Image.open("./static/test_image_attention.png"))
+        
+        showImage(img, save_image= save, name="attention_original_" + str(img_id), path_save=path_save_images)
+    
+        img = img.unsqueeze(dim=0)
+    
+        img = img.to(device = bin_classifier.device)
+        
+        out = bin_classifier.model.forward(img)
+        
+        att_map         = out[2]
+        att_map_patches = out[3]
+        
+        print("att_map cls: shape, max, min: ", att_map.shape, T.max(att_map), T.min(att_map))
+        
+        showImage(att_map[0], has_color= False, save_image= save, name="attention_map_" + str(img_id), path_save=path_save_images)
+        
+        print("att_map patches: shape, max, min: ", att_map_patches.shape, T.max(att_map_patches), T.min(att_map_patches))
+        
+        showImage(att_map_patches[0], has_color= False, save_image= save, name="attention_map_patches_" + str(img_id), path_save=path_save_images)
+        
+        blended_results, _  = include_attention(img, att_map, alpha= 0.7)
+        
+        showImage(blended_results[0], save_image= save, name="attention_fused_" + str(img_id), path_save=path_save_images)
+        
+        show_imgs_blend(img[0].cpu(), att_map[0].cpu(), alpha=0.8, save_image= save, name="attention_blend_" + str(img_id), path_save=path_save_images)
+        
+        # reconstruction 
+        # if bin_classifier.model_ae_type == "vae":
+        #     rec_att_map, _, _  = bin_classifier.autoencoder.forward(att_map)
+        # else:    
+        rec_att_map = bin_classifier.autoencoder.forward(att_map)
+                
+        print("rec_att_map: shape, max, min: ", rec_att_map.shape, T.max(rec_att_map), T.min(rec_att_map))
+
+        showImage(rec_att_map[0], has_color= False, save_image= save, name="attention_map_AE_" + str(img_id), path_save=path_save_images)
+        
     
     # ------- train
     
@@ -2278,7 +2300,7 @@ if __name__ == "__main__":
         bin_classifier.test_ae()
    
     
-    # test_attention_map_v7("faces_ViTEA_timm_DeiT_tiny_separateTrain_v7_13-02-2024", epoch=25, epoch_ae=100, prog_model=3, autoencoder_type = "vae")
+    test_attention_map_v7("faces_ViTEA_timm_DeiT_tiny_separateTrain_v7_13-02-2024", epoch=25, epoch_ae=25, prog_model=3, autoencoder_type = "vae")
     
 
 

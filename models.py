@@ -3391,7 +3391,8 @@ class ViT_base_EA(Project_DFD_model):
         return logits, enc 
   
 class ViT_timm_EA(Project_DFD_model):
-    def __init__(self, n_classes = 10, dropout = 0.1, prog_model = 1, encoding_type = "mean", resize_att_map = True, use_attnmap_cls = True):
+    def __init__(self, n_classes = 10, dropout = 0.1, prog_model = 3, encoding_type = "mean", resize_att_map = True,\
+                 interpolation_mode = "bilinear"):   # bilinear
         """_summary_
 
         Args:
@@ -3399,8 +3400,9 @@ class ViT_timm_EA(Project_DFD_model):
             dropout (int, optional): dropout rate used in attention and MLP layers. Defaults to 0.
             prog_model (int, optional): progressive id to select the model (use getModels for the complete list)
             resize_att_map(boolean, optinal): select if output attention map should have same dimension of input images, 
-            if false patch_size is used when use_attnmap_cls is True, or lenght of tokens-1, when use_attnmap_cls is False. Defaults to True.
-            use_attnmap_cls (boolean, optinal). Select to use attention map from first token (cls), or from pathces .Defaults to True.
+            if false patch_size is used when attention map of cls token is True, or lenght of tokens-1,for the attention map of 
+            the remaining tokens. Defaults to True.
+            interpolation_mode(boolean, optinal): choose the algorithm used to compute interpolation among: [bilinear, bicubic, area]. Defaults to "bilinear"
         """
         super(ViT_timm_EA, self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = n_classes)
         self.models_avaiable = [
@@ -3435,8 +3437,9 @@ class ViT_timm_EA(Project_DFD_model):
             print("Not found transformation for the input use by pre-trained model")
             self.transform = None
 
+        self.prog_model             = prog_model
         self.resize_att_map         = resize_att_map
-        self.use_attnmap_cls        = use_attnmap_cls
+        self.interpolation_mode     = interpolation_mode
         
         if prog_model in [0,1]:
             self.emb_size               = 768 
@@ -3482,12 +3485,12 @@ class ViT_timm_EA(Project_DFD_model):
         self.wrapper_prog = 0
         
         if prog_model in [2,3]:
-            self.model_vit.blocks[-1].attn.forward = self.forward_wrapper_2(self.model_vit.blocks[-1].attn)
+            self.model_vit.blocks[-1].attn.forward = self.forward_wrapper_1(self.model_vit.blocks[-1].attn)
         else:
             if self.wrapper_prog == 0:
                 self.model_vit.blocks[-1].attn.forward = self.forward_wrapper(self.model_vit.blocks[-1].attn)
             elif self.wrapper_prog == 1:
-                self.model_vit.blocks[-1].attn.forward = self.forward_wrapper_2(self.model_vit.blocks[-1].attn)
+                self.model_vit.blocks[-1].attn.forward = self.forward_wrapper_1(self.model_vit.blocks[-1].attn)
         
     def getModels(self):
         print_list(self.models_avaiable)
@@ -3548,7 +3551,7 @@ class ViT_timm_EA(Project_DFD_model):
             return x
         return forward_wrap
     
-    def forward_wrapper_2(self, attn_obj):
+    def forward_wrapper_1(self, attn_obj):
         def forward_wrap(x):
             # get batch, number of elements in the sequence (patches + cls token) and latent representation dims 
             B, N, C = x.shape    # on last layer the input channels has dim self.emb_size (768)
@@ -3583,7 +3586,7 @@ class ViT_timm_EA(Project_DFD_model):
             # save the full attention map (used if self.use_attnmap_cls is False)
             attn_obj.attn_map = attn
             
-            # get attention map for [cls] token and save, dropping first element in last dimension since is relative to token and not to patches (used if self.use_attnmap_cls is True)
+            # get attention map for [cls] token and save, dropping first and second element in last dimension since are relative to cls and distill and not to patches.
             attn_obj.cls_attn_map = attn[:, :, 0, 2:]
             
             # compute the remaining operations for the attention forward
@@ -3608,11 +3611,11 @@ class ViT_timm_EA(Project_DFD_model):
             x = self.transform(x)
 
         # print(x.shape)
-        features    = self.model_vit.forward_features(x)
+        features    = self.model_vit.forward_features(x)   # output with the following semantic [cls token, distillation token, patches tokens]
         if verbose: print("features shape: ", features.shape)
         
         #                                       1) get encoding
-        encoding = features.mean(dim = 1) if self.encoding_type == 'mean' else features[:, 0]
+        encoding = features.mean(dim = 1) if self.encoding_type == 'mean' else features[:, 0]  
         if verbose: print("encoding shape: ",encoding.shape)
 
         #                                       2) get logits
@@ -3621,27 +3624,38 @@ class ViT_timm_EA(Project_DFD_model):
 
         #                                       3) get attention map
     
-        if self.use_attnmap_cls:
-            att_map     = self.model_vit.blocks[-1].attn.cls_attn_map.mean(dim=1) # mean over heads results
+        # extract [cls] token attention map
+        att_map_cls     = self.model_vit.blocks[-1].attn.cls_attn_map.mean(dim=1) # mean over heads results
+        
+        # if use 2nd wrapper, include a value to have a batch of vectors of size: patch_size**2
+        if self.wrapper_prog == 1:
+            extension_value = T.empty(att_map_cls.shape[0], 1)    # value to be added in the bathes of attention map
+            extension_value[:, 0] = att_map_cls[:, 165]
+            extension_value = extension_value.cuda()
+            att_map_rest = T.cat((att_map_cls, extension_value), dim=1)
+        
+        att_map_cls     = att_map_cls.view(-1, 14, 14).detach()   # transform in images of dim: patch_size x patch_size
+        att_map_cls     = att_map_cls.unsqueeze(dim = 1)          # add channel (grayscale) dim
+        
+        
+        # extract patches tokens attention map
+        att_map_rest     = self.model_vit.blocks[-1].attn.attn_map.mean(dim=1).detach()
+        # print(att_map_rest.shape)
+        
+        if self.prog_model in [2,3]:
+            att_map_rest     = att_map_rest[:, 2:, 2:].view(-1,1,196,196)     # exclude cls and distillation
+            # att_map_rest     = att_map_rest[:, 1:, 1:].view(-1,1,197,197)       # exclude cls
+            # att_map_rest     = att_map_rest.view(-1,1,198,198)
             
-            # if use 2nd wrapper, include a value to have a batch of vectors of size: patch_size**2
-            if self.wrapper_prog == 1:
-                extension_value = T.empty(att_map.shape[0], 1)    # value to be added in the bathes of attention map
-                extension_value[:, 0] = att_map[:, 165]
-                extension_value = extension_value.cuda()
-                att_map = T.cat((att_map, extension_value), dim=1)
-            
-            att_map     = att_map.view(-1, 14, 14).detach()   # transform in images of dim: patch_size x patch_size
-            att_map     = att_map.unsqueeze(dim = 1)          # add channel (grayscale) dim
         else:
-            att_map     = self.model_vit.blocks[-1].attn.attn_map.mean(dim=1).detach()
-            att_map     = att_map[:, 1:, 1:].view(-1,1,196,196)
+            att_map_rest     = att_map_rest[:, 1:, 1:].view(-1,1,196,196)       # exclude cls
         
     
         if self.resize_att_map:
-            att_map     = F.interpolate(att_map, (224, 224), mode='bilinear')
+            att_map_cls     = F.interpolate(att_map_cls,  (224, 224),   mode = self.interpolation_mode)
+            att_map_rest    = F.interpolate(att_map_rest, (224, 224),   mode = self.interpolation_mode)
             
-        return logits, encoding, att_map
+        return logits, encoding, att_map_cls, att_map_rest
 
 #                                       custom abnormality modules
 
@@ -3741,7 +3755,7 @@ class Abnormality_module_Encoder_ViT_v4(Project_abnorm_model):
         - moves the concatenation after several fc layer separately defined for encoding and residual
     """
     
-    def __init__(self, shape_softmax_probs, shape_encoding, shape_residual):
+    def __init__(self, shape_softmax_probs, shape_encoding, shape_residual, hidden_size = 10):
         super().__init__()
         
         self.probs_softmax_shape   = shape_softmax_probs
@@ -3749,6 +3763,7 @@ class Abnormality_module_Encoder_ViT_v4(Project_abnorm_model):
         self.residual_shape = shape_residual
         self.input_shape = (shape_softmax_probs, shape_encoding, shape_residual)   # input_shape doesn't consider the batch
         self._createNet()
+        self.hidden_size = hidden_size      # size used by the module to a new latent representation for image encoding and residual/attention_map
         self._init_weights_normal()
     
     def _createNet(self):
@@ -3759,8 +3774,8 @@ class Abnormality_module_Encoder_ViT_v4(Project_abnorm_model):
         
         residual_length  = math.floor(self.residual_shape[2]/(2**n_encoder_block))**2 * n_features_latent_residual
         
-        tot_feaures_risk_3          = 10  # 10 features for encoding and ten for residual before last layer
-        tot_feature_risk_concat     =  self.probs_softmax_shape[1] + tot_feaures_risk_3*2
+        tot_feaures_risk_3          = self.hidden_size  # 10 features for encoding and ten for residual before last layer
+        tot_feature_risk_concat     = self.probs_softmax_shape[1] + tot_feaures_risk_3*2
         
         
         # # taken from official work 
@@ -4162,15 +4177,20 @@ if __name__ == "__main__":
         tests = [1, 0, 0]  # vit_EA, encoder, vit_EA + encoder
         
         if tests[0]:
-            vit = ViT_timm_EA(use_attnmap_cls=True, resize_att_map=True, prog_model=3).to(device = device)
+            vit = ViT_timm_EA(resize_att_map=True, prog_model=3).to(device = device)
             # vit.getSummary()
             # print(vit.getAttributes())
             
         
-            logits, encoding, attention = vit.forward(x)
+            out = vit.forward(x)
+            logits          = out[0]
+            encoding        = out[1]
+            attention       = out[2]
+            attention_full  = out[3]
             print("logits shape     -> ", logits.shape)
             print("encoding shape   -> ", encoding.shape)
-            print("attention shape  -> ", attention.shape)
+            print("attention cls shape  -> ", attention.shape)
+            print("attention full shape  -> ", attention_full.shape)
 
             print(T.sum(attention[0]))
             print(T.sum(attention[1]))
@@ -4183,6 +4203,7 @@ if __name__ == "__main__":
             
             showImage(x[0])
             showImage(attention[0], has_color= False)
+            showImage(attention_full[1], has_color= False)
             
             blend, att = include_attention(x[0], attention[0])
             
@@ -4202,7 +4223,13 @@ if __name__ == "__main__":
             ae  = AutoEncoder().to(device=device)
             # vit.getSummary()
             # print(vit.getAttributes())
-            logits, encoding, attention = vit.forward(x)
+            # logits, encoding, attention = vit.forward(x)
+            
+            out = vit.forward(x)
+            logits      = out[0]
+            encoding    = out[1]
+            attention   = out[2]
+            
             # print(out[0])
             print(attention.shape)
             

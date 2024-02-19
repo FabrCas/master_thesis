@@ -11,17 +11,22 @@ from torchvision.transforms                 import v2    # new version for tranf
 from torchvision.transforms.functional      import InterpolationMode
 from torch.utils.data                       import Dataset, DataLoader
 from io                                     import BytesIO
+from pathlib                                import Path
+from tinyimagenet                           import TinyImageNet
 
 T.manual_seed(22)
 np.random.seed(22)
 random.seed(22)
 
 # Paths and data structure
-CDDB_PATH       = "./data/CDDB"
-CIFAR100_PATH   = "./data/cifar100"
-CIFAR10_PATH    = "./data/cifar10"
-MNIST_PATH      = "./data/MNIST"
-FMNIST_PATH     = "./data/FashionMNIST"
+CDDB_PATH           = "./data/CDDB"
+CIFAR100_PATH       = "./data/cifar100"
+CIFAR10_PATH        = "./data/cifar10"
+MNIST_PATH          = "./data/MNIST"
+FMNIST_PATH         = "./data/FashionMNIST"
+SVHN_PATH           = "./data/SVHN"
+DTD_PATH            = "./data/DTD"
+TINYIMAGENET_PATH   = "./data/tinyImagenet"
 
 input_config = get_inputConfig()
 w = input_config['width']
@@ -227,8 +232,6 @@ class ProjectDataset(Dataset):
 
 # a = ProjectDataset()
         
-        
-
 ##################################################### [Binary Deepfake classification] ################################################################
 
 class CDDB_binary(ProjectDataset):
@@ -1700,7 +1703,7 @@ def getMNIST_dataset(train, width_img = 28, height_img = 28):
         torchvision.datasets.MNIST(root=MNIST_PATH, train=True, download = True, transform=transform_ops)
         torchvision.datasets.MNIST(root=MNIST_PATH, train=False, download = True, transform=transform_ops)
     
-    # load cifar data
+    # load data
     if train:
         mnist = torchvision.datasets.MNIST(root=MNIST_PATH, train=True, download=False, transform=transform_ops)
     else:
@@ -1731,13 +1734,97 @@ def getFMNIST_dataset(train, width_img = 28, height_img = 28):
         torchvision.datasets.FashionMNIST(root=FMNIST_PATH, train=True,  download = True, transform=transform_ops)
         torchvision.datasets.FashionMNIST(root=FMNIST_PATH, train=False, download = True, transform=transform_ops)
     
-    # load cifar data
+    # load data
     if train:
         fmnist = torchvision.datasets.FashionMNIST(root=FMNIST_PATH, train=True, download=False, transform=transform_ops)
     else:
         fmnist = torchvision.datasets.FashionMNIST(root=FMNIST_PATH, train=False, download=False, transform=transform_ops)
     
     return fmnist
+    
+def getSVHN_dataset(train, width_img = 32, height_img = 32):
+    """ get SVHN dataset
+
+    Args:
+        train (bool): choose between the train or test set. Defaults to True.
+        width_img (int, optional): img width for the resize. Defaults to 28.
+        height_img (int, optional): img height for the resize. Defaults to 28.
+        
+    Returns:
+        torch.Dataset : SVHN dataset object
+    """
+    transform_ops = transforms.Compose([
+        transforms.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
+        transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+        lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
+    ])
+    
+    if train: split = "train"
+    else: split = "test"
+    
+    # create folder if not exists and download the dataset
+    if not(os.path.exists(SVHN_PATH)):
+        os.mkdir(SVHN_PATH)
+        torchvision.datasets.SVHN(root=SVHN_PATH, split = "train",  download = True, transform=transform_ops)
+        torchvision.datasets.SVHN(root=SVHN_PATH, split = "test",  download = True, transform=transform_ops)
+    
+    # load  data
+    svhn = torchvision.datasets.SVHN(root=SVHN_PATH, split = split, download=False, transform=transform_ops)
+    
+    return svhn
+
+def getDTD_dataset(train, width_img = w, height_img = h, partition = 1 ):
+    """ get DTD dataset, first partition by defaults
+
+    Args:
+        train (bool): choose between the train or test set. Defaults to True.
+        width_img (int, optional): img width for the resize. Defaults to 28.
+        height_img (int, optional): img height for the resize. Defaults to 28.
+        
+    Returns:
+        torch.Dataset : DTD dataset object
+    """
+    transform_ops = transforms.Compose([
+        transforms.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
+        transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+        lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
+    ])
+    
+    # create folder if not exists and download the dataset
+    if not(os.path.exists(DTD_PATH)):
+        os.mkdir(DTD_PATH)
+        torchvision.datasets.DTD(root=DTD_PATH, split="train", download = True, transform=transform_ops, partition = partition)
+        torchvision.datasets.DTD(root=DTD_PATH, split="test" , download = True, transform=transform_ops, partition = partition)
+    
+    
+    if train: split = "train"
+    else: split = "test"
+    
+    # load data
+    dtd = torchvision.datasets.DTD(root=DTD_PATH, split=split, download=False, transform=transform_ops)
+    # if train:
+    #     dtd = torchvision.datasets.DTD(root=DTD_PATH, train=True, download=False, transform=transform_ops)
+    # else:
+    #     dtd = torchvision.datasets.DTD(root=DTD_PATH, train=False, download=False, transform=transform_ops)
+    
+    return dtd
+
+def getTinyImageNet_dataset(split = "train" ,width_img = w, height_img =h):
+    """ split (str):  choose between "train", "val", "test """
+    
+    
+    transform_ops = transforms.Compose([
+        transforms.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
+        transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+        lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
+    ])
+    
+    TINYIMAGENET_PATH
+    # dataset_path="~/.torchvision/tinyimagenet/"
+    dataset = TinyImageNet(Path(TINYIMAGENET_PATH),split=split, transform= transform_ops)
+    return dataset
+    
+    
     
 # synthetic datasets using noise distributions
 class GaussianNoise(Dataset):
@@ -2015,7 +2102,7 @@ if __name__ == "__main__":
         batch1 =  next(train_loader)
         batch2 = next(train_loader)
         showImage(batch1[0][31])
-        
+    
     def test_ood():
         cddb_dataset = CDDB_binary(train = True)
         cifar_dataset = getCIFAR100_dataset(train = True)
@@ -2055,6 +2142,15 @@ if __name__ == "__main__":
         elif name == "fmnist":
             dl_train    = getFMNIST_dataset(train = True)
             dl_test     = getFMNIST_dataset(train = False)
+        elif name == "svhn":
+            dl_train    = getSVHN_dataset(train = True)
+            dl_test     = getSVHN_dataset(train = False)
+        elif name == "dtd":
+            dl_train    = getDTD_dataset(train = True)
+            dl_test     = getDTD_dataset(train = False)
+        elif name == "tiny_imagenet":
+            dl_train    = getTinyImageNet_dataset(split = "train")
+            dl_test     = getTinyImageNet_dataset(split = "test") 
         else:
             print("The dataset with name {} is not available".format(name))
             
@@ -2068,6 +2164,9 @@ if __name__ == "__main__":
         # showImage(x)
     
     
-    test_partial_bin_cddb(scenario = "group")
+    # test_partial_bin_cddb(scenario = "group")
     # test_distortions()
+    
+    test_getters("tiny_imagenet")
+    
     #                           [End test section] 
