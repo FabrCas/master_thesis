@@ -5,7 +5,8 @@ from    datetime                            import date, datetime
 import  math
 import  torch                               as T
 import  numpy                               as np
-import  os              
+import  os    
+import  copy          
 
 from    torch.nn                            import functional as F
 from    torch.optim                         import Adam, lr_scheduler
@@ -1202,7 +1203,6 @@ class DFD_BinClassifier_v3(BinaryClassifier):
         
         return pred, fake_prob, logits
 
-#TODO introduce save best model
 class DFD_BinClassifier_v4(BinaryClassifier):
     """
         binary classifier for deepfake detection using partial CDDB dataset for the chosen scenario configuration.
@@ -1324,7 +1324,6 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         test_dataset        = CDDB_binary_Partial(scenario = self.scenario, train = False, ood = False, augment= False)
         self.valid_dataset, self.test_dataset = sampleValidSet(trainset= self.train_dataset, testset= test_dataset, useOnlyTest = True, verbose = True)
         
-        
     def _check_parameters(self):
         if not(self.early_stopping_trigger in ["loss", "acc"]):
             raise ValueError('The early stopping trigger value must be chosen between "loss" and "acc"')
@@ -1377,7 +1376,6 @@ class DFD_BinClassifier_v4(BinaryClassifier):
             "features_exp_order": self.model.features_order,
             "Residual_connection": residual_connection
             }
-    
     
     def valid(self, epoch, valid_dataloader):
         """
@@ -1469,8 +1467,6 @@ class DFD_BinClassifier_v4(BinaryClassifier):
                 else:
                     return default_collate(batch) 
             
-            
-           
             train_dataloader = DataLoader(self.train_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True, collate_fn = collate_cutmix)
         else:
             train_dataloader = DataLoader(self.train_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
@@ -1507,6 +1503,15 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         valid_history       = []
         counter_stopping    = 0
         last_epoch          = 0
+        
+        # define best validation results
+        if self.early_stopping_trigger == "loss":
+            best_valid      = math.inf                # to minimize
+        elif self.early_stopping_trigger == "acc":
+            best_valid      = 0                       # to maximize
+        best_valid_epoch    = 0
+        # initialize ditctionary best models
+        best_model_dict     = copy.deepcopy(self.model.state_dict())
         
         # learned epochs by the model initialization
         self.modelEpochs = 0
@@ -1573,6 +1578,22 @@ class DFD_BinClassifier_v4(BinaryClassifier):
             # include validation here if needed
             criterion = self.valid(epoch=epoch_idx+1, valid_dataloader= valid_dataloader)
             valid_history.append(criterion)  
+            
+            
+            # look for best models *.*
+            if self.early_stopping_trigger  == "loss":            
+                if criterion < best_valid:
+                    best_valid = criterion
+                    best_model_dict = copy.deepcopy(self.model.state_dict())
+                    best_valid_epoch = epoch_idx+1
+                    print("** new best classifier **")
+            elif self.early_stopping_trigger == "acc":
+                if criterion > best_valid:
+                    best_valid = criterion
+                    best_model_dict = copy.deepcopy(self.model.state_dict())
+                    best_valid_epoch = epoch_idx+1
+                    print("** new best classifier **") 
+            
             # initialize not early stopping
             early_exit = False 
             
@@ -1604,7 +1625,6 @@ class DFD_BinClassifier_v4(BinaryClassifier):
                         else:
                             print("Accuracy increased respect previous epoch")
             
-            
             # create dictionary with info frome epoch: loss + valid, and log it
             epoch_data = {"epoch": last_epoch, "avg_loss": avg_loss, "max_loss": max_loss_epoch, \
                           "min_loss": min_loss_epoch, self.early_stopping_trigger + "_valid": criterion}
@@ -1624,7 +1644,9 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         
         # create path for the model save
         name_model_file         = str(last_epoch) +'.ckpt'
+        name_best_model_file    = str(best_valid_epoch) +'.ckpt'
         path_model_save         = os.path.join(path_model_folder, name_model_file)  # path folder + name file
+        path_best_model_save    = os.path.join(path_model_folder, name_best_model_file)
         
         # create path for the model results
         path_results_folder     = os.path.join(self.path_results, name_train + "_v{}_".format(str(self.version)) + current_date)
@@ -1648,6 +1670,7 @@ class DFD_BinClassifier_v4(BinaryClassifier):
             plot_valid(valid_history, title_plot= "classifier  "+ self.early_stopping_trigger, path_save = os.path.join(path_model_folder,name_valid_file), show=False)
         
         # save model
+        saveModel(best_model_dict, path_best_model_save, is_dict= True)
         saveModel(self.model, path_model_save)
     
         # terminate the logger
@@ -1688,7 +1711,6 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         
         return pred, fake_prob, logits
 
-#TODO introduce save best model
 class DFD_BinClassifier_v5(BinaryClassifier):
     """
         binary classifier for deepfake detection using partial CDDB dataset for the chosen scenario configuration.
@@ -1978,6 +2000,15 @@ class DFD_BinClassifier_v5(BinaryClassifier):
         counter_stopping    = 0
         last_epoch          = 0
         
+        # define best validation results
+        if self.early_stopping_trigger == "loss":
+            best_valid      = math.inf                # to minimize
+        elif self.early_stopping_trigger == "acc":
+            best_valid      = 0                       # to maximize
+        best_valid_epoch    = 0
+        # initialize ditctionary best models
+        best_model_dict     = copy.deepcopy(self.model.state_dict())
+        
         # learned epochs by the model initialization
         self.modelEpochs = 0
         
@@ -2075,6 +2106,21 @@ class DFD_BinClassifier_v5(BinaryClassifier):
             # include validation here if needed
             criterion = self.valid(epoch=epoch_idx+1, valid_dataloader= valid_dataloader)
             valid_history.append(criterion)  
+            
+            # look for best models *.*
+            if self.early_stopping_trigger  == "loss":            
+                if criterion < best_valid:
+                    best_valid = criterion
+                    best_model_dict = copy.deepcopy(self.model.state_dict())
+                    best_valid_epoch = epoch_idx+1
+                    print("** new best classifier **")
+            elif self.early_stopping_trigger == "acc":
+                if criterion > best_valid:
+                    best_valid = criterion
+                    best_model_dict = copy.deepcopy(self.model.state_dict())
+                    best_valid_epoch = epoch_idx+1
+                    print("** new best classifier **") 
+            
             # initialize not early stopping
             early_exit = False 
             
@@ -2126,7 +2172,9 @@ class DFD_BinClassifier_v5(BinaryClassifier):
         
         # create path for the model save
         name_model_file         = str(last_epoch) +'.ckpt'
+        name_best_model_file    = str(best_valid_epoch) +'.ckpt'
         path_model_save         = os.path.join(path_model_folder, name_model_file)  # path folder + name file
+        path_best_model_save    = os.path.join(path_model_folder, name_best_model_file)
         
         # create path for the model results
         path_results_folder     = os.path.join(self.path_results, name_train + "_v{}_".format(str(self.version)) + current_date)
@@ -2150,6 +2198,7 @@ class DFD_BinClassifier_v5(BinaryClassifier):
             plot_valid(valid_history, title_plot= "classifier  "+ self.early_stopping_trigger, path_save = os.path.join(path_model_folder,name_valid_file), show=False)
         
         # save model
+        saveModel(best_model_dict, path_best_model_save, is_dict= True)
         saveModel(self.model, path_model_save)
     
         # terminate the logger

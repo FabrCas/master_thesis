@@ -1489,8 +1489,6 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
             # loop over steps
             for step_idx,(x,y) in tqdm(enumerate(train_dataloader), total= n_steps):
                 
-                if step_idx  > 5: break
-                
                 # test steps loop for debug
                 if test_loop and step_idx+1 == 5: break
                 
@@ -1643,7 +1641,6 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
             # lr scheduler step based on validation result
             self.scheduler.step(criterion)
             
-            break
 
         # log GPU memory statistics during training
         logger.log_mem(T.cuda.memory_summary(device=self.device))
@@ -1925,7 +1922,8 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
                     
             with T.no_grad():
                 
-                _, _, att_maps  = self.model.forward(x) 
+                out = self.model.forward(x) 
+                att_maps    = out[2]
 
                 #                                      compute reconstruction loss
                 
@@ -2007,7 +2005,7 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
 
 if __name__ == "__main__":
     #                           [Start test section] 
-    scenario_prog       = 0
+    scenario_prog       = 1
     data_scenario       = None
     
     if scenario_prog == 0: 
@@ -2300,11 +2298,13 @@ if __name__ == "__main__":
         bin_classifier.test_ae()
    
     
-    test_attention_map_v7("faces_ViTEA_timm_DeiT_tiny_separateTrain_v7_13-02-2024", epoch=25, epoch_ae=25, prog_model=3, autoencoder_type = "vae")
+    # test_attention_map_v7("faces_ViTEA_timm_DeiT_tiny_separateTrain_v7_13-02-2024", epoch=25, epoch_ae=25, prog_model=3, autoencoder_type = "vae")
     
-
-
-
+    # TODO train gan, not good results with tiny DeiT
+    # train_v7_scenario_separately(prog_vit=3, add_name="DeiT_tiny_separateTrain")
+    # test_v7_both_metrics("gan_ViTEA_timm_DeiT_tiny_separateTrain_v7_20-02-2024", 54, 75)
+    
+    
     #                           [End test section] 
     """ 
             Past test/train launched: 
@@ -2353,6 +2353,8 @@ if __name__ == "__main__":
     # GAN:
         #                                           v7
         
+    # MIX:
+        #                                           v7
 
 
     

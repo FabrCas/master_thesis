@@ -5,8 +5,23 @@ Master's Thesis project about OOD & deepfake detection.
 ## Data
 
 ### CDDB
-A Continual Deepfake Detection Benchmark: Dataset, Methods, and Essentials. [paper](https://arxiv.org/abs/2205.05467).
+A Continual Deepfake Detection Benchmark: Dataset, Methods, and Essentials. [paper](https://arxiv.org/abs/2205.05467).\
 The dataset can be downloaded at the following [link](https://drive.google.com/file/d/1NgB8ytBMFBFwyXJQvdVT_yek1EaaEHrg/view)
+
+## OOD benchmarks
+
+- **CIFAR-10/CIFAR-100**.
+ Official page: [link](https://www.cs.toronto.edu/~kriz/cifar.html)
+- **MNIST**, The MNIST Database of Handwritten Digit Images for Machine Learning Research.
+ [paper](https://ieeexplore.ieee.org/document/6296535)
+ -**FMINST**, Fashion-MNIST: a Novel Image Dataset for Benchmarking Machine Learning Algorithms.
+ [paper](https://arxiv.org/abs/1708.07747)
+ - **SVHN**.
+ Official page: [link](http://ufldl.stanford.edu/housenumbers/)
+ -**DTD**, Describing Textures in the Wild.
+  [paper](https://arxiv.org/abs/1311.3618)
+- **Tiny ImageNet**, 80 Million Tiny Images: A Large Data Set for Nonparametric Object and Scene Recognition.
+  [paper](https://ieeexplore.ieee.org/document/4531741)
 
 
 ## Models
@@ -34,3 +49,5 @@ The dataset can be downloaded at the following [link](https://drive.google.com/f
 [paper](https://arxiv.org/abs/1706.02690)
 - **Confidence Branch**, Learning Confidence for Out-of-Distribution Detection in Neural Networks.
 [paper](https://arxiv.org/abs/1802.04865)
+- **Visual Attention**, Leveraging Visual Attention for out-of-distribution Detection.
+[paper](https://openaccess.thecvf.com/content/ICCV2023W/OODCV/papers/Cultrera_Leveraging_Visual_Attention_for_out-of-Distribution_Detection_ICCVW_2023_paper.pdf)

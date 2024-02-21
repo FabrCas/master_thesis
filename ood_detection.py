@@ -2360,6 +2360,7 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
             -- "cls_rec_attention_maps" use both cls_attention_map and its reconstruction (stacked)
             -- "full_cls_attention_maps", use cls_attention_map, and the attention map over patches (stacked)
             -- "full_cls_rec_attention_maps", use cls_attention_map, its reconstruction and the attention map over patches (stacked)
+            -- "residual_full_attention_map", use residual and attention map of pathes (stacked)
             Defaults to "residual" 
             
         """
@@ -2661,9 +2662,6 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
             rec_att_maps = self.classifier.autoencoder.forward(att_maps)    # generate att_map from autoencoder
             residual = T.square(rec_att_maps - att_maps)
             output["residual"]      = residual
-            
-
-        
         elif self.att_map_mode == "cls_attention_map":
             # simply use just the attention heatmap information
             output["residual"]      = att_maps        # the key name should be changed to avoid confusion on variable data
@@ -2678,7 +2676,11 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
         elif self.att_map_mode == "full_cls_rec_attention_maps":
             rec_att_maps = self.classifier.autoencoder.forward(att_maps)    # generate att_map from autoencoder
             output["residual"] = T.cat((att_maps, rec_att_maps, att_maps_patches),dim=1)
-            
+        
+        elif  self.att_map_mode == "residual_full_attention_map":
+            rec_att_maps = self.classifier.autoencoder.forward(att_maps)    # generate att_map from autoencoder
+            residual = T.square(rec_att_maps - att_maps)
+            output["residual"] = T.cat((residual, att_maps_patches),dim=1)
         else:
             raise ValueError("The attention forwarding mode selected is incompatible")
         
@@ -3383,6 +3385,9 @@ if __name__ == "__main__":
     # -- "cls_rec_attention_maps" use both cls_attention_map and its reconstruction (stacked)
     # -- "full_cls_attention_maps", use cls_attention_map, and the attention map over patches (stacked)
     # -- "full_cls_rec_attention_maps", use cls_attention_map, its reconstruction and the attention map over patches (stacked)
+    # -- "residual_full_attention_map", use residual and attention map of pathes (stacked)
+    
+    
     def train_abn_encoder(type_encoder = "encoder_v3", add_name = "", att_map_mode = "residual"):
         
         if classifier_model == 2:
@@ -3418,7 +3423,7 @@ if __name__ == "__main__":
             abn = Abnormality_module(classifier, scenario = scenario, model_type= type_encoder, extended_ood = True, balancing_mode="all",  conf_usage_mode = conf_usage_mode)
         abn.train(additional_name = add2name(resolution, add_name) + "_fullExtendedOOD", test_loop=False)
     
-    def test_abn(name_model, epoch, type_encoder = "encoder_v3"):
+    def test_abn(name_model, epoch, type_encoder = "encoder_v3", att_map_mode = "residual"):
         
         def test_forward():
             dl =  DataLoader(abn.dataset_train, batch_size = 16,  num_workers = 8,  shuffle= True,   pin_memory= False)
@@ -3449,7 +3454,7 @@ if __name__ == "__main__":
         
         # load model
         if classifier_model == 2:
-            abn = Abnormality_module_ViT(classifier, scenario=scenario, model_type= type_encoder)
+            abn = Abnormality_module_ViT(classifier, scenario=scenario, model_type= type_encoder, att_map_mode = att_map_mode)
         else: 
             abn = Abnormality_module(classifier, scenario=scenario, model_type=type_encoder,  conf_usage_mode = conf_usage_mode)
             
@@ -3460,11 +3465,9 @@ if __name__ == "__main__":
         # launch test with non-thr metrics
         abn.test_risk()
 
-
-    train_abn_encoder("encoder_v3", add_name = "CLSRECattn",        att_map_mode = "cls_rec_attention_maps")   
-    train_abn_encoder("encoder_v3", add_name = "CLS+PATCHattn",     att_map_mode = "full_cls_attention_maps")        
-    train_abn_encoder("encoder_v3", add_name = "CLSREC+PATCHattn",  att_map_mode = "full_cls_rec_attention_maps")                                                     
-
+    train_abn_encoder("encoder_v3", add_name = "Residual_PATCHattn",  att_map_mode = "residual_full_attention_map")
+    train_abn_encoder("encoder_v4", add_name = "Residual_PATCHattn",  att_map_mode = "residual_full_attention_map")
+    
     
     #                           [End test section] 
    
@@ -3576,7 +3579,19 @@ if __name__ == "__main__":
             
             train_abn_encoder("encoder_v3", add_name = "CLSattn", att_map_mode = "cls_attention_map")
             test_abn("Abnormality_module_ViT_encoder_v3_224p_CLSattn_16-02-2024", epoch = 20, type_encoder = "encoder_v3")
-
+            
+            train_abn_encoder("encoder_v3", add_name = "CLSRECattn",        att_map_mode = "cls_rec_attention_maps")   
+            test_abn("Abnormality_module_ViT_encoder_v3_224p_CLSRECattn_19-02-2024", 17,  att_map_mode = "cls_rec_attention_maps")
+            test_abn("Abnormality_module_ViT_encoder_v3_224p_CLSRECattn_19-02-2024", 20,  att_map_mode = "cls_rec_attention_maps")
+            
+            train_abn_encoder("encoder_v3", add_name = "CLS+PATCHattn",     att_map_mode = "full_cls_attention_maps")        
+            test_abn("Abnormality_module_ViT_encoder_v3_224p_CLS+PATCHattn_19-02-2024", 12,  att_map_mode = "full_cls_attention_maps")
+            test_abn("Abnormality_module_ViT_encoder_v3_224p_CLS+PATCHattn_19-02-2024", 20,  att_map_mode = "full_cls_attention_maps")
+            
+            train_abn_encoder("encoder_v3", add_name = "CLSREC+PATCHattn",  att_map_mode = "full_cls_rec_attention_maps")
+            test_abn("Abnormality_module_ViT_encoder_v3_224p_CLSREC+PATCHattn_19-02-2024", 18,  att_map_mode = "full_cls_rec_attention_maps")
+            test_abn("Abnormality_module_ViT_encoder_v3_224p_CLSREC+PATCHattn_19-02-2024", 20,  att_map_mode = "full_cls_rec_attention_maps")   
+               
         v4
             train_abn_encoder(type_encoder="encoder_v4") # epochs
             test_abn("Abnormality_module_ViT_encoder_v4_224p_15-02-2024", 20, "encoder_v4")  
@@ -3592,7 +3607,17 @@ if __name__ == "__main__":
             test_abn("Abnormality_module_ViT_encoder_v4_224p_75epochs_17-02-2024", epoch=47, type_encoder="encoder_v4")
             test_abn("Abnormality_module_ViT_encoder_v4_224p_75epochs_17-02-2024", epoch=75, type_encoder="encoder_v4")
         
-                 
+            train_abn_encoder("encoder_v4", add_name = "CLSRECattn",        att_map_mode = "cls_rec_attention_maps")   
+            test_abn("Abnormality_module_ViT_encoder_v4_224p_CLS+PATCHattn_19-02-2024", 20,  att_map_mode = "full_cls_attention_maps", type_encoder="encoder_v4")
+            
+            train_abn_encoder("encoder_v4", add_name = "CLS+PATCHattn",     att_map_mode = "full_cls_attention_maps")
+            test_abn("Abnormality_module_ViT_encoder_v4_224p_CLSRECattn_19-02-2024", 19,  att_map_mode = "cls_rec_attention_maps", type_encoder="encoder_v4")
+            test_abn("Abnormality_module_ViT_encoder_v4_224p_CLSRECattn_19-02-2024", 20,  att_map_mode = "cls_rec_attention_maps", type_encoder="encoder_v4")
+                    
+            train_abn_encoder("encoder_v4", add_name = "CLSREC+PATCHattn",  att_map_mode = "full_cls_rec_attention_maps") 
+            test_abn("Abnormality_module_ViT_encoder_v4_224p_CLSREC+PATCHattn_19-02-2024", 20,  att_map_mode = "full_cls_rec_attention_maps", type_encoder="encoder_v4")                                                    
+
+    
                                     ABNORMALITY MODULE ENCODER  (Synthetic ood data, + extension, max merging)
         train_extended_abn_encoder(type_encoder="encoder_v3") # 20 epochs
         test_abn("Abnormality_module_ViT_encoder_v3_224p_extendedOOD_14-02-2024", 20, "encoder_v3")

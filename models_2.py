@@ -442,3 +442,88 @@ class ViT_base_2(Project_DFD_model):
         logits = self.head(x)
 
         return logits
+
+
+# _____________________________ViT base: Encoding + Attention extraction _______________________________________
+
+class ViT_base_EA(Project_DFD_model):
+    """ Implementation of a classic ViT model (base) for classification, providing image encoding (E) and attention map (A) """
+
+    def __init__(self, *, img_size = INPUT_WIDTH, patch_size = PATCH_SIZE, n_classes = 10, emb_size = EMB_SIZE, n_layers = 6,
+                    n_heads = 16, pool = 'cls', in_channels = INPUT_CHANNELS, dropout = 0.1, emb_dropout = 0.1,
+                    encoding_type = "mean"):
+        
+        """
+            mlp_dim (int): dimension of the hidden representation in the feedforward or multilayer perceptron block
+            encoding_type (str, optional). Use "mean" whether to encode by levaraging all the input token as a single vector, or "cls" to take in account only [cls] token. Defaults to "mean"
+        """
+        
+    
+        super().__init__(c = in_channels,h = img_size,w = img_size, n_classes = n_classes)
+        image_height, image_width = pair(img_size)
+        patch_height, patch_width = pair(patch_size)
+        
+        self.emb_size       = emb_size 
+        self.patch_size     = patch_size
+        self.n_heads        = n_heads
+        self.n_layers       = n_layers
+        self.dropout        = dropout
+        self.encoding_type  = encoding_type
+        
+        # compute head latent space dimensionality
+        dim_head = EMB_SIZE//n_heads
+        self.dim_head = dim_head
+        
+        # compute ff encoding dimensionality
+        mlp_dim = EMB_SIZE*2
+        self.mlp_dim = mlp_dim
+        
+        # bind Transformer dropout to the one of the embedding
+        emb_dropout = self.dropout  
+        
+
+        assert image_height % patch_height == 0 and image_width % patch_width == 0, 'Image dimensions must be divisible by the patch size.'
+
+        num_patches = (image_height // patch_height) * (image_width // patch_width)
+        patch_dim = in_channels * patch_height * patch_width
+        assert pool in {'cls', 'mean'}, 'pool type must be either cls (cls token) or mean (mean pooling)'
+
+        self.to_patch_embedding = nn.Sequential(
+            Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = patch_height, p2 = patch_width),
+            nn.LayerNorm(patch_dim),
+            nn.Linear(patch_dim, emb_size),
+            nn.LayerNorm(emb_size),
+        )
+
+        self.pos_embedding = nn.Parameter(T.randn(1, num_patches + 1, emb_size))
+        self.cls_token = nn.Parameter(T.randn(1, 1, emb_size))
+        self.dropout = nn.Dropout(emb_dropout)
+
+        self.transformer = Transformer(emb_size, n_layers, n_heads, dim_head, mlp_dim, dropout)
+
+        self.pool = pool
+        self.to_latent = nn.Identity()
+
+        self.mlp_head = nn.Linear(emb_size, n_classes)
+
+    def forward(self, img):
+        x = self.to_patch_embedding(img)
+        b, n, _ = x.shape
+
+        cls_tokens = repeat(self.cls_token, '1 1 d -> b 1 d', b = b)
+        x = T.cat((cls_tokens, x), dim=1)
+        x += self.pos_embedding[:, :(n + 1)]
+        x = self.dropout(x)
+
+        x = self.transformer(x)
+
+        # prepare encoding
+        enc = x.mean(dim = 1) if  self.encoding_type == "mean" else x[: 0]
+        
+        # flow through MLP head 
+        x = x.mean(dim = 1) if self.pool == 'mean' else x[:, 0]
+        x = self.to_latent(x)
+        logits  = self.mlp_head(x)
+        
+        return logits, enc 
+  

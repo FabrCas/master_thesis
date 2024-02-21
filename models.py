@@ -3309,87 +3309,6 @@ class VAE(Project_DFD_model):
         else:
             return x_hat
     
-class ViT_base_EA(Project_DFD_model):
-    """ Implementation of a classic ViT model (base) for classification, providing image encoding (E) and attention map (A) """
-
-    def __init__(self, *, img_size = INPUT_WIDTH, patch_size = PATCH_SIZE, n_classes = 10, emb_size = EMB_SIZE, n_layers = 6,
-                    n_heads = 16, pool = 'cls', in_channels = INPUT_CHANNELS, dropout = 0.1, emb_dropout = 0.1,
-                    encoding_type = "mean"):
-        
-        """
-            mlp_dim (int): dimension of the hidden representation in the feedforward or multilayer perceptron block
-            encoding_type (str, optional). Use "mean" whether to encode by levaraging all the input token as a single vector, or "cls" to take in account only [cls] token. Defaults to "mean"
-        """
-        
-    
-        super().__init__(c = in_channels,h = img_size,w = img_size, n_classes = n_classes)
-        image_height, image_width = pair(img_size)
-        patch_height, patch_width = pair(patch_size)
-        
-        self.emb_size       = emb_size 
-        self.patch_size     = patch_size
-        self.n_heads        = n_heads
-        self.n_layers       = n_layers
-        self.dropout        = dropout
-        self.encoding_type  = encoding_type
-        
-        # compute head latent space dimensionality
-        dim_head = EMB_SIZE//n_heads
-        self.dim_head = dim_head
-        
-        # compute ff encoding dimensionality
-        mlp_dim = EMB_SIZE*2
-        self.mlp_dim = mlp_dim
-        
-        # bind Transformer dropout to the one of the embedding
-        emb_dropout = self.dropout  
-        
-
-        assert image_height % patch_height == 0 and image_width % patch_width == 0, 'Image dimensions must be divisible by the patch size.'
-
-        num_patches = (image_height // patch_height) * (image_width // patch_width)
-        patch_dim = in_channels * patch_height * patch_width
-        assert pool in {'cls', 'mean'}, 'pool type must be either cls (cls token) or mean (mean pooling)'
-
-        self.to_patch_embedding = nn.Sequential(
-            Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = patch_height, p2 = patch_width),
-            nn.LayerNorm(patch_dim),
-            nn.Linear(patch_dim, emb_size),
-            nn.LayerNorm(emb_size),
-        )
-
-        self.pos_embedding = nn.Parameter(T.randn(1, num_patches + 1, emb_size))
-        self.cls_token = nn.Parameter(T.randn(1, 1, emb_size))
-        self.dropout = nn.Dropout(emb_dropout)
-
-        self.transformer = Transformer(emb_size, n_layers, n_heads, dim_head, mlp_dim, dropout)
-
-        self.pool = pool
-        self.to_latent = nn.Identity()
-
-        self.mlp_head = nn.Linear(emb_size, n_classes)
-
-    def forward(self, img):
-        x = self.to_patch_embedding(img)
-        b, n, _ = x.shape
-
-        cls_tokens = repeat(self.cls_token, '1 1 d -> b 1 d', b = b)
-        x = T.cat((cls_tokens, x), dim=1)
-        x += self.pos_embedding[:, :(n + 1)]
-        x = self.dropout(x)
-
-        x = self.transformer(x)
-
-        # prepare encoding
-        enc = x.mean(dim = 1) if  self.encoding_type == "mean" else x[: 0]
-        
-        # flow through MLP head 
-        x = x.mean(dim = 1) if self.pool == 'mean' else x[:, 0]
-        x = self.to_latent(x)
-        logits  = self.mlp_head(x)
-        
-        return logits, enc 
-  
 class ViT_timm_EA(Project_DFD_model):
     def __init__(self, n_classes = 10, dropout = 0.1, prog_model = 3, encoding_type = "mean", resize_att_map = True,\
                  interpolation_mode = "bilinear"):   # bilinear
@@ -3409,7 +3328,8 @@ class ViT_timm_EA(Project_DFD_model):
             'vit_base_patch16_224',
             'vit_base_patch16_224.augreg_in21k',
             'deit_small_distilled_patch16_224',
-            'deit_tiny_distilled_patch16_224'
+            'deit_tiny_distilled_patch16_224',
+            'deit_base_distilled_patch16_224'
             ]
         self.name = self.models_avaiable[prog_model]
         print(f"Model architecture select in ViT_EA: {self.name}")
@@ -3463,7 +3383,13 @@ class ViT_timm_EA(Project_DFD_model):
             self.n_heads                = 3
             self.n_layers               = 12
             self.dim_head               = self.emb_size //self.n_heads
-            
+        elif prog_model == 4:
+            self.emb_size               = 768 
+            self.mlp_dim                = "empty"
+            self.patch_size             = 16
+            self.n_heads                = 12
+            self.n_layers               = 12
+            self.dim_head               = self.emb_size //self.n_heads
         else:
             self.emb_size               = "empty"
             self.mlp_dim                = "empty"
@@ -3484,9 +3410,9 @@ class ViT_timm_EA(Project_DFD_model):
         # wrapper for attention extraction 
         self.wrapper_prog = 0
         
-        if prog_model in [2,3]:
+        if prog_model in [2,3,4]:   # Deit architecture
             self.model_vit.blocks[-1].attn.forward = self.forward_wrapper_1(self.model_vit.blocks[-1].attn)
-        else:
+        else:                       # classic ViT architecture
             if self.wrapper_prog == 0:
                 self.model_vit.blocks[-1].attn.forward = self.forward_wrapper(self.model_vit.blocks[-1].attn)
             elif self.wrapper_prog == 1:
@@ -3642,11 +3568,10 @@ class ViT_timm_EA(Project_DFD_model):
         att_map_rest     = self.model_vit.blocks[-1].attn.attn_map.mean(dim=1).detach()
         # print(att_map_rest.shape)
         
-        if self.prog_model in [2,3]:
-            att_map_rest     = att_map_rest[:, 2:, 2:].view(-1,1,196,196)     # exclude cls and distillation
-            # att_map_rest     = att_map_rest[:, 1:, 1:].view(-1,1,197,197)       # exclude cls
+        if self.prog_model in [2,3,4]:
+            att_map_rest     = att_map_rest[:, 2:, 2:].view(-1,1,196,196)       # exclude cls and distillation
+            # att_map_rest     = att_map_rest[:, 1:, 1:].view(-1,1,197,197)     # exclude cls
             # att_map_rest     = att_map_rest.view(-1,1,198,198)
-            
         else:
             att_map_rest     = att_map_rest[:, 1:, 1:].view(-1,1,196,196)       # exclude cls
         
@@ -3762,8 +3687,8 @@ class Abnormality_module_Encoder_ViT_v4(Project_abnorm_model):
         self.encoding_shape = shape_encoding
         self.residual_shape = shape_residual
         self.input_shape = (shape_softmax_probs, shape_encoding, shape_residual)   # input_shape doesn't consider the batch
-        self._createNet()
         self.hidden_size = hidden_size      # size used by the module to a new latent representation for image encoding and residual/attention_map
+        self._createNet()
         self._init_weights_normal()
     
     def _createNet(self):
@@ -3852,6 +3777,7 @@ class Abnormality_module_Encoder_ViT_v4(Project_abnorm_model):
         out = self.gelu(self.bn_risk_final(self.fc_risk_final(x_concat)))
         return out   
 
+#TODO deeper version of abn_ViT v3 and v4
 
 #_____________________________________Test models_________________________________________________ 
 
