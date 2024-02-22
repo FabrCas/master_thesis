@@ -3041,8 +3041,7 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
     
         # terminate the logger
         logger.end_log(model_results_folder_path = path_save_results)
-        
-        # copy log to results folder
+
         
     def test_risk(self, task_type_prog = None):
         
@@ -3465,15 +3464,11 @@ if __name__ == "__main__":
         # launch test with non-thr metrics
         abn.test_risk()
 
-    train_abn_encoder("encoder_v3", add_name = "Residual_PATCHattn",  att_map_mode = "residual_full_attention_map")
-    train_abn_encoder("encoder_v4", add_name = "Residual_PATCHattn",  att_map_mode = "residual_full_attention_map")
     
     
     #                           [End test section] 
-   
+    # Past test/train launched: 
     """ 
-            Past test/train launched: 
-            
     classifier: faces_Unet4_Scorer112p_v4_03-12-2023
     
                                     BASELINE    
@@ -3532,7 +3527,8 @@ if __name__ == "__main__":
         test_abn_content_faces("Abnormality_module_encoder_v2_112p_fullExtendedOOD_28-12-2023",50, "encoder_v2")
         test_abn_content_faces("Abnormality_module_encoder_v3_112p_fullExtendedOOD_28-12-2023",50, "encoder_v3")
         test_abn_content_faces("Abnormality_module_encoder_v4_112p_fullExtendedOOD_29-12-2023",50, "encoder_v4")
-    
+    """
+    """
     classifier: faces_Unet4_Scorer_Confidence_112p_v5_02-01-2024:
     
                                     CONFIDENCE DETECTOR
@@ -3562,7 +3558,8 @@ if __name__ == "__main__":
         train_full_extended_abn_encoder(type_encoder= "encoder_v3")
         test_abn("Abnormality_module_encoder_v3_112p_fullExtendedOOD_09-01-2024", 50, "encoder_v3")
     
-    
+    """
+    """
     classifier: "faces_ViTEA_timm_DeiT_tiny_separateTrain_v7_13-02-2024":
     
                                     ABNORMALITY MODULE ENCODER  (Synthetic ood data, no extension)
@@ -3591,7 +3588,11 @@ if __name__ == "__main__":
             train_abn_encoder("encoder_v3", add_name = "CLSREC+PATCHattn",  att_map_mode = "full_cls_rec_attention_maps")
             test_abn("Abnormality_module_ViT_encoder_v3_224p_CLSREC+PATCHattn_19-02-2024", 18,  att_map_mode = "full_cls_rec_attention_maps")
             test_abn("Abnormality_module_ViT_encoder_v3_224p_CLSREC+PATCHattn_19-02-2024", 20,  att_map_mode = "full_cls_rec_attention_maps")   
-               
+            
+            train_abn_encoder("encoder_v3", add_name = "Residual_PATCHattn",  att_map_mode = "residual_full_attention_map")
+            test_abn("Abnormality_module_ViT_encoder_v3_224p_Residual_PATCHattn_21-02-2024", 17, type_encoder="encoder_v3", att_map_mode = "residual_full_attention_map")
+            test_abn("Abnormality_module_ViT_encoder_v3_224p_Residual_PATCHattn_21-02-2024", 20, type_encoder="encoder_v3", att_map_mode = "residual_full_attention_map")
+
         v4
             train_abn_encoder(type_encoder="encoder_v4") # epochs
             test_abn("Abnormality_module_ViT_encoder_v4_224p_15-02-2024", 20, "encoder_v4")  
@@ -3617,6 +3618,10 @@ if __name__ == "__main__":
             train_abn_encoder("encoder_v4", add_name = "CLSREC+PATCHattn",  att_map_mode = "full_cls_rec_attention_maps") 
             test_abn("Abnormality_module_ViT_encoder_v4_224p_CLSREC+PATCHattn_19-02-2024", 20,  att_map_mode = "full_cls_rec_attention_maps", type_encoder="encoder_v4")                                                    
 
+            train_abn_encoder("encoder_v4", add_name = "Residual_PATCHattn",  att_map_mode = "residual_full_attention_map")
+            test_abn("Abnormality_module_ViT_encoder_v4_224p_Residual_PATCHattn_21-02-2024", 19, type_encoder="encoder_v4", att_map_mode = "residual_full_attention_map")
+            test_abn("Abnormality_module_ViT_encoder_v4_224p_Residual_PATCHattn_21-02-2024", 20, type_encoder="encoder_v4", att_map_mode = "residual_full_attention_map")
+            
     
                                     ABNORMALITY MODULE ENCODER  (Synthetic ood data, + extension, max merging)
         train_extended_abn_encoder(type_encoder="encoder_v3") # 20 epochs

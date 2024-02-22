@@ -1618,9 +1618,87 @@ class CDDB_Partial(ProjectDataset):
 
 ##################################################### [Out-Of-Distribution Detection] #################################################################
 
-def getCIFAR10_dataset(train, width_img= w, height_img = h):
-    """ get CIFAR10 dataset
+# custom trasform classes
 
+class gray2colorTransform():
+    """ 
+        class used to trasnform grayscale images, tripling gray channel for rgb channels
+    """
+    def __call__(self, img):
+        if img.shape[0] == 1:
+            img = img.expand(3, -1, -1)
+        return img
+
+class oodTransform():
+    def __init__(self):
+        self.idx = 0
+        self.toTensor = transforms.ToTensor()
+    
+    def __call__(self, x):
+        # take a Pil image and returns a numpy array
+
+        # define function properties 
+        n_distortions   = 5
+        jpeg_quality    = 10
+        
+        distortion_idx  = self.idx%n_distortions    
+        
+        if distortion_idx == 0:                 # blur distortion
+            # print("blur distortion")
+            x  = np.array(x)
+            x_ = add_blur(x)
+            x_ = self.toTensor(x_)
+            
+        elif distortion_idx == 1:               # normal noise distortion 
+            # print("noise distortion")
+            x  = self.toTensor(x)
+            x_ = add_noise(x)
+            
+        elif distortion_idx == 2:               # normal noise + perturbations distortion 
+            # print("noise random distortion")
+            x  = self.toTensor(x)
+            x_ = add_distortion_noise(x)
+            
+        elif distortion_idx == 3:               # normal noise + rotations distortion 
+            # print("noise distortion + rotation")
+            
+            times_rotation = np.random.randint(low = 1, high=4) # random integer from 0 to 1
+            x  = np.array(x)
+            # x  = np.rot90(x, k= times_rotation)
+            x  = self.toTensor(x)
+            # print(x.shape)
+            x = T.rot90(x, k=times_rotation, dims= (1,2))
+            x_ = add_noise(x)
+        
+        elif distortion_idx == 4:
+            # print("JPEG compression")
+            # x  = np.array(x)
+            # Perform JPEG compression with a specified quality (0-100, higher is better quality)
+            compressed_image_bytesio = BytesIO()
+            x.save(compressed_image_bytesio, format="JPEG", quality=jpeg_quality)
+            
+            # Rewind the BytesIO object to the beginning
+            compressed_image_bytesio.seek(0)
+
+            # Load the compressed image from BytesIO
+            compressed_image = Image.open(compressed_image_bytesio)
+            
+            # Convert the compressed image back to a NumPy array (optional, for demonstration purposes)
+            x_  = np.array(compressed_image)
+            x_  = self.toTensor(x_)
+        
+        print(x_.shape)
+        # convert and clamp btw 0 and 1
+        x_ = x_.to(T.float32)
+        x_ = T.clamp(x_, 0 ,1)
+
+        self.idx += 1 
+        
+        return x_
+    
+def getCIFAR10_dataset(train, width_img= w, height_img = h, augment = False, ood_synthesis = False):
+    """ get CIFAR10 dataset
+        original spatial dim: 32x32
     Args:
         train (bool): choose between the train or test set. Defaults to True.
         width_img (int, optional): img width for the resize. Defaults to config['width'].
@@ -1629,11 +1707,31 @@ def getCIFAR10_dataset(train, width_img= w, height_img = h):
     Returns:
         torch.Dataset : Cifar10 dataset object
     """
-    transform_ops = transforms.Compose([
-        transforms.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
-        transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
-        lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
-    ])
+    if augment:
+        transform_ops = transforms.Compose([
+            v2.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
+            v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+            v2.RandomHorizontalFlip(0.5),   
+            v2.RandomVerticalFlip(0.1),
+            v2.RandAugment(num_ops = 1, magnitude= 7, num_magnitude_bins= 51, interpolation = InterpolationMode.BILINEAR),
+            lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
+        ])
+        
+    else:
+        if ood_synthesis:
+            transform_ops = transforms.Compose([
+                v2.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
+                oodTransform(),
+                v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+                lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
+            ])
+        else:
+            transform_ops = transforms.Compose([
+                v2.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
+                v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+                lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
+            ])
+        
     
     # create folder if not exists and download locally
     if not(os.path.exists(CIFAR10_PATH)):
@@ -1649,9 +1747,9 @@ def getCIFAR10_dataset(train, width_img= w, height_img = h):
     
     return cifar10
 
-def getCIFAR100_dataset(train, width_img= w, height_img = h):
+def getCIFAR100_dataset(train, width_img= w, height_img = h, augment = False, ood_synthesis = False):
     """ get CIFAR100 dataset
-
+        original spatial dim: 32x32
     Args:
         train (bool): choose between the train or test set. Defaults to True.
         width_img (int, optional): img width for the resize. Defaults to config['width'].
@@ -1660,11 +1758,22 @@ def getCIFAR100_dataset(train, width_img= w, height_img = h):
     Returns:
         torch.Dataset : Cifar100 dataset object
     """
-    transform_ops = transforms.Compose([
-        transforms.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
-        transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
-        lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
-    ])
+    if augment:
+        transform_ops = transforms.Compose([
+            v2.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
+            v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+            v2.RandomHorizontalFlip(0.5),   
+            v2.RandomVerticalFlip(0.1),
+            v2.RandAugment(num_ops = 1, magnitude= 7, num_magnitude_bins= 51, interpolation = InterpolationMode.BILINEAR),
+            lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
+        ])
+        
+    else:
+        transform_ops = transforms.Compose([
+            v2.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
+            v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+            lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
+        ])
     
     # create folder if not exists and download locally
     if not(os.path.exists(CIFAR100_PATH)):
@@ -1680,8 +1789,9 @@ def getCIFAR100_dataset(train, width_img= w, height_img = h):
     
     return cifar100
 
-def getMNIST_dataset(train, width_img = 28, height_img = 28):
+def getMNIST_dataset(train, width_img = w, height_img = h):
     """ get MNIST dataset
+        original spatial dim: 28x28
 
     Args:
         train (bool): choose between the train or test set. Defaults to True.
@@ -1690,10 +1800,15 @@ def getMNIST_dataset(train, width_img = 28, height_img = 28):
         
     Returns:
         torch.Dataset : Cifar100 dataset object
+        
+            if img.shape[0] == 1:
+                img = img.expand(3, -1, -1)
+        
     """
     transform_ops = transforms.Compose([
-        transforms.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
-        transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+        v2.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
+        v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+        gray2colorTransform(),
         lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
     ])
     
@@ -1711,9 +1826,9 @@ def getMNIST_dataset(train, width_img = 28, height_img = 28):
     
     return mnist
     
-def getFMNIST_dataset(train, width_img = 28, height_img = 28):
+def getFMNIST_dataset(train, width_img = w, height_img = h):
     """ get FashionMNIST dataset
-
+        original spatial dim: 28x28
     Args:
         train (bool): choose between the train or test set. Defaults to True.
         width_img (int, optional): img width for the resize. Defaults to 28.
@@ -1723,8 +1838,9 @@ def getFMNIST_dataset(train, width_img = 28, height_img = 28):
         torch.Dataset : Cifar100 dataset object
     """
     transform_ops = transforms.Compose([
-        transforms.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
-        transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+        v2.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
+        v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+        gray2colorTransform(),
         lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
     ])
     
@@ -1742,9 +1858,9 @@ def getFMNIST_dataset(train, width_img = 28, height_img = 28):
     
     return fmnist
     
-def getSVHN_dataset(train, width_img = 32, height_img = 32):
+def getSVHN_dataset(train, width_img = w, height_img = h):
     """ get SVHN dataset
-
+        original spatial dim: 32x32
     Args:
         train (bool): choose between the train or test set. Defaults to True.
         width_img (int, optional): img width for the resize. Defaults to 28.
@@ -1754,8 +1870,9 @@ def getSVHN_dataset(train, width_img = 32, height_img = 32):
         torch.Dataset : SVHN dataset object
     """
     transform_ops = transforms.Compose([
-        transforms.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
-        transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+        v2.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
+        v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+        gray2colorTransform(),
         lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
     ])
     
@@ -1775,7 +1892,7 @@ def getSVHN_dataset(train, width_img = 32, height_img = 32):
 
 def getDTD_dataset(train, width_img = w, height_img = h, partition = 1 ):
     """ get DTD dataset, first partition by defaults
-
+        original spatial dim: varies
     Args:
         train (bool): choose between the train or test set. Defaults to True.
         width_img (int, optional): img width for the resize. Defaults to 28.
@@ -1785,8 +1902,9 @@ def getDTD_dataset(train, width_img = w, height_img = h, partition = 1 ):
         torch.Dataset : DTD dataset object
     """
     transform_ops = transforms.Compose([
-        transforms.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
-        transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+        v2.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
+        v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+        gray2colorTransform(),
         lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
     ])
     
@@ -1811,11 +1929,12 @@ def getDTD_dataset(train, width_img = w, height_img = h, partition = 1 ):
 
 def getTinyImageNet_dataset(split = "train" ,width_img = w, height_img =h):
     """ split (str):  choose between "train", "val", "test """
-    
+    # original spatial dim: varies
     
     transform_ops = transforms.Compose([
-        transforms.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
-        transforms.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+        v2.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
+        v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+        gray2colorTransform(),
         lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
     ])
     
@@ -1823,8 +1942,6 @@ def getTinyImageNet_dataset(split = "train" ,width_img = w, height_img =h):
     # dataset_path="~/.torchvision/tinyimagenet/"
     dataset = TinyImageNet(Path(TINYIMAGENET_PATH),split=split, transform= transform_ops)
     return dataset
-    
-    
     
 # synthetic datasets using noise distributions
 class GaussianNoise(Dataset):
@@ -2131,11 +2248,15 @@ if __name__ == "__main__":
         # showImage(x)
     
     def test_getters(name):
-        
+        augment = False
+        ood = True
         # use getters
-        if name == "cifar":
-            dl_train    = getCIFAR100_dataset(train = True)
-            dl_test     = getCIFAR100_dataset(train = False)
+        if name == "cifar10":
+            dl_train    = getCIFAR10_dataset(train = True, augment= augment, ood_synthesis= ood)
+            dl_test     = getCIFAR10_dataset(train = False, augment= augment, ood_synthesis= ood)
+        elif name == "cifar100":
+            dl_train    = getCIFAR100_dataset(train = True, augment= augment, ood_synthesis= ood)
+            dl_test     = getCIFAR100_dataset(train = False, augment= augment, ood_synthesis= ood)
         elif name == "mnist":
             dl_train    = getMNIST_dataset(train = True)
             dl_test     = getMNIST_dataset(train = False)
@@ -2153,7 +2274,20 @@ if __name__ == "__main__":
             dl_test     = getTinyImageNet_dataset(split = "test") 
         else:
             print("The dataset with name {} is not available".format(name))
+        
+        dl_train_original  = getCIFAR10_dataset(train = True, augment= augment, ood_synthesis= False)
+        
+        for i in range(7):
+            img, y = dl_train.__getitem__(i)
+            showImage(img) 
             
+            img, y = dl_train_original.__getitem__(i)
+            showImage(img)
+        
+
+        
+        
+        
     
         print(f"train samples number: {len(dl_train)}, test samples number {len(dl_test)}")
     
@@ -2163,10 +2297,9 @@ if __name__ == "__main__":
         showImage(x, name="ood_synthesis_JPEG10_compression",save_image=True)
         # showImage(x)
     
-    
     # test_partial_bin_cddb(scenario = "group")
     # test_distortions()
     
-    test_getters("tiny_imagenet")
+    # test_getters("cifar10")
     
     #                           [End test section] 

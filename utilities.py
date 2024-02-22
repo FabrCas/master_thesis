@@ -770,7 +770,7 @@ def plot_valid(valid_history, title_plot = None, path_save = None, duration_time
         
     plt.clf()  # clear plot data
 
-def plot_cm(cm, labels, title_plot = None, path_save = None, epoch = None, duration_timer = 2500):
+def plot_cm(cm, labels, title_plot = None, path_save = None, epoch = None, duration_timer = 2500, size = 6):
     """ sava and plot the confusion matrix
 
     Args:
@@ -784,7 +784,7 @@ def plot_cm(cm, labels, title_plot = None, path_save = None, epoch = None, durat
     def close_event():
         plt.close()
 
-    fig, ax = plt.subplots(figsize=(6, 6))
+    fig, ax = plt.subplots(figsize=(size, size))
     
     ax.matshow(cm, cmap=plt.cm.Greens, alpha=0.5)
     for i in range(cm.shape[0]):
@@ -1088,7 +1088,7 @@ def metrics_multiClass(preds, targets, labels_indices, labels_name, average = "m
     
     
     # plot and save (if path specified) confusion matrix
-    plot_cm(cm = metrics_results['confusion_matrix'], labels = labels_name, title_plot = None, path_save = path_save, epoch= epoch_model)
+    plot_cm(cm = metrics_results['confusion_matrix'], labels = labels_name, title_plot = None, path_save = path_save, epoch= epoch_model, size= 15)
     
     
     metrics_results['confusion_matrix'] = metrics_results['confusion_matrix'].tolist()
