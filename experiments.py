@@ -1236,6 +1236,8 @@ class CIFAR_VITEA_benchmark(object):
         name_model = "{}.ckpt".format(epoch)
         path_model = os.path.join(self.path_models, self.name_dataset, name_folder, name_model)
         
+        self.train_name = name_folder
+        
         self.path2classifier            = os.path.join(self.path_models, self.name_dataset, name_folder)
         self.path2results_classifier    = os.path.join(self.path_results, self.name_dataset, name_folder)
         
@@ -1249,6 +1251,9 @@ class CIFAR_VITEA_benchmark(object):
     def load_autoencoder(self, name_folder, epoch):
         name_model = "AE_{}.ckpt".format(epoch)
         path_model = os.path.join(self.path_models, self.name_dataset, name_folder, name_model)
+        
+        self.train_name = name_folder
+        
         print(f"Loading the model at location: {path_model}")
         try:
             loadModel(self.model, path_model)
@@ -1329,11 +1334,26 @@ class CIFAR_VITEA_benchmark(object):
         return accuracy_valid
     
     @duration
-    def train_classifier(self, add_in_name):
+    def train_classifier(self, add_in_name="", start_epoch = 0, end_epoch = None):
         
-        current_date = date.today().strftime("%d-%m-%Y")    
-        name_folder = "train_" + add_in_name + "_" + current_date
-        self.train_name = name_folder
+        # check args validity
+        if start_epoch != 0:
+            if end_epoch is None:
+                raise ValueError("End epoch is not specified (required if start epoch is not 0)")
+            if (end_epoch - start_epoch) <= 0:
+                raise ValueError("end epoch should be grater than start epoch")
+        
+        if not(end_epoch is None):
+            self.epochs = end_epoch
+
+        # define the train name, if already trained just obtain from class attribute
+        if start_epoch == 0:
+            current_date = date.today().strftime("%d-%m-%Y")    
+            name_folder = "train_" + add_in_name + "_" + current_date
+            self.train_name = name_folder
+        else:
+            print(f"Starting training from epoch n° {start_epoch}")
+            name_folder = self.train_name
         
         self.path2classifier            = os.path.join(self.path_models, self.name_dataset, name_folder)
         self.path2results_classifier    = os.path.join(self.path_results, self.name_dataset, name_folder)
@@ -1356,16 +1376,24 @@ class CIFAR_VITEA_benchmark(object):
         # load the optimizer
         optimizer = Adam(self.model.parameters(), lr= self.lr)
         
-        loss_epochs     = []
-        valid_history   = []
+        if start_epoch != 0:
+            loss_epochs     = [*[None] * start_epoch]
+            valid_history   = [*[None] * start_epoch]
+        else:
+            loss_epochs     = []
+            valid_history   = []
         
         # define best validation results
         best_valid = 0                       # to maximize
-        best_valid_epoch = 0
+        best_valid_epoch = start_epoch
         # initialize ditctionary best models
         best_model_dict = copy.deepcopy(self.model.state_dict())
         
-        for epoch_idx in range(self.epochs):
+        for epoch_idx in range((self.epochs - start_epoch)):
+            
+            # include the start epoch in the idx
+            epoch_idx = epoch_idx + start_epoch
+            
             print(f"\n             [Epoch {epoch_idx+1}]             \n")
             
             # init loss over epoch
@@ -1374,7 +1402,7 @@ class CIFAR_VITEA_benchmark(object):
             max_value_att_map = []
             
             for step_idx,(x,y) in tqdm(enumerate(train_dataloader), total= len(train_dataloader)):
-            
+                
                 x = x.to(self.device)
                 # x = self.trans(x)
                 x.requires_grad_(True)
@@ -2157,8 +2185,6 @@ class CIFAR_VITEA_Abnormality_module(OOD_Classifier):
         
         for idx, (x,y) in tqdm(enumerate(valid_dl)):
             
-            if idx > 3: break
-            
             x = x.to(self.device)
             # y = y.to(self.device).to(T.float32)
             
@@ -2230,8 +2256,7 @@ class CIFAR_VITEA_Abnormality_module(OOD_Classifier):
         self.model.train()
         
         # compute the weights for the labels
-        # self.pos_weight_labels = self.compute_class_weights(verbose=True, positive="ood", only_positive_weight= True)
-        self.pos_weight_labels = [1]
+        self.pos_weight_labels = self.compute_class_weights(verbose=True, positive="ood", only_positive_weight= True)
         
         train_dl = DataLoader(self.dataset_train, batch_size= self.batch_size,  num_workers = 8,  shuffle= True,   pin_memory= False)
         valid_dl = DataLoader(self.dataset_valid, batch_size= self.batch_size,  num_workers = 8,  shuffle = False,  pin_memory= False) 
@@ -2271,14 +2296,10 @@ class CIFAR_VITEA_Abnormality_module(OOD_Classifier):
             # update the last epoch for training the model
             last_epoch = epoch_idx +1
             
-            if epoch_idx == 3: break
-            
             # loop over steps
             for step_idx,(x,y) in tqdm(enumerate(train_dl), total= n_steps):
                 
-                showImage(x[0], name=str(y[0,1]))
-                
-                if step_idx == 3: break
+                # showImage(x[0], name=str(y[0,1]))
                 
                 # test steps loop for debug
                 if test_loop and step_idx+1 == 5: break
@@ -2655,12 +2676,18 @@ if __name__ == "__main__":
     
     #                           [Benchmark functions]
     
-    # train & test classifier
+    #                               train & test classifier
     def train_classifier_benchmark(add2name, prog_model = 3, cifar100 = False):
         vitea = CIFAR_VITEA_benchmark(cifar100=cifar100, prog_model=prog_model)
         vitea.train_classifier(add_in_name= add2name)
         # vitea.test(epoch=50, name_folder= "train_50_epochs_22-02-2024")
     
+    def continue_train_classifier_benchmark(name_folder, epoch_start, end_epoch, prog_model = 3, cifar100 = False):
+        vitea = CIFAR_VITEA_benchmark(cifar100=cifar100, prog_model=prog_model)
+        vitea.load_classifier(name_folder=name_folder, epoch=epoch_start)
+        vitea.train_classifier(start_epoch=epoch_start, end_epoch= end_epoch)
+        # vitea
+        
     def train_AE_benchmark(name_folder, epoch_classifier, prog_model = 3, cifar100 = False):
         vitea = CIFAR_VITEA_benchmark(cifar100=cifar100, prog_model= prog_model)
         vitea.load_classifier(name_folder=name_folder, epoch= epoch_classifier)
@@ -2668,12 +2695,12 @@ if __name__ == "__main__":
         
     def test_classifier_benchmark(name_folder, epoch_classifier, prog_model = 3, cifar100 = False):
         vitea = CIFAR_VITEA_benchmark(cifar100=cifar100, prog_model= prog_model)
-        vitea.test(name_folder= name_folder, epoch=epoch_classifier)
+        vitea.test(name_folder= name_folder, epoch=epoch_classifier)   # load is peformed directly in the test function
     
-    # train & test abn module
+    #                               train & test abn module
     
     # load classifier here
-    choose_model = 0
+    choose_model = None
     
     if choose_model == 0:
         cifar100 = False
@@ -2684,7 +2711,6 @@ if __name__ == "__main__":
         classifier = CIFAR_VITEA_benchmark(cifar100=cifar100, prog_model= prog_model)
         classifier.load_classifier(epoch=epoch_classifier, name_folder=name_folder)
         classifier.load_autoencoder(epoch=epoch_autoencodder, name_folder= name_folder)
-    
     
     def train_abn_module(model_type = "encoder_v3"):
         abn = CIFAR_VITEA_Abnormality_module(classifier, model_type= model_type)
@@ -2701,7 +2727,9 @@ if __name__ == "__main__":
     
     # train_classifier_benchmark("DeiT_tiny", prog_model = 3)
     # test_classifier_benchmark("train_DeiT_tiny_22-02-2024", 100, prog_model=3, cifar100=False)
+    
     # train_classifier_benchmark("DeiT_small", prog_model = 2)
+    continue_train_classifier_benchmark("train_DeiT_small_23-02-2024", epoch_start=50, end_epoch=100, prog_model=2)
     
     
     """                            train abn module cifar 10                                """
