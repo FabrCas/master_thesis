@@ -14,20 +14,19 @@ from    torch.cuda.amp                      import GradScaler, autocast
 from    torch.utils.data                    import DataLoader
 from    torch.utils.data                    import random_split
 import  copy
-
+from    sklearn.metrics                     import precision_recall_curve, auc, roc_auc_score
 
 # local modules
 from    dataset                             import CDDB_binary_Partial, getMNIST_dataset, getCIFAR100_dataset, getCIFAR10_dataset,\
                                                     getFMNIST_dataset, getSVHN_dataset, getDTD_dataset, getTinyImageNet_dataset, OOD_dataset
 
 from    models                              import FC_classifier, get_fc_classifier_Keras, ResNet_EDS, Unet4, ViT_b16_ImageNet, \
-                                                    ViT_timm_EA, VAE
+                                                    ViT_timm_EA, VAE, Abnormality_module_Encoder_ViT_v3, Abnormality_module_Encoder_ViT_v4
                                                     
-from    utilities                           import duration, saveModel, loadModel, showImage, check_folder, plot_loss, plot_valid, image2int, \
-                                                    ExpLogger, trans_input_v2, show_imgs_blend, include_attention, metrics_multiClass, sampleValidSet, \
-                                                    saveJson
-                                                    
-from    ood_detection                       import OOD_Classifier, Abnormality_module_Encoder_ViT_v3, Abnormality_module_Encoder_ViT_v4
+from    utilities                           import  duration, saveModel, loadModel, showImage, check_folder, plot_loss, plot_valid, image2int, \
+                                                    ExpLogger, include_attention, metrics_multiClass, sampleValidSet, \
+                                                    saveJson, metrics_OOD
+    
 
 """ 
 #####################################################################################################################
@@ -1188,7 +1187,7 @@ class CIFAR_VITEA_benchmark(object):
         else: self.device = "cpu"
         
         
-        augmentation = False # test to True
+        augmentation = True # test to True
         
         # load train and test data
         if cifar100:
@@ -1217,7 +1216,7 @@ class CIFAR_VITEA_benchmark(object):
         
         # learning hyper-parameters
         self.batch_size     = batch_size
-        self.epochs         = 100
+        self.epochs         = 50
         self.lr             = 1e-3
         
         self.cce            = F.cross_entropy    # categorical cross-entropy, takes logits X and sparse labels (no encoding just index) as input
@@ -1238,7 +1237,7 @@ class CIFAR_VITEA_benchmark(object):
         path_model = os.path.join(self.path_models, self.name_dataset, name_folder, name_model)
         
         self.path2classifier            = os.path.join(self.path_models, self.name_dataset, name_folder)
-        self.path2results_classifier    = os.path.join(self.path_models, self.name_dataset, name_folder)
+        self.path2results_classifier    = os.path.join(self.path_results, self.name_dataset, name_folder)
         
         print(f"Loading the model at location: {path_model}")
         try:
@@ -1337,7 +1336,7 @@ class CIFAR_VITEA_benchmark(object):
         self.train_name = name_folder
         
         self.path2classifier            = os.path.join(self.path_models, self.name_dataset, name_folder)
-        self.path2results_classifier    = os.path.join(self.path_models, self.name_dataset, name_folder)
+        self.path2results_classifier    = os.path.join(self.path_results, self.name_dataset, name_folder)
         
         print(f"Number of samples for the training set: {len(self.train_data)}")
         # init model
@@ -1710,7 +1709,160 @@ class CIFAR_VITEA_benchmark(object):
         self.save_autoencoder(name_folder = name_folder, name_model = name_model)
         self.save_autoencoder(model_dict = best_model_dict, name_folder=name_folder, name_model=name_best_model)
 
-# code inspired from ood_detection module and adapted    
+# code inspired from ood_detection module and adapted 
+class OOD_Classifier(object):
+    
+    def __init__(self, id_data_test = None, ood_data_test = None, id_data_train = None, ood_data_train = None, useGPU = True):
+        super(OOD_Classifier, self).__init__()
+        
+        
+        # train data
+        self.id_data_train  = id_data_train
+        self.ood_data_train = ood_data_train
+        # test sets
+        self.id_data_test   = id_data_test
+        self.ood_data_test  = ood_data_test
+        
+        # classifier types
+        self.types_classifier = ["bin_class", "multi_class", "multi_label_class"]
+        
+        # general paths
+        self.path_models    = "./models/ood_detection"
+        self.path_results   = "./results/ood_detection"
+        
+        # execution specs
+        self.useGPU = useGPU
+        if self.useGPU: self.device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
+        else: self.device = "cpu"
+        
+        
+        # hyper-params
+        self.batch_size     =  256  # 32 -> basic, 64/128 -> encoder
+        
+    #                                      data aux functions
+    def compute_class_weights(self, verbose = False, positive = "ood", multiplier = 1, normalize = True, only_positive_weight = False):
+        
+        # TODO look https://pytorch.org/docs/stable/generated/torch.nn.BCEWithLogitsLoss.html#torch.nn.BCEWithLogitsLoss
+        # to implement just pos weight computation 
+        
+        
+        """ positive (str), if ood is used 1 to represent ood labels and 0 for id. The opposite behavior is obtained using "id" """
+        
+        print("\n\t\t[Computing class weights for the training set]\n")
+        
+        # set modality to load just the label
+        self.dataset_train.set_only_labels(True)
+        loader = DataLoader(self.dataset_train, batch_size= None,  num_workers = 8)  # self.dataset_train is instance of OOD_dataset class
+
+        
+        # compute occurrences of labels
+        class_freq={}
+        total = len(self.dataset_train)
+        self.samples_train = total
+
+    
+        for y in tqdm(loader, total = len(loader)):
+            
+            y = y.detach().cpu().tolist()
+                
+            if positive == "ood":
+                l = y[1]
+            elif positive == "id":
+                l = y[0]
+            else:
+                ValueError('invalid value for the parameter "positive", choose between "ood  and "id"')
+            
+            if l not in class_freq.keys():
+                class_freq[l] = 1
+            else:
+                class_freq[l] = class_freq[l]+1
+        if verbose: print("class_freq -> ", class_freq)
+        
+        # compute the weights   
+        class_weights = []
+        for class_ in sorted(class_freq.keys()):
+            freq = class_freq[class_]
+            class_weights.append(round(total/freq,5))
+
+        # normalize class weights with values between 0 and 1
+        if normalize:
+            max_value = max(class_weights)
+            class_weights = [item/max_value for item in class_weights]
+            
+        # proportional increase over the weights
+        if multiplier != 1:
+            class_weights = [item * multiplier for item in class_weights]
+        
+        print("Class_weights-> ", class_weights)
+                
+        # turn back in loading modality sample + label
+        self.dataset_train.set_only_labels(False)
+        
+        if only_positive_weight:
+            print("Computing weight only for the positive class (label 1)")
+            pos_weight = class_weights[1]/class_weights[0]
+            print("positive class weight-> ", pos_weight)
+            
+            return [pos_weight]
+        else:
+            return class_weights 
+    
+    def compute_metrics_ood(self, id_data, ood_data, path_save = None, positive_reversed = False, epoch = None):
+            """_
+                aux function used to compute fpr95, detection error and relative threshold.
+                con be selected the positive label, the defulat one is for ID data, set to False
+                with the parameter "positive_reversed" for abnormality detection (OOD).
+            """
+            target = np.zeros((id_data.shape[0] + ood_data.shape[0]), dtype= np.int32)
+            
+            if positive_reversed:
+                target[id_data.shape[0]:] += 1
+            else:
+                target[:id_data.shape[0]] += 1
+                
+            # print(target)
+            
+            predictions = np.squeeze(np.vstack((id_data, ood_data)))
+            # get metrics and save AUROC plot
+            metrics_ood = metrics_OOD(targets=target, pred_probs= predictions, pos_label= 1, path_save_plot = path_save, epoch = epoch)
+            
+            return metrics_ood 
+
+    def compute_aupr(self, labels, pred):        
+        p, r, _ = precision_recall_curve(labels, pred)
+        return  auc(r, p)
+    
+    def compute_auroc(self, labels, pred):
+        return roc_auc_score(labels, pred)
+        
+    def compute_curves(self, id_data, ood_data, positive_reversed = False):
+        """_
+            compute AUROC and AUPR, defining the vector of labels from the length of ID and OOD distribution
+            can be chosen which label use as positive, defult is for ID data.
+            set to False the parameter "positive_reversed" for abnormality detection (OOD).
+        """
+        
+        # create the array with the labels initally full of zeros
+        target = np.zeros((id_data.shape[0] + ood_data.shape[0]), dtype= np.int32)
+        
+       
+        # print(target.shape)
+        if positive_reversed:
+            target[id_data.shape[0]:] += 1
+        else:
+            target[:id_data.shape[0]] += 1
+       
+        # print(target.shape)
+        predictions = np.squeeze(np.vstack((id_data, ood_data)))
+        # print(predictions.shape)
+        
+        aupr    = round(self.compute_aupr(target, predictions)*100, 2)
+        auroc   = round(self.compute_auroc(target, predictions)*100, 2)
+        print("\tAUROC(%)-> {}".format(auroc))
+        print("\tAUPR (%)-> {}".format(aupr))
+        
+        return aupr, auroc
+
 class CIFAR_VITEA_Abnormality_module(OOD_Classifier):
 
     def __init__(self, classifier: CIFAR_VITEA_benchmark, model_type: str, useGPU: bool= True, batch_size = 64, balancing_mode: str = "max", \
@@ -1799,6 +1951,8 @@ class CIFAR_VITEA_Abnormality_module(OOD_Classifier):
         self.model.eval()
     
     def _get_ID_dataset(self, train:bool , transform_ood:bool):
+        """ available OOD dataset: "cifar10","cifar100 """
+        
         if self.id_dataset == "cifar10":
             data = getCIFAR10_dataset(train = train, ood_synthesis=transform_ood)
         elif self.id_dataset == "cifar100":
@@ -1807,7 +1961,9 @@ class CIFAR_VITEA_Abnormality_module(OOD_Classifier):
             raise ValueError("ID dataset name is not valid")
         return data
     
-    def _get_OOD_dataset(self, train:bool): #"cifar10","cifar100","mnist","fmnist", "svhn", "dtd", "tiny_imagenet".
+    def _get_OOD_dataset(self, train:bool): #
+        """ available OOD dataset: "cifar10","cifar100","mnist","fmnist", "svhn", "dtd", "tiny_imagenet"."""
+        
         if self.id_dataset == "cifar10":
             data = getCIFAR10_dataset(train = train)
         elif self.id_dataset == "cifar100":
@@ -1885,7 +2041,6 @@ class CIFAR_VITEA_Abnormality_module(OOD_Classifier):
         except Exception as e:
             print(e)
             print("No model: {} found for the epoch: {} in the folder: {}".format(name_folder, epoch, path2model))
-    
     
     #           forward methods 
     def _forward_A(self, x, verbose = False, show = False):
@@ -2000,7 +2155,9 @@ class CIFAR_VITEA_Abnormality_module(OOD_Classifier):
         losses = []
 
         
-        for (x,y) in tqdm(valid_dl):
+        for idx, (x,y) in tqdm(enumerate(valid_dl)):
+            
+            if idx > 3: break
             
             x = x.to(self.device)
             # y = y.to(self.device).to(T.float32)
@@ -2062,6 +2219,9 @@ class CIFAR_VITEA_Abnormality_module(OOD_Classifier):
         # get paths to save files on model and results
         path_save_model     = os.path.join(self.classifier.path2classifier, train_name)
         path_save_results   = os.path.join(self.classifier.path2results_classifier, train_name)
+        
+        check_folder(path_save_model)
+        check_folder(path_save_results)
 
         # print(path_save_model)
         # print(path_save_results)
@@ -2070,7 +2230,8 @@ class CIFAR_VITEA_Abnormality_module(OOD_Classifier):
         self.model.train()
         
         # compute the weights for the labels
-        self.pos_weight_labels = self.compute_class_weights(verbose=True, positive="ood", only_positive_weight= True)
+        # self.pos_weight_labels = self.compute_class_weights(verbose=True, positive="ood", only_positive_weight= True)
+        self.pos_weight_labels = [1]
         
         train_dl = DataLoader(self.dataset_train, batch_size= self.batch_size,  num_workers = 8,  shuffle= True,   pin_memory= False)
         valid_dl = DataLoader(self.dataset_valid, batch_size= self.batch_size,  num_workers = 8,  shuffle = False,  pin_memory= False) 
@@ -2110,8 +2271,14 @@ class CIFAR_VITEA_Abnormality_module(OOD_Classifier):
             # update the last epoch for training the model
             last_epoch = epoch_idx +1
             
+            if epoch_idx == 3: break
+            
             # loop over steps
             for step_idx,(x,y) in tqdm(enumerate(train_dl), total= n_steps):
+                
+                showImage(x[0], name=str(y[0,1]))
+                
+                if step_idx == 3: break
                 
                 # test steps loop for debug
                 if test_loop and step_idx+1 == 5: break
@@ -2227,13 +2394,12 @@ class CIFAR_VITEA_Abnormality_module(OOD_Classifier):
         saveModel(self.model, path_model_save)
         saveModel(best_model_dict, path_best_model_save, is_dict= True)
     
-    def test_risk(self, name_folder_abn, task_type_prog = None):
+    def test_risk(self):
             
             # saving folder path
-            path_results_folder         = os.path.join(self.classifier.path2results_classifier, name_folder_abn)
+            path_results_folder         = os.path.join(self.classifier.path2results_classifier, self.train_name)
             
             # 1) prepare meta-data
-            self._meta_data(task_type_prog= task_type_prog)
             self.model.eval()
             
             # 2) prepare test
@@ -2381,22 +2547,12 @@ class CIFAR_VITEA_Abnormality_module(OOD_Classifier):
             }
             
             # save data (JSON)
-            if self.name_ood_data is not None:
-                name_result_file            = 'metrics_ood_{}.json'.format(self.modelEpochs)
-                path_result_save            = os.path.join(path_results_folder, name_result_file)   # full path to json file
-                
-                print(path_result_save)
-                saveJson(path_file = path_result_save, data = data)
+            name_result_file            = 'metrics_ood_{}.json'.format(self.modelEpochs)
+            path_result_save            = os.path.join(path_results_folder, name_result_file)   # full path to json file
+            
+            print(path_result_save)
+            saveJson(path_file = path_result_save, data = data)
     
-
-    
-
-
-
-
-
-
-
 
 if __name__ == "__main__":
     #                           [Start test section] 
@@ -2516,11 +2672,42 @@ if __name__ == "__main__":
     
     # train & test abn module
     
+    # load classifier here
+    choose_model = 0
+    
+    if choose_model == 0:
+        cifar100 = False
+        prog_model = 3
+        name_folder = "train_DeiT_tiny_22-02-2024"
+        epoch_classifier = 100
+        epoch_autoencodder = None
+        classifier = CIFAR_VITEA_benchmark(cifar100=cifar100, prog_model= prog_model)
+        classifier.load_classifier(epoch=epoch_classifier, name_folder=name_folder)
+        classifier.load_autoencoder(epoch=epoch_autoencodder, name_folder= name_folder)
+    
+    
+    def train_abn_module(model_type = "encoder_v3"):
+        abn = CIFAR_VITEA_Abnormality_module(classifier, model_type= model_type)
+        abn.train(additional_name= "test")
+        
+    def test_abn_module(name_folder, epoch, model_type= "encoder_v3"): 
+        abn = CIFAR_VITEA_Abnormality_module(classifier, model_type= model_type)
+        abn.load(name_folder_abn = name_folder, epoch= epoch)
+        abn.test_risk()
     
 
     
-    # train cifar 10
-    train_classifier_benchmark("DeiT_tiny", prog_model = 3)
+    """                              train cifar 10                                         """
+    
+    # train_classifier_benchmark("DeiT_tiny", prog_model = 3)
+    # test_classifier_benchmark("train_DeiT_tiny_22-02-2024", 100, prog_model=3, cifar100=False)
+    # train_classifier_benchmark("DeiT_small", prog_model = 2)
+    
+    
+    """                            train abn module cifar 10                                """
+    
+    # train_abn_module()
+    # test_abn_module("Abnormality_module_ViT_encoder_v3_test_24-02-2024", 4)
     
     
     #                           [End test section] 

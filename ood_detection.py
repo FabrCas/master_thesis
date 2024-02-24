@@ -24,6 +24,7 @@ from    models              import Abnormality_module_Basic, Abnormality_module_
                             
 from    utilities           import saveJson, loadJson, metrics_binClass, metrics_OOD, print_dict, showImage, check_folder, sampleValidSet, \
                             mergeDatasets, ExpLogger, loadModel, saveModel, duration, plot_loss, plot_valid
+                            
 
 class OOD_Classifier(object):
     
@@ -78,9 +79,6 @@ class OOD_Classifier(object):
     
         for y in tqdm(loader, total = len(loader)):
             
-            # print(y.shape)
-            # print(y.shape)
-            # l = y.item()
             y = y.detach().cpu().tolist()
                 
             if positive == "ood":
@@ -1425,7 +1423,7 @@ class Confidence_Detector(OOD_Classifier):
             pred = np.where(condition= confidence < threshold, x=1, y=0)  # if true set x otherwise set y
         return pred
     
-class Abnormality_module(OOD_Classifier):   # model to train necessary 
+class Abnormality_Detector(OOD_Classifier):   # model to train necessary 
     """ Custom implementation of the abnormality module using Unet4, look https://arxiv.org/abs/1610.02136 chapter 4"
     
     model_type (str): choose between: "basic", 
@@ -1455,7 +1453,7 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
             combine (stack) the confidence with the probabilities vector, "ignore" avoid the use of confidence for the ood detection, "alone" exchange the probability
             vector with the confidence degree.
         """
-        super(Abnormality_module, self).__init__(useGPU=useGPU)
+        super(Abnormality_Detector, self).__init__(useGPU=useGPU)
         
         # set the classifier (module A)
         self.classifier  = classifier
@@ -2327,7 +2325,7 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
 # 1) stack original attention map and reconstruction
 # 2) use also the attention map from the other token after interpolation (another 224è grey image)
 
-class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary 
+class Abnormality_Detector_ViT(OOD_Classifier):   # model to train necessary 
     """ 
         Modification of Abnormality_module for ViT model, using attention map instead of image reconstruction
     """
@@ -2364,7 +2362,7 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
             Defaults to "residual" 
             
         """
-        super(Abnormality_module_ViT, self).__init__(useGPU=useGPU)
+        super(Abnormality_Detector_ViT, self).__init__(useGPU=useGPU)
         
         # set the classifier (module A)
         self.classifier  = classifier
@@ -3042,7 +3040,6 @@ class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary
         # terminate the logger
         logger.end_log(model_results_folder_path = path_save_results)
 
-        
     def test_risk(self, task_type_prog = None):
         
         # saving folder path
@@ -3372,7 +3369,7 @@ if __name__ == "__main__":
     # ________________________________ abnormality module  _____________________________
     
     def train_abn_basic():        
-        abn = Abnormality_module(classifier, scenario = "content", model_type="basic")
+        abn = Abnormality_Detector(classifier, scenario = "content", model_type="basic")
         abn.train(additional_name="112p", test_loop=True)
         
         # x = T.rand((1,3,112,112)).to(abn.device)
@@ -3390,36 +3387,36 @@ if __name__ == "__main__":
     def train_abn_encoder(type_encoder = "encoder_v3", add_name = "", att_map_mode = "residual"):
         
         if classifier_model == 2:
-            abn = Abnormality_module_ViT(classifier, scenario = scenario, model_type= type_encoder, att_map_mode=att_map_mode)
+            abn = Abnormality_Detector_ViT(classifier, scenario = scenario, model_type= type_encoder, att_map_mode=att_map_mode)
         else: 
-            abn = Abnormality_module(classifier, scenario = scenario, model_type= type_encoder, conf_usage_mode = conf_usage_mode)
+            abn = Abnormality_Detector(classifier, scenario = scenario, model_type= type_encoder, conf_usage_mode = conf_usage_mode)
         # abn.train(additional_name= resolution + "_ignored_confidence" , test_loop=False)
         abn.train(additional_name= add2name(resolution, add_name)  , test_loop=False)
         
     def train_extended_abn_encoder(type_encoder = "encoder_v3", add_name = ""):
         """ uses extended OOD data"""
         if classifier_model == 2:
-            abn = Abnormality_module_ViT(classifier, scenario = scenario, model_type= type_encoder, extended_ood = True)
+            abn = Abnormality_Detector_ViT(classifier, scenario = scenario, model_type= type_encoder, extended_ood = True)
         else: 
-            abn = Abnormality_module(classifier, scenario = scenario, model_type= type_encoder, extended_ood = True,  conf_usage_mode = conf_usage_mode)
+            abn = Abnormality_Detector(classifier, scenario = scenario, model_type= type_encoder, extended_ood = True,  conf_usage_mode = conf_usage_mode)
         abn.train(additional_name= add2name(resolution, add_name) + "_extendedOOD", test_loop=False)
         
     def train_nosynt_abn_encoder(type_encoder = "encoder_v3", add_name = ""):
         """ uses extended OOD data"""
         
         if classifier_model == 2:
-            abn = Abnormality_module_ViT(classifier, scenario = scenario, model_type= type_encoder, use_synthetic= False)
+            abn = Abnormality_Detector_ViT(classifier, scenario = scenario, model_type= type_encoder, use_synthetic= False)
         else: 
-            abn = Abnormality_module(classifier, scenario = scenario, model_type=type_encoder, use_synthetic= False,  conf_usage_mode = conf_usage_mode)
+            abn = Abnormality_Detector(classifier, scenario = scenario, model_type=type_encoder, use_synthetic= False,  conf_usage_mode = conf_usage_mode)
         abn.train(additional_name= add2name(resolution, add_name) + "_nosynt", test_loop=False)
     
     def train_full_extended_abn_encoder(type_encoder = "encoder_v3", add_name = ""):
         
         """ uses extended OOD data"""
         if classifier_model == 2:
-            abn = Abnormality_module_ViT(classifier, scenario = scenario, model_type= type_encoder, extended_ood = True, balancing_mode="all")
+            abn = Abnormality_Detector_ViT(classifier, scenario = scenario, model_type= type_encoder, extended_ood = True, balancing_mode="all")
         else: 
-            abn = Abnormality_module(classifier, scenario = scenario, model_type= type_encoder, extended_ood = True, balancing_mode="all",  conf_usage_mode = conf_usage_mode)
+            abn = Abnormality_Detector(classifier, scenario = scenario, model_type= type_encoder, extended_ood = True, balancing_mode="all",  conf_usage_mode = conf_usage_mode)
         abn.train(additional_name = add2name(resolution, add_name) + "_fullExtendedOOD", test_loop=False)
     
     def test_abn(name_model, epoch, type_encoder = "encoder_v3", att_map_mode = "residual"):
@@ -3453,9 +3450,9 @@ if __name__ == "__main__":
         
         # load model
         if classifier_model == 2:
-            abn = Abnormality_module_ViT(classifier, scenario=scenario, model_type= type_encoder, att_map_mode = att_map_mode)
+            abn = Abnormality_Detector_ViT(classifier, scenario=scenario, model_type= type_encoder, att_map_mode = att_map_mode)
         else: 
-            abn = Abnormality_module(classifier, scenario=scenario, model_type=type_encoder,  conf_usage_mode = conf_usage_mode)
+            abn = Abnormality_Detector(classifier, scenario=scenario, model_type=type_encoder,  conf_usage_mode = conf_usage_mode)
             
         abn.load(name_model, epoch)
         

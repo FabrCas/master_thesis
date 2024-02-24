@@ -1641,26 +1641,26 @@ class oodTransform():
         n_distortions   = 5
         jpeg_quality    = 10
         
-        distortion_idx  = self.idx%n_distortions    
+        distortion_idx  = self.idx%n_distortions   
         
         if distortion_idx == 0:                 # blur distortion
-            # print("blur distortion")
-            x  = np.array(x)
-            x_ = add_blur(x)
+            print("blur distortion")
+            x  = np.array(x)    # (height, width, color channel) 
+            x_ = add_blur(x, complexity=1)
             x_ = self.toTensor(x_)
             
         elif distortion_idx == 1:               # normal noise distortion 
-            # print("noise distortion")
+            print("noise distortion")
             x  = self.toTensor(x)
             x_ = add_noise(x)
             
         elif distortion_idx == 2:               # normal noise + perturbations distortion 
-            # print("noise random distortion")
+            print("noise random distortion")
             x  = self.toTensor(x)
             x_ = add_distortion_noise(x)
             
         elif distortion_idx == 3:               # normal noise + rotations distortion 
-            # print("noise distortion + rotation")
+            print("noise distortion + rotation")
             
             times_rotation = np.random.randint(low = 1, high=4) # random integer from 0 to 1
             x  = np.array(x)
@@ -1671,7 +1671,7 @@ class oodTransform():
             x_ = add_noise(x)
         
         elif distortion_idx == 4:
-            # print("JPEG compression")
+            print("JPEG compression")
             # x  = np.array(x)
             # Perform JPEG compression with a specified quality (0-100, higher is better quality)
             compressed_image_bytesio = BytesIO()
@@ -1687,7 +1687,7 @@ class oodTransform():
             x_  = np.array(compressed_image)
             x_  = self.toTensor(x_)
         
-        print(x_.shape)
+        # print(x_.shape)
         # convert and clamp btw 0 and 1
         x_ = x_.to(T.float32)
         x_ = T.clamp(x_, 0 ,1)
@@ -1720,8 +1720,8 @@ def getCIFAR10_dataset(train, width_img= w, height_img = h, augment = False, ood
     else:
         if ood_synthesis:
             transform_ops = transforms.Compose([
-                v2.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
                 oodTransform(),
+                v2.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
                 v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
                 lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
             ])
@@ -1745,6 +1745,8 @@ def getCIFAR10_dataset(train, width_img= w, height_img = h, augment = False, ood
     else:
         cifar10 = torchvision.datasets.CIFAR10(root=CIFAR10_PATH, train=False, download = False, transform=transform_ops)
     
+    # print(cifar10.__getitem__)
+    
     return cifar10
 
 def getCIFAR100_dataset(train, width_img= w, height_img = h, augment = False, ood_synthesis = False):
@@ -1757,7 +1759,7 @@ def getCIFAR100_dataset(train, width_img= w, height_img = h, augment = False, oo
         
     Returns:
         torch.Dataset : Cifar100 dataset object
-    """
+    """        
     if augment:
         transform_ops = transforms.Compose([
             v2.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
@@ -1769,11 +1771,19 @@ def getCIFAR100_dataset(train, width_img= w, height_img = h, augment = False, oo
         ])
         
     else:
-        transform_ops = transforms.Compose([
-            v2.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
-            v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
-            lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
-        ])
+        if ood_synthesis:
+            transform_ops = transforms.Compose([
+                v2.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
+                oodTransform(),
+                v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+                lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
+            ])
+        else:
+            transform_ops = transforms.Compose([
+                v2.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
+                v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
+                lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
+            ])
     
     # create folder if not exists and download locally
     if not(os.path.exists(CIFAR100_PATH)):
