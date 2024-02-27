@@ -1696,7 +1696,7 @@ class oodTransform():
         
         return x_
     
-def getCIFAR10_dataset(train, width_img= w, height_img = h, augment = False, ood_synthesis = False):
+def getCIFAR10_dataset(train, resolution = w, augment = False, ood_synthesis = False):
     """ get CIFAR10 dataset
         original spatial dim: 32x32
     Args:
@@ -1709,11 +1709,12 @@ def getCIFAR10_dataset(train, width_img= w, height_img = h, augment = False, ood
     """
     if augment:
         transform_ops = transforms.Compose([
-            v2.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
+            v2.Resize((resolution, resolution), interpolation= InterpolationMode.BILINEAR, antialias= True),
+            v2.RandomHorizontalFlip(), # FLips the image w.r.t horizontal axis
+            v2.RandomRotation(10),     #Rotates the image to a specified angel
+            v2.RandomAffine(0, shear=10, scale=(0.8,1.2)), #Performs actions like zooms, change shear angles.
+            v2.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2), # Set the color params
             v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
-            v2.RandomHorizontalFlip(0.5),   
-            v2.RandomVerticalFlip(0.1),
-            v2.RandAugment(num_ops = 1, magnitude= 7, num_magnitude_bins= 51, interpolation = InterpolationMode.BILINEAR),
             lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
         ])
         
@@ -1721,13 +1722,13 @@ def getCIFAR10_dataset(train, width_img= w, height_img = h, augment = False, ood
         if ood_synthesis:
             transform_ops = transforms.Compose([
                 oodTransform(),
-                v2.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
+                v2.Resize((resolution, resolution), interpolation= InterpolationMode.BILINEAR, antialias= True),
                 v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
                 lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
             ])
         else:
             transform_ops = transforms.Compose([
-                v2.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
+                v2.Resize((resolution, resolution), interpolation= InterpolationMode.BILINEAR, antialias= True),
                 v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
                 lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
             ])
@@ -1749,7 +1750,7 @@ def getCIFAR10_dataset(train, width_img= w, height_img = h, augment = False, ood
     
     return cifar10
 
-def getCIFAR100_dataset(train, width_img= w, height_img = h, augment = False, ood_synthesis = False):
+def getCIFAR100_dataset(train, resolution = w, augment = False, ood_synthesis = False):
     """ get CIFAR100 dataset
         original spatial dim: 32x32
     Args:
@@ -1762,25 +1763,26 @@ def getCIFAR100_dataset(train, width_img= w, height_img = h, augment = False, oo
     """        
     if augment:
         transform_ops = transforms.Compose([
-            v2.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
+            v2.Resize((resolution, resolution), interpolation= InterpolationMode.BILINEAR, antialias= True),
+            v2.RandomHorizontalFlip(), # FLips the image w.r.t horizontal axis
+            v2.RandomRotation(10),     #Rotates the image to a specified angel
+            v2.RandomAffine(0, shear=10, scale=(0.8,1.2)), #Performs actions like zooms, change shear angles.
+            v2.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2), # Set the color params
             v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
-            v2.RandomHorizontalFlip(0.5),   
-            v2.RandomVerticalFlip(0.1),
-            v2.RandAugment(num_ops = 1, magnitude= 7, num_magnitude_bins= 51, interpolation = InterpolationMode.BILINEAR),
             lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
         ])
         
     else:
         if ood_synthesis:
             transform_ops = transforms.Compose([
-                v2.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
+                v2.Resize((resolution, resolution), interpolation= InterpolationMode.BILINEAR, antialias= True),
                 oodTransform(),
                 v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
                 lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
             ])
         else:
             transform_ops = transforms.Compose([
-                v2.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
+                v2.Resize((resolution, resolution), interpolation= InterpolationMode.BILINEAR, antialias= True),
                 v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
                 lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
             ])
@@ -1799,7 +1801,7 @@ def getCIFAR100_dataset(train, width_img= w, height_img = h, augment = False, oo
     
     return cifar100
 
-def getMNIST_dataset(train, width_img = w, height_img = h):
+def getMNIST_dataset(train, resolution = w):
     """ get MNIST dataset
         original spatial dim: 28x28
 
@@ -1816,7 +1818,7 @@ def getMNIST_dataset(train, width_img = w, height_img = h):
         
     """
     transform_ops = transforms.Compose([
-        v2.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
+        v2.Resize((resolution, resolution), interpolation= InterpolationMode.BILINEAR, antialias= True),
         v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
         gray2colorTransform(),
         lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
@@ -1836,7 +1838,7 @@ def getMNIST_dataset(train, width_img = w, height_img = h):
     
     return mnist
     
-def getFMNIST_dataset(train, width_img = w, height_img = h):
+def getFMNIST_dataset(train, resolution = w):
     """ get FashionMNIST dataset
         original spatial dim: 28x28
     Args:
@@ -1848,7 +1850,7 @@ def getFMNIST_dataset(train, width_img = w, height_img = h):
         torch.Dataset : Cifar100 dataset object
     """
     transform_ops = transforms.Compose([
-        v2.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
+        v2.Resize((resolution, resolution), interpolation= InterpolationMode.BILINEAR, antialias= True),
         v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
         gray2colorTransform(),
         lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
@@ -1868,7 +1870,7 @@ def getFMNIST_dataset(train, width_img = w, height_img = h):
     
     return fmnist
     
-def getSVHN_dataset(train, width_img = w, height_img = h):
+def getSVHN_dataset(train, resolution = w):
     """ get SVHN dataset
         original spatial dim: 32x32
     Args:
@@ -1880,7 +1882,7 @@ def getSVHN_dataset(train, width_img = w, height_img = h):
         torch.Dataset : SVHN dataset object
     """
     transform_ops = transforms.Compose([
-        v2.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
+        v2.Resize((resolution, resolution), interpolation= InterpolationMode.BILINEAR, antialias= True),
         v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
         gray2colorTransform(),
         lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
@@ -1900,7 +1902,7 @@ def getSVHN_dataset(train, width_img = w, height_img = h):
     
     return svhn
 
-def getDTD_dataset(train, width_img = w, height_img = h, partition = 1 ):
+def getDTD_dataset(train, resolution = w, partition = 1):
     """ get DTD dataset, first partition by defaults
         original spatial dim: varies
     Args:
@@ -1912,7 +1914,7 @@ def getDTD_dataset(train, width_img = w, height_img = h, partition = 1 ):
         torch.Dataset : DTD dataset object
     """
     transform_ops = transforms.Compose([
-        v2.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
+        v2.Resize((resolution, resolution), interpolation= InterpolationMode.BILINEAR, antialias= True),
         v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
         gray2colorTransform(),
         lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]
@@ -1937,12 +1939,12 @@ def getDTD_dataset(train, width_img = w, height_img = h, partition = 1 ):
     
     return dtd
 
-def getTinyImageNet_dataset(split = "train" ,width_img = w, height_img =h):
+def getTinyImageNet_dataset(split = "train" ,resolution = w):
     """ split (str):  choose between "train", "val", "test """
     # original spatial dim: varies
     
     transform_ops = transforms.Compose([
-        v2.Resize((width_img, height_img), interpolation= InterpolationMode.BICUBIC, antialias= True),
+        v2.Resize((resolution, resolution), interpolation= InterpolationMode.BICUBIC, antialias= True),
         v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
         gray2colorTransform(),
         lambda x: T.clamp(x, 0, 1),  # Clip values to [0, 1]

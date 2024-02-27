@@ -9,7 +9,7 @@ from    datetime                            import date
 # pytorch
 import  torch                               as T
 from    torch.nn                            import functional as F
-from    torch.optim                         import Adam, lr_scheduler
+from    torch.optim                         import Adam, lr_scheduler, SGD
 from    torch.cuda.amp                      import GradScaler, autocast
 from    torch.utils.data                    import DataLoader
 from    torch.utils.data                    import random_split
@@ -1180,22 +1180,24 @@ class CIFAR_ViTEA_Classifier(object):
 # code inspired from bin_ViTClassifier module and adapted
 class CIFAR_VITEA_benchmark(object):
     """ simple classifier for the MNIST dataset on handwritten digits, implemented using pytorch """
-    def __init__(self, prog_model = 3, batch_size = 64, useGPU = True, cifar100 = False):
+    def __init__(self, prog_model = 3, batch_size = 64, useGPU = True, cifar100 = False, image_size = 224):
         super(CIFAR_VITEA_benchmark, self).__init__()
         self.useGPU         = useGPU
         if self.useGPU: self.device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
         else: self.device = "cpu"
         
+        self.image_size = image_size
+        only_transfNorm = True
         
-        augmentation = True # test to True
+        augmentation = True # train augmentation
         
         # load train and test data
         if cifar100:
-            self.train_data = getCIFAR100_dataset(train = True, augment = augmentation)
-            self.test_data  = getCIFAR100_dataset(train = False, augment = augmentation)
+            self.train_data = getCIFAR100_dataset(train = True, augment = augmentation, resolution= self.image_size)
+            self.test_data  = getCIFAR100_dataset(train = False, augment = False,  resolution= self.image_size)
         else:
-            self.train_data = getCIFAR10_dataset(train = True, augment = augmentation)
-            self.test_data  = getCIFAR10_dataset(train = False, augment = augmentation)
+            self.train_data = getCIFAR10_dataset(train = True, augment = augmentation,  resolution= self.image_size)
+            self.test_data  = getCIFAR10_dataset(train = False, augment = False,  resolution= self.image_size)
             
         
         # load the model
@@ -1205,9 +1207,9 @@ class CIFAR_VITEA_benchmark(object):
         else:
             n_classes = 10
             
-        self.model = ViT_timm_EA(n_classes=n_classes, prog_model=prog_model) 
+        self.model = ViT_timm_EA(n_classes=n_classes, prog_model=prog_model ,only_transfNorm= only_transfNorm) 
         self.model.to(self.device)
-        self.autoencoder = VAE() 
+        self.autoencoder = VAE(image_size= image_size) 
         self.autoencoder.to(self.device)
         
         self.path_models    = "./models/benchmarks"
@@ -1217,9 +1219,12 @@ class CIFAR_VITEA_benchmark(object):
         # learning hyper-parameters
         self.batch_size     = batch_size
         self.epochs         = 50
-        self.lr             = 1e-3
+        self.lr             = 1e-3# 1e-3
+        self.lr_ae          = 1e-3
+        self.weight_decay   = 1e-3
         
-        self.cce            = F.cross_entropy    # categorical cross-entropy, takes logits X and sparse labels (no encoding just index) as input
+        # self.cce            = F.cross_entropy    # categorical cross-entropy, takes logits X and sparse labels (no encoding just index) as input
+        self.cce            = T.nn.CrossEntropyLoss()
         self.softmax        = F.softmax
         self.mse            = T.nn.MSELoss()
         self.mae            = T.nn.L1Loss()
@@ -1363,18 +1368,23 @@ class CIFAR_VITEA_benchmark(object):
         self.model.train()
         
         # split train in train and valid
-        
-        train_size = int(0.9 * len(self.train_data))
-        val_size = len(self.train_data) - train_size
-        train_dataset, val_dataset = random_split(self.train_data, [train_size, val_size])
+        test_size = int(0.8 * len(self.test_data))
+        val_size = len(self.test_data) - test_size
+        _, val_dataset = random_split(self.test_data, [test_size, val_size])
   
         # get dataloader
-        train_dataloader = DataLoader(train_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
+        train_dataloader = DataLoader(self.train_data, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
         
         valid_dataloader = DataLoader(val_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
 
         # load the optimizer
-        optimizer = Adam(self.model.parameters(), lr= self.lr)
+        # optimizer = Adam(self.model.parameters(), lr= self.lr)
+        optimizer = SGD(self.model.parameters(), lr=self.lr, momentum= 0.9)
+        
+        # scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=[math.ceil(self.epochs*0.25), math.ceil(self.epochs*0.5), math.ceil(self.epochs* 0.75)], gamma=0.5)
+        scheduler = lr_scheduler.CosineAnnealingWarmRestarts(optimizer=optimizer, T_0 = 5, T_mult =2, eta_min=1e-6)
+        
+        # scaler = GradScaler()
         
         if start_epoch != 0:
             loss_epochs     = [*[None] * start_epoch]
@@ -1403,6 +1413,9 @@ class CIFAR_VITEA_benchmark(object):
             
             for step_idx,(x,y) in tqdm(enumerate(train_dataloader), total= len(train_dataloader)):
                 
+                
+                # showImage(x[0])
+                
                 x = x.to(self.device)
                 # x = self.trans(x)
                 x.requires_grad_(True)
@@ -1425,8 +1438,16 @@ class CIFAR_VITEA_benchmark(object):
                 loss_epoch += loss.item()
                 
                 # backpropagation and update
+                
+                # scaler.scale(loss).backward()
                 loss.backward()
+                
+                # scaler.step(optimizer=optimizer)
                 optimizer.step()
+                
+                # scaler.update()
+                
+                scheduler.step()
             
             # compute average loss for the epoch
             avg_loss = loss_epoch/len(train_dataloader)
@@ -1447,7 +1468,13 @@ class CIFAR_VITEA_benchmark(object):
                 best_valid = criterion
                 best_model_dict = copy.deepcopy(self.model.state_dict())
                 best_valid_epoch = epoch_idx+1
-                print("** new best classifier **")   
+                print("** new best classifier **")
+                
+            # test accuracy
+            accuracy_test = self.test_accuracy()  
+            
+            # if accuracy_test >= 95:
+            #     break
 
             
             # if epoch_idx == 2: break
@@ -1502,6 +1529,8 @@ class CIFAR_VITEA_benchmark(object):
         # compute accuracy
         accuracy = accuracy_score(y_true = targets, y_pred = predictions)
         print(f"Accuracy: {accuracy}")
+        
+        return accuracy
         
     @duration
     def test(self, name_folder, epoch):
@@ -1650,7 +1679,7 @@ class CIFAR_VITEA_benchmark(object):
         valid_dataloader = DataLoader(val_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
 
         # load the optimizer
-        optimizer = Adam(self.autoencoder.parameters(), lr= self.lr)
+        optimizer = Adam(self.autoencoder.parameters(), lr= self.lr_ae, weight_decay= self.weight_decay)
         
         loss_epochs     = []
         valid_history   = []
@@ -1894,7 +1923,7 @@ class OOD_Classifier(object):
 class CIFAR_VITEA_Abnormality_module(OOD_Classifier):
 
     def __init__(self, classifier: CIFAR_VITEA_benchmark, model_type: str, useGPU: bool= True, batch_size = 64, balancing_mode: str = "max", \
-                 id_dataset = "cifar100", ood_dataset = "mnist", att_map_mode = "residual"):
+                 id_dataset = "cifar100", ood_dataset = "mnist", att_map_mode = "residual", image_size = 224):
         """ 
             ARGS:
             - classifier (CIFAR_VITEA_benchmark): the ViT classifier + Autoencoder (Module A) that produces the input for Module B (abnormality module)
@@ -1917,6 +1946,8 @@ class CIFAR_VITEA_Abnormality_module(OOD_Classifier):
             -- "full_cls_rec_attention_maps", use cls_attention_map, its reconstruction and the attention map over patches (stacked)
             -- "residual_full_attention_map", use residual and attention map of pathes (stacked)
             Defaults to "residual" 
+            
+            - image_size (int, optional): spatial dimension for the input images. Defaults is 224
         """
         super(CIFAR_VITEA_Abnormality_module, self).__init__(useGPU=useGPU)
         
@@ -1926,6 +1957,7 @@ class CIFAR_VITEA_Abnormality_module(OOD_Classifier):
         self.att_map_mode = att_map_mode
         
         self.name               = "Abnormality_module_ViT"
+        self.image_size         = image_size
         
         # configuration variables for abnormality module (module B)
         self.augment_data_train = False
@@ -1982,9 +2014,9 @@ class CIFAR_VITEA_Abnormality_module(OOD_Classifier):
         """ available OOD dataset: "cifar10","cifar100 """
         
         if self.id_dataset == "cifar10":
-            data = getCIFAR10_dataset(train = train, ood_synthesis=transform_ood)
+            data = getCIFAR10_dataset(train = train, ood_synthesis=transform_ood, resolution= self.image_size)
         elif self.id_dataset == "cifar100":
-            data = getCIFAR100_dataset(train = train, ood_synthesis=transform_ood) 
+            data = getCIFAR100_dataset(train = train, ood_synthesis=transform_ood, resolution= self.image_size) 
         else:
             raise ValueError("ID dataset name is not valid")
         return data
@@ -1993,19 +2025,19 @@ class CIFAR_VITEA_Abnormality_module(OOD_Classifier):
         """ available OOD dataset: "cifar10","cifar100","mnist","fmnist", "svhn", "dtd", "tiny_imagenet"."""
         
         if self.id_dataset == "cifar10":
-            data = getCIFAR10_dataset(train = train)
+            data = getCIFAR10_dataset(train = train, resolution= self.image_size)
         elif self.id_dataset == "cifar100":
-            data = getCIFAR100_dataset(train = train) 
+            data = getCIFAR100_dataset(train = train, resolution= self.image_size) 
         elif self.id_dataset == "mnist":
-            data = getMNIST_dataset(train = train) 
+            data = getMNIST_dataset(train = train, resolution= self.image_size) 
         elif self.id_dataset == "fmnist":
-            data = getFMNIST_dataset(train = train)
+            data = getFMNIST_dataset(train = train, resolution= self.image_size)
         elif self.id_dataset == "svhn":
-            data = getSVHN_dataset(train = train)
+            data = getSVHN_dataset(train = train, resolution= self.image_size)
         elif self.id_dataset == "dtd":
-            data = getDTD_dataset(train = train)
+            data = getDTD_dataset(train = train, resolution= self.image_size)
         elif self.id_dataset == "tiny_imagenet":
-            data = getTinyImageNet_dataset(train = train)
+            data = getTinyImageNet_dataset(train = train, resolution= self.image_size)
         else:
             raise ValueError("OOD dataset name is not valid")
         return data
@@ -2677,24 +2709,25 @@ if __name__ == "__main__":
     #                           [Benchmark functions]
     
     #                               train & test classifier
-    def train_classifier_benchmark(add2name, prog_model = 3, cifar100 = False):
-        vitea = CIFAR_VITEA_benchmark(cifar100=cifar100, prog_model=prog_model)
+    def train_classifier_benchmark(add2name, prog_model = 3, cifar100 = False, image_size = 224):
+        
+        vitea = CIFAR_VITEA_benchmark(cifar100=cifar100, prog_model=prog_model, image_size = image_size)
         vitea.train_classifier(add_in_name= add2name)
         # vitea.test(epoch=50, name_folder= "train_50_epochs_22-02-2024")
     
-    def continue_train_classifier_benchmark(name_folder, epoch_start, end_epoch, prog_model = 3, cifar100 = False):
-        vitea = CIFAR_VITEA_benchmark(cifar100=cifar100, prog_model=prog_model)
+    def continue_train_classifier_benchmark(name_folder, epoch_start, end_epoch, prog_model = 3, cifar100 = False, image_size = 224):
+        vitea = CIFAR_VITEA_benchmark(cifar100=cifar100, prog_model=prog_model, image_size=image_size)
         vitea.load_classifier(name_folder=name_folder, epoch=epoch_start)
         vitea.train_classifier(start_epoch=epoch_start, end_epoch= end_epoch)
         # vitea
         
-    def train_AE_benchmark(name_folder, epoch_classifier, prog_model = 3, cifar100 = False):
-        vitea = CIFAR_VITEA_benchmark(cifar100=cifar100, prog_model= prog_model)
+    def train_AE_benchmark(name_folder, epoch_classifier, prog_model = 3, cifar100 = False, image_size = 224):
+        vitea = CIFAR_VITEA_benchmark(cifar100=cifar100, prog_model= prog_model, image_size= image_size)
         vitea.load_classifier(name_folder=name_folder, epoch= epoch_classifier)
         vitea.train_ae(name_folder=name_folder)
         
-    def test_classifier_benchmark(name_folder, epoch_classifier, prog_model = 3, cifar100 = False):
-        vitea = CIFAR_VITEA_benchmark(cifar100=cifar100, prog_model= prog_model)
+    def test_classifier_benchmark(name_folder, epoch_classifier, prog_model = 3, cifar100 = False, image_size = 224):
+        vitea = CIFAR_VITEA_benchmark(cifar100=cifar100, prog_model= prog_model, image_size=image_size)
         vitea.test(name_folder= name_folder, epoch=epoch_classifier)   # load is peformed directly in the test function
     
     #                               train & test abn module
@@ -2712,12 +2745,12 @@ if __name__ == "__main__":
         classifier.load_classifier(epoch=epoch_classifier, name_folder=name_folder)
         classifier.load_autoencoder(epoch=epoch_autoencodder, name_folder= name_folder)
     
-    def train_abn_module(model_type = "encoder_v3"):
-        abn = CIFAR_VITEA_Abnormality_module(classifier, model_type= model_type)
+    def train_abn_module(model_type = "encoder_v3", image_size = 224):
+        abn = CIFAR_VITEA_Abnormality_module(classifier, model_type= model_type, image_size= image_size)
         abn.train(additional_name= "test")
         
-    def test_abn_module(name_folder, epoch, model_type= "encoder_v3"): 
-        abn = CIFAR_VITEA_Abnormality_module(classifier, model_type= model_type)
+    def test_abn_module(name_folder, epoch, model_type= "encoder_v3", image_size = 224): 
+        abn = CIFAR_VITEA_Abnormality_module(classifier, model_type= model_type, image_size= image_size)
         abn.load(name_folder_abn = name_folder, epoch= epoch)
         abn.test_risk()
     
@@ -2729,8 +2762,14 @@ if __name__ == "__main__":
     # test_classifier_benchmark("train_DeiT_tiny_22-02-2024", 100, prog_model=3, cifar100=False)
     
     # train_classifier_benchmark("DeiT_small", prog_model = 2)
-    continue_train_classifier_benchmark("train_DeiT_small_23-02-2024", epoch_start=50, end_epoch=100, prog_model=2)
+    # continue_train_classifier_benchmark("train_DeiT_small_23-02-2024", epoch_start=100, end_epoch=150, prog_model=2)
+    # test_classifier_benchmark("train_DeiT_small_23-02-2024", 150, prog_model=2, cifar100=False)
     
+    # train_classifier_benchmark("2_DeiT_tiny", prog_model = 3)
+    # continue_train_classifier_benchmark("train_2_DeiT_tiny_26-02-2024", epoch_start=50, end_epoch=150, prog_model=3)
+    
+    
+    train_classifier_benchmark("3_DeiT_tiny", prog_model = 3)
     
     """                            train abn module cifar 10                                """
     

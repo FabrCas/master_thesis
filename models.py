@@ -3311,7 +3311,7 @@ class VAE(Project_DFD_model):
     
 class ViT_timm_EA(Project_DFD_model):
     def __init__(self, n_classes = 10, dropout = 0.1, prog_model = 3, encoding_type = "mean", resize_att_map = True,\
-                 interpolation_mode = "bilinear"):   # bilinear
+                 interpolation_mode = "bilinear", only_transfNorm = False, image_size = 224):   # bilinear
         """_summary_
 
         Args:
@@ -3352,14 +3352,22 @@ class ViT_timm_EA(Project_DFD_model):
             print("found transformation for the input use by pre-trained model")
             print_dict(data_config)
             transform_pretrained = timm.data.create_transform(**data_config)
-            self.transform = transforms.Compose([t for t in transform_pretrained.transforms if not isinstance(t, transforms.ToTensor)])
+            if only_transfNorm:
+                for t in transform_pretrained.transforms:
+                    if isinstance(t, transforms.Normalize):
+                        self.transform = t
+            else:
+                self.transform = transforms.Compose([t for t in transform_pretrained.transforms if not isinstance(t, transforms.ToTensor)])
         except:
             print("Not found transformation for the input use by pre-trained model")
             self.transform = None
+        
+        print("transform ops: ", self.transform)
 
         self.prog_model             = prog_model
         self.resize_att_map         = resize_att_map
         self.interpolation_mode     = interpolation_mode
+        self.image_size             = image_size
         
         if prog_model in [0,1]:
             self.emb_size               = 768 
@@ -3577,8 +3585,8 @@ class ViT_timm_EA(Project_DFD_model):
         
     
         if self.resize_att_map:
-            att_map_cls     = F.interpolate(att_map_cls,  (224, 224),   mode = self.interpolation_mode)
-            att_map_rest    = F.interpolate(att_map_rest, (224, 224),   mode = self.interpolation_mode)
+            att_map_cls     = F.interpolate(att_map_cls,  (self.image_size, self.image_size),   mode = self.interpolation_mode)
+            att_map_rest    = F.interpolate(att_map_rest, (self.image_size, self.image_size),   mode = self.interpolation_mode)
             
         return logits, encoding, att_map_cls, att_map_rest
 
