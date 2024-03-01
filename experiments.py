@@ -11,17 +11,16 @@ import  torch                               as T
 from    torch.nn                            import functional as F
 from    torch.optim                         import Adam, lr_scheduler, SGD
 from    torch.cuda.amp                      import GradScaler, autocast
-from    torch.utils.data                    import DataLoader
+from    torch.utils.data                    import DataLoader, ConcatDataset, Subset
 from    torch.utils.data                    import random_split
 import  copy
 from    sklearn.metrics                     import precision_recall_curve, auc, roc_auc_score
-
 # local modules
 from    dataset                             import CDDB_binary_Partial, getMNIST_dataset, getCIFAR100_dataset, getCIFAR10_dataset,\
                                                     getFMNIST_dataset, getSVHN_dataset, getDTD_dataset, getTinyImageNet_dataset, OOD_dataset
 
 from    models                              import FC_classifier, get_fc_classifier_Keras, ResNet_EDS, Unet4, ViT_b16_ImageNet, \
-                                                    ViT_timm_EA, VAE, Abnormality_module_Encoder_ViT_v3, Abnormality_module_Encoder_ViT_v4
+                                                    ViT_timm_EA, VAE, AutoEncoder_v2, Abnormality_module_Encoder_ViT_v3, Abnormality_module_Encoder_ViT_v4
                                                     
 from    utilities                           import  duration, saveModel, loadModel, showImage, check_folder, plot_loss, plot_valid, image2int, \
                                                     ExpLogger, include_attention, metrics_multiClass, sampleValidSet, \
@@ -1181,6 +1180,8 @@ class CIFAR_ViTEA_Classifier(object):
 class CIFAR_VITEA_benchmark(object):
     """ simple classifier for the MNIST dataset on handwritten digits, implemented using pytorch """
     def __init__(self, prog_model = 3, batch_size = 64, useGPU = True, cifar100 = False, image_size = 224):
+        # batch_size = 32 or 64
+        
         super(CIFAR_VITEA_benchmark, self).__init__()
         self.useGPU         = useGPU
         if self.useGPU: self.device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
@@ -1193,23 +1194,23 @@ class CIFAR_VITEA_benchmark(object):
         
         # load train and test data
         if cifar100:
-            self.train_data = getCIFAR100_dataset(train = True, augment = augmentation, resolution= self.image_size)
-            self.test_data  = getCIFAR100_dataset(train = False, augment = False,  resolution= self.image_size)
+            self.name_dataset   = "cifar100" 
+            n_classes           = 100
+            self.train_data     = getCIFAR100_dataset(train = True, augment = augmentation, resolution= self.image_size)
+            self.test_data      = getCIFAR100_dataset(train = False, augment = False,  resolution= self.image_size)
         else:
-            self.train_data = getCIFAR10_dataset(train = True, augment = augmentation,  resolution= self.image_size)
-            self.test_data  = getCIFAR10_dataset(train = False, augment = False,  resolution= self.image_size)
+            self.name_dataset   = "cifar10"
+            n_classes           = 10
+            self.train_data     = getCIFAR10_dataset(train = True, augment = augmentation,  resolution= self.image_size)
+            self.test_data      = getCIFAR10_dataset(train = False, augment = False,  resolution= self.image_size)
             
         
-        # load the model
-        
-        if cifar100: 
-            n_classes = 100
-        else:
-            n_classes = 10
-            
+        # load the model  
         self.model = ViT_timm_EA(n_classes=n_classes, prog_model=prog_model ,only_transfNorm= only_transfNorm) 
         self.model.to(self.device)
-        self.autoencoder = VAE(image_size= image_size) 
+        # self.autoencoder = VAE() 
+        
+        self.autoencoder = AutoEncoder_v2()
         self.autoencoder.to(self.device)
         
         self.path_models    = "./models/benchmarks"
@@ -1219,6 +1220,7 @@ class CIFAR_VITEA_benchmark(object):
         # learning hyper-parameters
         self.batch_size     = batch_size
         self.epochs         = 50
+        self.epochs_ae      = 50
         self.lr             = 1e-3# 1e-3
         self.lr_ae          = 1e-3
         self.weight_decay   = 1e-3
@@ -1228,12 +1230,6 @@ class CIFAR_VITEA_benchmark(object):
         self.softmax        = F.softmax
         self.mse            = T.nn.MSELoss()
         self.mae            = T.nn.L1Loss()
-        
-        # define path
-        if cifar100: 
-             self.name_dataset       = "cifar100"
-        else:
-            self.name_dataset       = "cifar10"
             
         # self.name_model         = "{}_{}epochs.ckpt".format(self.model.__class__.__name__,self.epochs)
     
@@ -1261,8 +1257,8 @@ class CIFAR_VITEA_benchmark(object):
         
         print(f"Loading the model at location: {path_model}")
         try:
-            loadModel(self.model, path_model)
-            self.model.eval()
+            loadModel(self.autoencoder, path_model)
+            self.autoencoder.eval()
         except:
             raise ValueError(f"no model has been found at path {path_model}")
     
@@ -1664,25 +1660,34 @@ class CIFAR_VITEA_benchmark(object):
         print(f"Loss from validation: {loss_ae_valid}")
         return loss_ae_valid
     
+    @duration
     def train_ae(self, name_folder):
         
         self.autoencoder.train()
         
         # split train in train and valid
         
-        train_size = int(0.9 * len(self.train_data))
-        val_size = len(self.train_data) - train_size
-        train_dataset, val_dataset = random_split(self.train_data, [train_size, val_size])
+        test_size = int(0.8 * len(self.test_data))
+        val_size = len(self.test_data) - test_size
+        _, val_dataset = random_split(self.test_data, [test_size, val_size])
   
         # get dataloader
-        train_dataloader = DataLoader(train_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
+        train_dataloader = DataLoader(self.train_data, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
         valid_dataloader = DataLoader(val_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
 
         # load the optimizer
-        optimizer = Adam(self.autoencoder.parameters(), lr= self.lr_ae, weight_decay= self.weight_decay)
+        optimizer_ae = Adam(self.autoencoder.parameters(), lr= self.lr_ae, weight_decay= self.weight_decay)
+        # optimizer_ae = Adam(self.autoencoder.parameters(), lr= self.lr_ae)
+        # optimizer_ae = SGD(self.autoencoder.parameters(), lr=self.lr_ae, momentum= 0.9)
+        
+        # scheduler_ae = lr_scheduler.CosineAnnealingWarmRestarts(optimizer=optimizer_ae, T_0 = 5, T_mult =2, eta_min=1e-7)
+        n_steps = len(train_dataloader)
+        scheduler_ae = lr_scheduler.OneCycleLR(optimizer_ae, max_lr=self.lr_ae, steps_per_epoch=n_steps, epochs=self.epochs_ae, pct_start=0.3)
         
         loss_epochs     = []
         valid_history   = []
+        
+        scaler = GradScaler()
         
         # define best validation results
         best_valid = math.inf                       # to minimize
@@ -1690,7 +1695,7 @@ class CIFAR_VITEA_benchmark(object):
         # initialize ditctionary best models
         best_model_dict = copy.deepcopy(self.autoencoder.state_dict())
         
-        for epoch_idx in range(self.epochs):
+        for epoch_idx in range(self.epochs_ae):
             print(f"\n             [Epoch {epoch_idx+1}]             \n")
             
             # init loss over epoch
@@ -1709,15 +1714,30 @@ class CIFAR_VITEA_benchmark(object):
                     att_maps    = out[2]
                     
                 # zeroing the gradient  
-                optimizer.zero_grad()
+                optimizer_ae.zero_grad()
                 
                 x_ae = att_maps.detach().clone()
                 x_ae.requires_grad_(True)
                 x_ae.to(device=self.device)
                 
-                rec_att_map, mean, logvar = self.autoencoder.forward(x_ae, train=True)
-                loss     = self.autoencoder.loss_function(rec_att_map, x_ae, mean, logvar, use_bce=False)
                 
+                # print(T.max(x_ae), T.min(x_ae), T.mean(x_ae))
+                
+                # showImage(x_ae[0], has_color=False)
+                
+                
+                rec_att_map = self.autoencoder.forward(x_ae)
+                loss = self.mae(rec_att_map, x_ae)
+                
+                # loss     = self.autoencoder.loss_function(rec_att_map, x_ae, mean, logvar, rec_loss="mae", kld_loss="sum")
+                # rec_att_map, mean, logvar = self.autoencoder.forward(x_ae, train=True)
+
+                # print(loss.item())
+                if(T.isnan(loss)):
+                    print(T.isnan(x_ae))
+                    print(T.isnan(rec_att_map))
+
+
                 # with autocast():
                 #     out = self.model.forward(x)  
                 #     logits = out[0]
@@ -1729,8 +1749,17 @@ class CIFAR_VITEA_benchmark(object):
                 loss_epoch += loss.item()
                 
                 # backpropagation and update
-                loss.backward()
-                optimizer.step()
+
+                # loss.backward()
+                # optimizer_ae.step()
+                
+                scaler.scale(loss).backward()
+                scaler.step(optimizer=optimizer_ae)
+                scaler.update()
+
+                
+                scheduler_ae.step()
+                
             
             # compute average loss for the epoch
             avg_loss = loss_epoch/len(train_dataloader)
@@ -1742,10 +1771,9 @@ class CIFAR_VITEA_benchmark(object):
             valid_history.append(criterion)
             # look for best models *.*
 
-
             if criterion < best_valid:
                 best_valid = criterion
-                best_model_dict = copy.deepcopy(self.model.state_dict())
+                best_model_dict = copy.deepcopy(self.autoencoder.state_dict())
                 best_valid_epoch = epoch_idx+1
                 print("** new best autoencoder **")   
 
@@ -1922,8 +1950,8 @@ class OOD_Classifier(object):
 
 class CIFAR_VITEA_Abnormality_module(OOD_Classifier):
 
-    def __init__(self, classifier: CIFAR_VITEA_benchmark, model_type: str, useGPU: bool= True, batch_size = 64, balancing_mode: str = "max", \
-                 id_dataset = "cifar100", ood_dataset = "mnist", att_map_mode = "residual", image_size = 224):
+    def __init__(self, classifier: CIFAR_VITEA_benchmark, model_type: str, useGPU: bool= True, batch_size:int = 64, balancing_mode: str = "max", 
+                 ood_dataset:str = "mnist", att_map_mode:str = "residual", image_size:int = 224, with_outlier  = False):
         """ 
             ARGS:
             - classifier (CIFAR_VITEA_benchmark): the ViT classifier + Autoencoder (Module A) that produces the input for Module B (abnormality module)
@@ -1948,6 +1976,8 @@ class CIFAR_VITEA_Abnormality_module(OOD_Classifier):
             Defaults to "residual" 
             
             - image_size (int, optional): spatial dimension for the input images. Defaults is 224
+            
+            - with_outlier (boolean, optional). Choose to use actual OOD data in the training phase. Defaluts to False
         """
         super(CIFAR_VITEA_Abnormality_module, self).__init__(useGPU=useGPU)
         
@@ -1962,7 +1992,7 @@ class CIFAR_VITEA_Abnormality_module(OOD_Classifier):
         # configuration variables for abnormality module (module B)
         self.augment_data_train = False
         self.ood_dataset        = ood_dataset
-        self.id_dataset         = id_dataset
+        self.id_dataset         = self.classifier.name_dataset
         self.loss_name          = "weighted bce"   # binary cross entropy or sigmoid cross entropy (weighted)
         
         # instantiation aux elements
@@ -1970,6 +2000,7 @@ class CIFAR_VITEA_Abnormality_module(OOD_Classifier):
         # self.ce      = F.cross_entropy()
         self.sigmoid = F.sigmoid
         self.softmax = F.softmax
+        self.with_outlier = with_outlier
         self._build_model()
             
         # hyperparameters
@@ -1984,7 +2015,10 @@ class CIFAR_VITEA_Abnormality_module(OOD_Classifier):
         self.balancing_mode = balancing_mode
         
         # Define sets
-        self._prepare_data_synt(verbose = True)
+        if self.with_outlier:
+            self._prepare_data_outlier(verbose = True)
+        else:
+            self._prepare_data_synt(verbose = True)
         
         self.path_models    = "./models/benchmarks"
         self.path_results   = "./results/benchmarks"
@@ -2021,23 +2055,26 @@ class CIFAR_VITEA_Abnormality_module(OOD_Classifier):
             raise ValueError("ID dataset name is not valid")
         return data
     
-    def _get_OOD_dataset(self, train:bool): #
+    def _get_OOD_dataset(self, train:bool, name_ood_dataset= "mnist"): #
         """ available OOD dataset: "cifar10","cifar100","mnist","fmnist", "svhn", "dtd", "tiny_imagenet"."""
         
-        if self.id_dataset == "cifar10":
+        if name_ood_dataset == "cifar10":
             data = getCIFAR10_dataset(train = train, resolution= self.image_size)
-        elif self.id_dataset == "cifar100":
+        elif name_ood_dataset == "cifar100":
             data = getCIFAR100_dataset(train = train, resolution= self.image_size) 
-        elif self.id_dataset == "mnist":
+        elif name_ood_dataset == "mnist":
             data = getMNIST_dataset(train = train, resolution= self.image_size) 
-        elif self.id_dataset == "fmnist":
+        elif name_ood_dataset == "fmnist":
             data = getFMNIST_dataset(train = train, resolution= self.image_size)
-        elif self.id_dataset == "svhn":
+        elif name_ood_dataset == "svhn":
             data = getSVHN_dataset(train = train, resolution= self.image_size)
-        elif self.id_dataset == "dtd":
+        elif name_ood_dataset == "dtd":
             data = getDTD_dataset(train = train, resolution= self.image_size)
-        elif self.id_dataset == "tiny_imagenet":
-            data = getTinyImageNet_dataset(train = train, resolution= self.image_size)
+        elif name_ood_dataset == "tiny_imagenet":
+            if train: split = "train"
+            else: split = "test"
+            
+            data = getTinyImageNet_dataset(split = split, resolution= self.image_size)
         else:
             raise ValueError("OOD dataset name is not valid")
         return data
@@ -2052,15 +2089,15 @@ class CIFAR_VITEA_Abnormality_module(OOD_Classifier):
         
         # synthesis of OOD data (train and valid)
         print("\n\t\t[Loading OOD (synthetized) data]\n")
-        ood_data_train_syn    = self._get_ID_dataset(train=True, transform_ood=True)
-        tmp        = self._get_ID_dataset(train=False, transform_ood=True)
-        ood_data_valid_syn , _      = sampleValidSet(trainset = ood_data_train_syn, testset= tmp, useOnlyTest = True, verbose = True)
+        ood_data_train_syn      = self._get_ID_dataset(train=True, transform_ood=True)
+        tmp                     = self._get_ID_dataset(train=False, transform_ood=True)
+        ood_data_valid_syn , _      = sampleValidSet(trainset = ood_data_train_syn, testset= tmp, useOnlyTest = True, verbose = False)
         
         # fetch ID data (train, valid and test)
         print("\n\t\t[Loading ID data]\n")
-        id_data_train      = self._get_ID_dataset(train=True, transform_ood=False)
-        tmp            = self._get_ID_dataset(train=False, transform_ood=False)
-        id_data_valid , id_data_test   = sampleValidSet(trainset = id_data_train, testset= tmp, useOnlyTest = True, verbose = True)
+        id_data_train       = self._get_ID_dataset(train=True, transform_ood=False)
+        tmp                 = self._get_ID_dataset(train=False, transform_ood=False)
+        id_data_valid , id_data_test   = sampleValidSet(trainset = id_data_train, testset= tmp, useOnlyTest = True, verbose = False)
         
         if verbose:
             print("length ID dataset  (train) -> ",  len(id_data_train))
@@ -2072,16 +2109,100 @@ class CIFAR_VITEA_Abnormality_module(OOD_Classifier):
             
         # train set: id data train + synthetic ood (id data train transformed in ood)
         self.dataset_train = OOD_dataset(id_data_train, ood_data_train_syn, balancing_mode= self.balancing_mode)
-            
-        ood_data_test  = self._get_OOD_dataset(train=False)
-        if verbose: print("length OOD dataset (test) -> ", len(ood_data_test))
+        # valid set: id data valid + synthetic ood (id data train transformed in ood)
+        self.dataset_valid = OOD_dataset(id_data_valid, ood_data_valid_syn, balancing_mode= self.balancing_mode)
+         
+         
         # test set: id data test + ood data test
-        self.dataset_test  = OOD_dataset(id_data_test , ood_data_test,  balancing_mode= self.balancing_mode)
+        # ood_data_test  = self._get_OOD_dataset(train=False, name_ood_dataset = self.ood_dataset)
+        # if verbose: print("length OOD dataset (test) -> ", len(ood_data_test))
+        # self.dataset_test  = OOD_dataset(id_data_test , ood_data_test,  balancing_mode= self.balancing_mode)
 
+
+        if verbose: print("length full dataset (train/valid) with balancing -> ", len(self.dataset_train), len(self.dataset_valid))
+        print("\n")
+        
+    def _prepare_data_outlier(self,verbose = False):
+            
+        """ 
+            method used to prepare Dataset class used for both training and testing, synthetizing OOD data and tacking OOD data from datasets
+            ARGS:
+            - verbose (boolean, optional): choose to print extra information while loading the data
+        """
+        
+        #                                           [ID]
+        # fetch ID data (train, valid and test)
+        print("\n\t\t[Loading ID data]\n")
+        id_data_train      = self._get_ID_dataset(train=True, transform_ood=False)
+        tmp            = self._get_ID_dataset(train=False, transform_ood=False)
+        id_data_valid , id_data_test   = sampleValidSet(trainset = id_data_train, testset= tmp, useOnlyTest = True, verbose = False)
+        
+        #                                           [OOD]
+        # synthesis of OOD data (train and valid)
+        print("\n\t\t[Loading OOD (synthetized) data]\n")
+        ood_data_train_syn    = self._get_ID_dataset(train=True, transform_ood=True)
+        tmp        = self._get_ID_dataset(train=False, transform_ood=True)
+        ood_data_valid_syn , _      = sampleValidSet(trainset = ood_data_train_syn, testset= tmp, useOnlyTest = True, verbose = False)
+        
+        
+        print("\n\t\t[Loading OOD outlier data]\n")
+        # cifar 00D data
+        if self.id_dataset == "cifar10":
+            ood_data_train_cifar                        = getCIFAR100_dataset(train = True, ood_synthesis=False)
+            # ood_data_test_cifar                         = getCIFAR100_dataset(train = False, ood_synthesis=False)
+            # tmp                                         = getCIFAR100_dataset(train = False, ood_synthesis=False)
+            # ood_data_valid_cifar , ood_data_test_cifar  = sampleValidSet(trainset = ood_data_train_cifar, testset= tmp, useOnlyTest = True, verbose = False)
+            
+        else:   # cifar100 ID case 
+            ood_data_train_cifar                        = getCIFAR10_dataset(train = True, ood_synthesis=False) 
+            # ood_data_test_cifar                         = getCIFAR10_dataset(train = False, ood_synthesis=False)
+            # tmp                                         = getCIFAR10_dataset(train = False, ood_synthesis=False)
+            # ood_data_valid_cifar , ood_data_test_cifar  = sampleValidSet(trainset = ood_data_train_cifar, testset= tmp, useOnlyTest = True, verbose = False)
+            
+        ood_data_train_tin                              = getTinyImageNet_dataset(split = "train")
+        # ood_data_test_tin                               = getTinyImageNet_dataset(split = "test")
+        # tmp                                         = getTinyImageNet_dataset(split = "test")
+        # ood_data_valid_tin , ood_data_test_tin      = sampleValidSet(trainset = ood_data_train_tin, testset= tmp, useOnlyTest = True, verbose = False)
+        
+
+        # balance OOD datasets
+        id_len = len(id_data_train)
+        ood_dataset_len = math.ceil(id_len/ 3)
+        
+        indices_syn             = random.sample(range(len(ood_data_train_syn)), ood_dataset_len)
+        ood_data_train_syn      = Subset(ood_data_train_syn, indices_syn)
+        
+        indices_cifar           = random.sample(range(len(ood_data_train_cifar)), ood_dataset_len)
+        ood_data_train_cifar    = Subset(ood_data_train_cifar, indices_cifar)
+        
+        indices_tin             = random.sample(range(len(ood_data_train_tin)), ood_dataset_len)
+        ood_data_train_tin      = Subset(ood_data_train_tin, indices_tin)
+        
+
+        # marge ood dataset
+        ood_data_train =  ConcatDataset([ood_data_train_syn, ood_data_train_cifar, ood_data_train_tin])
+        # ood_data_test  =  ConcatDataset([ood_data_train_syn, ood_data_train_cifar, ood_data_train_tin])
+        
+        if verbose:
+            print("length ID dataset  (train) -> ",  len(id_data_train))
+            print("length ID dataset  (valid) -> ",  len(id_data_valid))
+            print("length ID dataset  (test) -> ", len(id_data_test))
+            print("length OOD dataset (train) synthetized -> ", len(ood_data_train_syn))
+            print("length OOD dataset (valid) synthetized -> ", len(ood_data_valid_syn))
+
+        # train set: id data train + synthetic ood (id data train transformed in ood)
+        self.dataset_train = OOD_dataset(id_data_train, ood_data_train, balancing_mode= self.balancing_mode)
+        
         # valid set: id data valid + synthetic ood (id data train transformed in ood)
         self.dataset_valid = OOD_dataset(id_data_valid, ood_data_valid_syn, balancing_mode= self.balancing_mode)
         
-        if verbose: print("length full dataset (train/valid/test) with balancing -> ", len(self.dataset_train), len(self.dataset_valid), len(self.dataset_test))
+        
+        # ood_data_test  = self._get_OOD_dataset(train=False, name_ood_dataset = self.ood_dataset)
+        # if verbose: print("length OOD dataset (test) -> ", len(ood_data_test))
+        # # test set: id data test + ood data test
+        # self.dataset_test  = OOD_dataset(id_data_test , ood_data_test,  balancing_mode= self.balancing_mode)
+        
+        if verbose: print("length full dataset (train/valid) with balancing -> ", len(self.dataset_train), len(self.dataset_valid))
         print("\n")
     
     def load(self, name_folder_abn, epoch):
@@ -2262,9 +2383,6 @@ class CIFAR_VITEA_Abnormality_module(OOD_Classifier):
         print(f"Loss from validation: {loss_valid}")
         return loss_valid
     
-    # self.path2classifier         
-    # self.path2results_classifier
-    
     @duration
     def train(self, additional_name = "", test_loop = False):
         # """ requried the ood data name to recognize the task """
@@ -2297,10 +2415,15 @@ class CIFAR_VITEA_Abnormality_module(OOD_Classifier):
         n_steps = len(train_dl)
         print("Number of steps per epoch: {}".format(n_steps))
         
-        # self.optimizer =  Adam(self.model.parameters(), lr = self.lr, weight_decay =  self.weight_decay)
         self.optimizer =  Adam(self.model.parameters(), lr = self.lr, weight_decay =  self.weight_decay)
+        # self.optimizer = SGD(self.model.parameters(), lr=self.lr, momentum= 0.9, weight_decay =  self.weight_decay)
         
-        self.scheduler = lr_scheduler.OneCycleLR(self.optimizer, max_lr=self.lr, steps_per_epoch=n_steps, epochs=self.n_epochs, pct_start=0.3)
+        # self.scheduler = lr_scheduler.OneCycleLR(self.optimizer, max_lr=self.lr, steps_per_epoch=n_steps, epochs=self.n_epochs, pct_start=0.3)
+        self.scheduler = lr_scheduler.CosineAnnealingWarmRestarts(self.optimizer, T_0 = 5, T_mult =2, eta_min=1e-7)
+
+        
+        
+        
         # self.scheduler = None
         scaler = GradScaler()
         
@@ -2447,164 +2570,176 @@ class CIFAR_VITEA_Abnormality_module(OOD_Classifier):
         saveModel(self.model, path_model_save)
         saveModel(best_model_dict, path_best_model_save, is_dict= True)
     
-    def test_risk(self):
+    def test_risk(self, ood_dataset = "mnist"):
+        """ 
+            ood_dataset (string): name of the ood dataset use for OOD detection, the ID dataset can be CIFAR10 or CIFAR100. Use on among these:
+                "cifar10","cifar100","mnist","fmnist", "svhn", "dtd", "tiny_imagenet".
+        """
             
-            # saving folder path
-            path_results_folder         = os.path.join(self.classifier.path2results_classifier, self.train_name)
-            
-            # 1) prepare meta-data
-            self.model.eval()
-            
-            # 2) prepare test
-            test_dl = DataLoader(self.dataset_test, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
-            
-            # compute number of steps for epoch
-            n_steps = len(test_dl)
-            print("Number of steps per epoch: {}".format(n_steps))
-            
-            # empty lists to store results
-            pred_risks = np.empty((0,1), dtype= np.float32)
-            dl_labels = np.empty((0,2), dtype= np.int32)   
-            
-            for idx, (x,y) in tqdm(enumerate(test_dl), total= n_steps):
-                
-                # to test
-                # if idx >= 1: break
-                
-                x = x.to(self.device)
-                with T.no_grad():
-                    # with autocast():
-                        
-                    out = self._forward_A(x)
-
-                    probs_softmax       = out["probabilities"]
-                    encoding            = out["encoding"]
-                    residual            = out["residual"]
-                                        
-                    # if not basic Abnromality model, do recuction here
-                    logit = self._forward_B(probs_softmax, encoding, residual)
-                    # risk = T.squeeze(risk)
-                    risk =self.sigmoid(logit)
-                        
-                # to numpy array
-                risk   = risk.cpu().numpy()
-                y       = y.numpy()
-                
-                pred_risks = np.append(pred_risks, risk, axis= 0)
-                dl_labels = np.append(dl_labels, y, axis= 0)
-                
-            # divide id risk from  ood risk
-            
-            id_labels     =  dl_labels[:,0]                # filter by label column
-            ood_labels    =  dl_labels[:,1]
-            risks_id      = pred_risks[id_labels == 1]         # split forward probabilites between ID adn OOD, still a list of probabilities for each class learned by the model
-            risks_ood     = pred_risks[ood_labels == 1]
-            
-            risks_id = risks_id[:risks_ood.shape[0]]
-            # print(risks_id.shape)
-            # print(risks_ood.shape)
-            
-            # compute statistical moments from risks output
-            
-            conf_all           = np.average(pred_risks)
-            
-            id_mean_r          =  np.mean(risks_id)
-            id_std_r           =  np.std(risks_id)
-            # id_entropy         = self.entropy(risks_id)
-            # id_mean_e          = np.mean(id_entropy)
-            # id_std_e           = np.std(id_entropy) 
+        ood_data_test       = self._get_OOD_dataset(train= False, name_ood_dataset=ood_dataset)
+        id_data_test        = self._get_ID_dataset(train=True, transform_ood=False)
+        self.dataset_test   = OOD_dataset(id_data_test , ood_data_test,  balancing_mode= "all")
         
-            ood_mean_r         =  np.mean(risks_ood)
-            ood_std_r          =  np.std(risks_ood)
-            # ood_entropy        = self.entropy(risks_ood)
-            # ood_mean_e         = np.mean(ood_entropy)
-            # ood_std_e          = np.std(ood_entropy)
-
-            # in-out of distribution moments
-            print("In-Distribution risk                 [mean (confidence ID),std]  -> ", id_mean_r, id_std_r)
-            print("Out-Of-Distribution risk             [mean (confidence OOD),std] -> ", ood_mean_r, ood_std_r)
-            
-            # print("In-Distribution Entropy risk         [mean,std]                  -> ", id_mean_e, id_std_e)
-            # print("Out-Of-Distribution Entropy risk     [mean,std]                  -> ", ood_mean_e, ood_std_e)
         
-            # normality detection
-            print("Normality detection:")
-            norm_base_rate = round(100*(risks_id.shape[0]/(risks_id.shape[0] + risks_ood.shape[0])),2)
-            print("\tbase rate(%): {}".format(norm_base_rate))
-            # print("\tKL divergence (entropy)")
-            # kl_norm_aupr, kl_norm_auroc = self.compute_curves(id_entropy, ood_entropy)
-            print("\tPrediction probability")
-            p_norm_aupr, p_norm_auroc = self.compute_curves(1- risks_id, 1- risks_ood)
+        
+        # saving folder path
+        path_results_folder         = os.path.join(self.classifier.path2results_classifier, ood_dataset, self.train_name)
+        
+        check_folder(path_results_folder)
+        
+        # 1) prepare meta-data
+        self.model.eval()
+        
+        # 2) prepare test
+        test_dl = DataLoader(self.dataset_test, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
+        
+        # compute number of steps for epoch
+        n_steps = len(test_dl)
+        print("Number of steps per epoch: {}".format(n_steps))
+        
+        # empty lists to store results
+        pred_risks = np.empty((0,1), dtype= np.float32)
+        dl_labels = np.empty((0,2), dtype= np.int32)   
+        
+        for idx, (x,y) in tqdm(enumerate(test_dl), total= n_steps):
             
-            # abnormality detection
-            print("Abnormality detection:")
-            abnorm_base_rate = round(100*(risks_ood.shape[0]/(risks_id.shape[0] + risks_ood.shape[0])),2)
-            print("\tbase rate(%): {}".format(abnorm_base_rate))
-            # print("\tKL divergence (entropy)")
-            # kl_abnorm_aupr, kl_abnorm_auroc = self.compute_curves(-id_entropy, -ood_entropy, positive_reversed= True)
-            # kl_abnorm_aupr, kl_abnorm_auroc = self.compute_curves(1-id_entropy, 1-ood_entropy, positive_reversed= True)
-            print("\tPrediction probability")
-            p_abnorm_aupr, p_abnorm_auroc = self.compute_curves(risks_id, risks_ood, positive_reversed= True)
-            # p_abnorm_aupr, p_abnorm_auroc = self.compute_curves(1-risks_id, 1-risk_ood, positive_reversed= True)
+            # to test
+            # if idx >= 1: break
             
+            x = x.to(self.device)
+            with T.no_grad():
+                # with autocast():
+                    
+                out = self._forward_A(x)
 
+                probs_softmax       = out["probabilities"]
+                encoding            = out["encoding"]
+                residual            = out["residual"]
+                                    
+                # if not basic Abnromality model, do recuction here
+                logit = self._forward_B(probs_softmax, encoding, residual)
+                # risk = T.squeeze(risk)
+                risk =self.sigmoid(logit)
+                    
+            # to numpy array
+            risk   = risk.cpu().numpy()
+            y       = y.numpy()
             
-            # compute fpr95, detection_error and threshold_error 
-            metrics_norm = self.compute_metrics_ood(1-risks_id, 1-risks_ood)
-            print("OOD metrics:\n", metrics_norm)  
-            metrics_abnorm = self.compute_metrics_ood(risks_id, risks_ood, positive_reversed= True, path_save = path_results_folder, epoch= self.modelEpochs)
-            print("OOD metrics:\n", metrics_abnorm)  
+            pred_risks = np.append(pred_risks, risk, axis= 0)
+            dl_labels = np.append(dl_labels, y, axis= 0)
             
-            
-                    # store statistics/metrics in a dictionary
-            data = {
-                "ID_max_prob": {
-                    "mean":  float(id_mean_r), 
-                    "var":   float(id_std_r)
-                },
-                "OOD_max_prob": {
-                    "mean": float(ood_mean_r), 
-                    "var":  float(ood_std_r) 
-                },
-                # "ID_entropy":   {
-                #     "mean": float(id_mean_e), 
-                #     "var":  float(id_std_e)
-                # },
-                # "OOD_entropy":  {
-                #     "mean": float(ood_mean_e), 
-                #     "var":  float(ood_std_e)
-                # },
-                
-                "normality": {
-                    "base_rate":        float(norm_base_rate),
-                    # "KL_AUPR":          float(kl_norm_aupr),
-                    # "KL_AUROC":         float(kl_norm_auroc),
-                    "Prob_AUPR":        float(p_norm_aupr),   
-                    "Prob_AUROC":       float(p_norm_auroc)
-                },
-                "abnormality":{
-                    "base_rate":        float(abnorm_base_rate),
-                    # "KL_AUPR":          float(kl_abnorm_aupr),
-                    # "KL_AUROC":         float(kl_abnorm_auroc),
-                    "Prob_AUPR":        float(p_abnorm_aupr),   
-                    "Prob_AUROC":       float(p_abnorm_auroc),
+        # divide id risk from  ood risk
+        
+        id_labels     =  dl_labels[:,0]                # filter by label column
+        ood_labels    =  dl_labels[:,1]
+        risks_id      = pred_risks[id_labels == 1]         # split forward probabilites between ID adn OOD, still a list of probabilities for each class learned by the model
+        risks_ood     = pred_risks[ood_labels == 1]
+        
+        risks_id = risks_id[:risks_ood.shape[0]]
+        # print(risks_id.shape)
+        # print(risks_ood.shape)
+        
+        # compute statistical moments from risks output
+        
+        conf_all           = np.average(pred_risks)
+        
+        id_mean_r          =  np.mean(risks_id)
+        id_std_r           =  np.std(risks_id)
+        # id_entropy         = self.entropy(risks_id)
+        # id_mean_e          = np.mean(id_entropy)
+        # id_std_e           = np.std(id_entropy) 
+    
+        ood_mean_r         =  np.mean(risks_ood)
+        ood_std_r          =  np.std(risks_ood)
+        # ood_entropy        = self.entropy(risks_ood)
+        # ood_mean_e         = np.mean(ood_entropy)
+        # ood_std_e          = np.std(ood_entropy)
 
-                },
-                "avg_confidence":               float(conf_all),
-                "fpr95_normality":              float(metrics_norm['fpr95']),
-                "detection_error_normality":    float(metrics_norm['detection_error']),
-                "threshold_normality":          float(metrics_norm['thr_de']),
-                "fpr95_abnormality":            float(metrics_abnorm['fpr95']),
-                "detection_error_abnormality":  float(metrics_abnorm['detection_error']),
-                "threshold_abnormality":        float(metrics_abnorm['thr_de'])
-            }
+        # in-out of distribution moments
+        print("In-Distribution risk                 [mean (confidence ID),std]  -> ", id_mean_r, id_std_r)
+        print("Out-Of-Distribution risk             [mean (confidence OOD),std] -> ", ood_mean_r, ood_std_r)
+        
+        # print("In-Distribution Entropy risk         [mean,std]                  -> ", id_mean_e, id_std_e)
+        # print("Out-Of-Distribution Entropy risk     [mean,std]                  -> ", ood_mean_e, ood_std_e)
+    
+        # normality detection
+        print("Normality detection:")
+        norm_base_rate = round(100*(risks_id.shape[0]/(risks_id.shape[0] + risks_ood.shape[0])),2)
+        print("\tbase rate(%): {}".format(norm_base_rate))
+        # print("\tKL divergence (entropy)")
+        # kl_norm_aupr, kl_norm_auroc = self.compute_curves(id_entropy, ood_entropy)
+        print("\tPrediction probability")
+        p_norm_aupr, p_norm_auroc = self.compute_curves(1- risks_id, 1- risks_ood)
+        
+        # abnormality detection
+        print("Abnormality detection:")
+        abnorm_base_rate = round(100*(risks_ood.shape[0]/(risks_id.shape[0] + risks_ood.shape[0])),2)
+        print("\tbase rate(%): {}".format(abnorm_base_rate))
+        # print("\tKL divergence (entropy)")
+        # kl_abnorm_aupr, kl_abnorm_auroc = self.compute_curves(-id_entropy, -ood_entropy, positive_reversed= True)
+        # kl_abnorm_aupr, kl_abnorm_auroc = self.compute_curves(1-id_entropy, 1-ood_entropy, positive_reversed= True)
+        print("\tPrediction probability")
+        p_abnorm_aupr, p_abnorm_auroc = self.compute_curves(risks_id, risks_ood, positive_reversed= True)
+        # p_abnorm_aupr, p_abnorm_auroc = self.compute_curves(1-risks_id, 1-risk_ood, positive_reversed= True)
+        
+
+        
+        # compute fpr95, detection_error and threshold_error 
+        metrics_norm = self.compute_metrics_ood(1-risks_id, 1-risks_ood)
+        print("OOD metrics:\n", metrics_norm)  
+        metrics_abnorm = self.compute_metrics_ood(risks_id, risks_ood, positive_reversed= True, path_save = path_results_folder, epoch= self.modelEpochs)
+        print("OOD metrics:\n", metrics_abnorm)  
+        
+        
+                # store statistics/metrics in a dictionary
+        data = {
+            "ID_max_prob": {
+                "mean":  float(id_mean_r), 
+                "var":   float(id_std_r)
+            },
+            "OOD_max_prob": {
+                "mean": float(ood_mean_r), 
+                "var":  float(ood_std_r) 
+            },
+            # "ID_entropy":   {
+            #     "mean": float(id_mean_e), 
+            #     "var":  float(id_std_e)
+            # },
+            # "OOD_entropy":  {
+            #     "mean": float(ood_mean_e), 
+            #     "var":  float(ood_std_e)
+            # },
             
-            # save data (JSON)
-            name_result_file            = 'metrics_ood_{}.json'.format(self.modelEpochs)
-            path_result_save            = os.path.join(path_results_folder, name_result_file)   # full path to json file
-            
-            print(path_result_save)
-            saveJson(path_file = path_result_save, data = data)
+            "normality": {
+                "base_rate":        float(norm_base_rate),
+                # "KL_AUPR":          float(kl_norm_aupr),
+                # "KL_AUROC":         float(kl_norm_auroc),
+                "Prob_AUPR":        float(p_norm_aupr),   
+                "Prob_AUROC":       float(p_norm_auroc)
+            },
+            "abnormality":{
+                "base_rate":        float(abnorm_base_rate),
+                # "KL_AUPR":          float(kl_abnorm_aupr),
+                # "KL_AUROC":         float(kl_abnorm_auroc),
+                "Prob_AUPR":        float(p_abnorm_aupr),   
+                "Prob_AUROC":       float(p_abnorm_auroc),
+
+            },
+            "avg_confidence":               float(conf_all),
+            "fpr95_normality":              float(metrics_norm['fpr95']),
+            "detection_error_normality":    float(metrics_norm['detection_error']),
+            "threshold_normality":          float(metrics_norm['thr_de']),
+            "fpr95_abnormality":            float(metrics_abnorm['fpr95']),
+            "detection_error_abnormality":  float(metrics_abnorm['detection_error']),
+            "threshold_abnormality":        float(metrics_abnorm['thr_de'])
+        }
+        
+        # save data (JSON)
+        name_result_file            = 'metrics_ood_{}.json'.format(self.modelEpochs)
+        path_result_save            = os.path.join(path_results_folder, name_result_file)   # full path to json file
+        
+        print(path_result_save)
+        saveJson(path_file = path_result_save, data = data)
     
 
 if __name__ == "__main__":
@@ -2733,48 +2868,43 @@ if __name__ == "__main__":
     #                               train & test abn module
     
     # load classifier here
-    choose_model = None
+    choose_model = 0
     
     if choose_model == 0:
-        cifar100 = False
-        prog_model = 3
-        name_folder = "train_DeiT_tiny_22-02-2024"
-        epoch_classifier = 100
-        epoch_autoencodder = None
+        cifar100            = False
+        prog_model          = 3
+        name_folder         = "train_3_DeiT_tiny_27-02-2024"
+        epoch_classifier    = 50
+        epoch_autoencodder  = 50
         classifier = CIFAR_VITEA_benchmark(cifar100=cifar100, prog_model= prog_model)
         classifier.load_classifier(epoch=epoch_classifier, name_folder=name_folder)
         classifier.load_autoencoder(epoch=epoch_autoencodder, name_folder= name_folder)
+        print("\n\n\n###################### ID classifier loaded ####################\n\n\n")
     
-    def train_abn_module(model_type = "encoder_v3", image_size = 224):
-        abn = CIFAR_VITEA_Abnormality_module(classifier, model_type= model_type, image_size= image_size)
-        abn.train(additional_name= "test")
+    def train_abn_module(model_type = "encoder_v3", image_size = 224, add2name = "", with_outlier = False):
+        abn = CIFAR_VITEA_Abnormality_module(classifier, model_type= model_type, image_size= image_size, with_outlier= with_outlier)
+        if add2name != "": add2name = "_" + add2name 
+        abn.train(additional_name= "test"+ add2name)
         
-    def test_abn_module(name_folder, epoch, model_type= "encoder_v3", image_size = 224): 
-        abn = CIFAR_VITEA_Abnormality_module(classifier, model_type= model_type, image_size= image_size)
+    def test_abn_module(name_folder, ood_dataset, epoch, model_type= "encoder_v3", image_size = 224, with_outlier = False): 
+        abn = CIFAR_VITEA_Abnormality_module(classifier, model_type= model_type, image_size= image_size, with_outlier= with_outlier)
         abn.load(name_folder_abn = name_folder, epoch= epoch)
-        abn.test_risk()
+        abn.test_risk(ood_dataset=ood_dataset)
     
 
     
     """                              train cifar 10                                         """
+
     
-    # train_classifier_benchmark("DeiT_tiny", prog_model = 3)
-    # test_classifier_benchmark("train_DeiT_tiny_22-02-2024", 100, prog_model=3, cifar100=False)
-    
-    # train_classifier_benchmark("DeiT_small", prog_model = 2)
-    # continue_train_classifier_benchmark("train_DeiT_small_23-02-2024", epoch_start=100, end_epoch=150, prog_model=2)
-    # test_classifier_benchmark("train_DeiT_small_23-02-2024", 150, prog_model=2, cifar100=False)
-    
-    # train_classifier_benchmark("2_DeiT_tiny", prog_model = 3)
-    # continue_train_classifier_benchmark("train_2_DeiT_tiny_26-02-2024", epoch_start=50, end_epoch=150, prog_model=3)
-    
-    
-    train_classifier_benchmark("3_DeiT_tiny", prog_model = 3)
     
     """                            train abn module cifar 10                                """
     
-    # train_abn_module()
-    # test_abn_module("Abnormality_module_ViT_encoder_v3_test_24-02-2024", 4)
+    train_abn_module(add2name= "w/outlier", model_type= "encoder_v3", with_outlier=True)
+    train_abn_module(add2name= "w/outlier", model_type= "encoder_v4", with_outlier=True)
+    
+    # for a in ["mnist", "fmnist", "svhn", "dtd", "tiny_imagenet", "cifar100"]:
+    # test_abn_module(name_folder="Abnormality_module_ViT_encoder_v4_test_50e_29-02-2024", epoch = 21, ood_dataset= "cifar100", model_type= "encoder_v4")
+    # test_abn_module(name_folder="Abnormality_module_ViT_encoder_v4_test_50e_29-02-2024", epoch = 50, ood_dataset= "cifar100", model_type= "encoder_v4")
     
     
     #                           [End test section] 
@@ -2790,4 +2920,22 @@ if __name__ == "__main__":
     
     showReconstructionResnetED(name_model="faces_resnet50ED_18-11-2023", epoch= 40, scenario = "content")
     showReconstruction(name_model="faces_resnet50ED_18-11-2023", epoch= 40, scenario = "content")
+    
+    # train_classifier_benchmark("DeiT_tiny", prog_model = 3)
+    # test_classifier_benchmark("train_DeiT_tiny_22-02-2024", 100, prog_model=3, cifar100=False)
+    
+    # train_classifier_benchmark("DeiT_small", prog_model = 2)
+    # continue_train_classifier_benchmark("train_DeiT_small_23-02-2024", epoch_start=100, end_epoch=150, prog_model=2)
+    # test_classifier_benchmark("train_DeiT_small_23-02-2024", 150, prog_model=2, cifar100=False)
+    
+    # train_classifier_benchmark("3_DeiT_tiny", prog_model = 3)
+    # test_classifier_benchmark("train_3_DeiT_tiny_27-02-2024", 47, prog_model=3, cifar100=False)
+    # test_classifier_benchmark("train_3_DeiT_tiny_27-02-2024", 50, prog_model=3, cifar100=False)
+    # train_AE_benchmark(cifar100=False, name_folder="train_3_DeiT_tiny_27-02-2024", epoch_classifier=50, prog_model=3)
+    
+    
+    train_abn_module(model_type = "encoder_v3") 20 epochs
+    train_abn_module(model_type = "encoder_v4") 20 epochs
+    train_abn_module(model_type = "encoder_v3", add2name="50e")
+    train_abn_module(model_type = "encoder_v4", add2name="50e")
     """

@@ -1775,7 +1775,7 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
                 
                 if self.model_ae_type == "vae":
                     rec_att_map, mean, logvar = self.autoencoder.forward(x_ae, train=True)
-                    loss_ae     = self.autoencoder.loss_function(rec_att_map, x_ae, mean, logvar, use_bce=False)
+                    loss_ae     = self.autoencoder.loss_function(rec_att_map, x_ae, mean, logvar, rec_loss="mae", kld_loss="sum")
                 else: 
                     with autocast():
                         rec_att_map = self.autoencoder(x_ae)

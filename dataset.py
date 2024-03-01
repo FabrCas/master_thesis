@@ -609,7 +609,7 @@ class CDDB(ProjectDataset):
             - augment (bool, optional):   boolean flag to activate the data augmentation. Defaults to False.
             - real_grouping (str): values: "single", "categories" or "models". string used to choose the modality to group the real labels,
                 - "single" means just one label for all the real images,
-                - "category" is for different labels of real images contains content like faces, cars, cats,etc.
+                - "categories" is for different labels of real images contains content like faces, cars, cats,etc.
                 - "models" separate the real images for each of the models present in the dataset. so real and fake labels have equal number
             - label_vector (bool, optional): boolean flag to indicate the label format in output for the labels.
                 if True one-hot encoding labels are returned, otherwise index based representation is used.Defaults to True.
@@ -1018,7 +1018,7 @@ class CDDB_Partial(ProjectDataset):
             - augment (bool, optional):   boolean flag to activate the data augmentation. Defaults to False.
             - real_grouping (str): values: "single", "categories" or "models". string used to choose the modality to group the real labels,
                 - "single" means just one label for all the real images,
-                - "category" is for different labels of real images contains content like faces, cars, cats,etc.
+                - "categories" is for different labels of real images contains content like faces, cars, cats,etc.
                 - "models" separate the real images for each of the models present in the dataset. so real and fake labels have equal number
                 
             - label_vector (bool, optional): boolean flag to indicate the label format in output for the labels.
@@ -1644,23 +1644,23 @@ class oodTransform():
         distortion_idx  = self.idx%n_distortions   
         
         if distortion_idx == 0:                 # blur distortion
-            print("blur distortion")
+            # print("blur distortion")
             x  = np.array(x)    # (height, width, color channel) 
             x_ = add_blur(x, complexity=1)
             x_ = self.toTensor(x_)
             
         elif distortion_idx == 1:               # normal noise distortion 
-            print("noise distortion")
+            # print("noise distortion
             x  = self.toTensor(x)
             x_ = add_noise(x)
             
         elif distortion_idx == 2:               # normal noise + perturbations distortion 
-            print("noise random distortion")
+            # print("noise random distortion")
             x  = self.toTensor(x)
             x_ = add_distortion_noise(x)
             
         elif distortion_idx == 3:               # normal noise + rotations distortion 
-            print("noise distortion + rotation")
+            # print("noise distortion + rotation")
             
             times_rotation = np.random.randint(low = 1, high=4) # random integer from 0 to 1
             x  = np.array(x)
@@ -1671,7 +1671,7 @@ class oodTransform():
             x_ = add_noise(x)
         
         elif distortion_idx == 4:
-            print("JPEG compression")
+            # print("JPEG compression")
             # x  = np.array(x)
             # Perform JPEG compression with a specified quality (0-100, higher is better quality)
             compressed_image_bytesio = BytesIO()
@@ -1696,7 +1696,7 @@ class oodTransform():
         
         return x_
     
-def getCIFAR10_dataset(train, resolution = w, augment = False, ood_synthesis = False):
+def getCIFAR10_dataset(train:bool, resolution = w, augment = False, ood_synthesis = False):
     """ get CIFAR10 dataset
         original spatial dim: 32x32
     Args:
@@ -1707,6 +1707,8 @@ def getCIFAR10_dataset(train, resolution = w, augment = False, ood_synthesis = F
     Returns:
         torch.Dataset : Cifar10 dataset object
     """
+    
+    
     if augment:
         transform_ops = transforms.Compose([
             v2.Resize((resolution, resolution), interpolation= InterpolationMode.BILINEAR, antialias= True),
@@ -1742,15 +1744,17 @@ def getCIFAR10_dataset(train, resolution = w, augment = False, ood_synthesis = F
     
     # load cifar data
     if train:
+        print("Loading Cifar10 dataset (train) ... \n")
         cifar10 = torchvision.datasets.CIFAR10(root=CIFAR10_PATH, train=True, download = False, transform=transform_ops)
     else:
+        print("Loading Cifar10 dataset (test) ... \n")
         cifar10 = torchvision.datasets.CIFAR10(root=CIFAR10_PATH, train=False, download = False, transform=transform_ops)
     
     # print(cifar10.__getitem__)
     
     return cifar10
 
-def getCIFAR100_dataset(train, resolution = w, augment = False, ood_synthesis = False):
+def getCIFAR100_dataset(train:bool, resolution = w, augment = False, ood_synthesis = False):
     """ get CIFAR100 dataset
         original spatial dim: 32x32
     Args:
@@ -1760,7 +1764,10 @@ def getCIFAR100_dataset(train, resolution = w, augment = False, ood_synthesis = 
         
     Returns:
         torch.Dataset : Cifar100 dataset object
-    """        
+    """
+    
+    
+            
     if augment:
         transform_ops = transforms.Compose([
             v2.Resize((resolution, resolution), interpolation= InterpolationMode.BILINEAR, antialias= True),
@@ -1795,13 +1802,15 @@ def getCIFAR100_dataset(train, resolution = w, augment = False, ood_synthesis = 
     
     # load cifar data
     if train:
+        print("Loading Cifar100 dataset (train) ... \n")
         cifar100 = torchvision.datasets.CIFAR100(root=CIFAR100_PATH, train=True, download = False, transform=transform_ops)
     else:
+        print("Loading Cifar100 dataset (test) ... \n")
         cifar100 = torchvision.datasets.CIFAR100(root=CIFAR100_PATH, train=False, download = False, transform=transform_ops)
     
     return cifar100
 
-def getMNIST_dataset(train, resolution = w):
+def getMNIST_dataset(train:bool, resolution = w):
     """ get MNIST dataset
         original spatial dim: 28x28
 
@@ -1817,6 +1826,9 @@ def getMNIST_dataset(train, resolution = w):
                 img = img.expand(3, -1, -1)
         
     """
+    
+    print("Loading MNIST dataset ... \n")
+    
     transform_ops = transforms.Compose([
         v2.Resize((resolution, resolution), interpolation= InterpolationMode.BILINEAR, antialias= True),
         v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
@@ -1838,7 +1850,7 @@ def getMNIST_dataset(train, resolution = w):
     
     return mnist
     
-def getFMNIST_dataset(train, resolution = w):
+def getFMNIST_dataset(train:bool, resolution = w):
     """ get FashionMNIST dataset
         original spatial dim: 28x28
     Args:
@@ -1849,6 +1861,9 @@ def getFMNIST_dataset(train, resolution = w):
     Returns:
         torch.Dataset : Cifar100 dataset object
     """
+    
+    print("Loading F-MNIST dataset ... \n")
+    
     transform_ops = transforms.Compose([
         v2.Resize((resolution, resolution), interpolation= InterpolationMode.BILINEAR, antialias= True),
         v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
@@ -1870,7 +1885,7 @@ def getFMNIST_dataset(train, resolution = w):
     
     return fmnist
     
-def getSVHN_dataset(train, resolution = w):
+def getSVHN_dataset(train:bool, resolution = w):
     """ get SVHN dataset
         original spatial dim: 32x32
     Args:
@@ -1881,6 +1896,9 @@ def getSVHN_dataset(train, resolution = w):
     Returns:
         torch.Dataset : SVHN dataset object
     """
+    
+    print("Loading SVHN dataset ... \n")
+    
     transform_ops = transforms.Compose([
         v2.Resize((resolution, resolution), interpolation= InterpolationMode.BILINEAR, antialias= True),
         v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
@@ -1902,7 +1920,7 @@ def getSVHN_dataset(train, resolution = w):
     
     return svhn
 
-def getDTD_dataset(train, resolution = w, partition = 1):
+def getDTD_dataset(train:bool, resolution = w, partition = 1):
     """ get DTD dataset, first partition by defaults
         original spatial dim: varies
     Args:
@@ -1913,6 +1931,9 @@ def getDTD_dataset(train, resolution = w, partition = 1):
     Returns:
         torch.Dataset : DTD dataset object
     """
+    
+    print("Loading DTD dataset ... \n")
+    
     transform_ops = transforms.Compose([
         v2.Resize((resolution, resolution), interpolation= InterpolationMode.BILINEAR, antialias= True),
         v2.ToTensor(),   # this operation also scales values to be between 0 and 1, expected [H, W, C] format numpy array or PIL image, get tensor [C,H,W]
@@ -1942,6 +1963,8 @@ def getDTD_dataset(train, resolution = w, partition = 1):
 def getTinyImageNet_dataset(split = "train" ,resolution = w):
     """ split (str):  choose between "train", "val", "test """
     # original spatial dim: varies
+    
+    print("Loading TinyImageNet dataset ... \n")
     
     transform_ops = transforms.Compose([
         v2.Resize((resolution, resolution), interpolation= InterpolationMode.BICUBIC, antialias= True),

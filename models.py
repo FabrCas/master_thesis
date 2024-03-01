@@ -3277,6 +3277,8 @@ class VAE(Project_DFD_model):
             nn.ConvTranspose2d(32, input_channels, kernel_size=4, stride=2, padding=1),
             nn.Sigmoid()
         )
+        
+        # self._init_weights_normal()
 
     def encode(self, x):
         x = self.encoder(x)
@@ -3291,12 +3293,27 @@ class VAE(Project_DFD_model):
     def decode(self, x):
         return self.decoder(x)
 
-    def loss_function(self,recon_x, x, mu, logvar, use_bce = True):
-        if use_bce:
+    def loss_function(self,recon_x, x, mu, logvar, rec_loss:str = "bce", kld_loss:str = "sum"):
+        """ 
+            rec_loss (str, optional): select the reconstruction loss between: "bce","mse" and "mae". Defaults to "bce".
+            kld_loss (str, optional): select the KL divergence loss aggregation modality between: "sum" and "mean". Defaults to "sum"
+        """
+        # use_bce = True, use_mse = False, KLD_mean = False
+        
+        # reconstruction loss
+        if rec_loss == "bce":
             rec_loss =  nn.BCELoss(reduction='sum')(recon_x, x)
-        else: 
+        elif rec_loss == "mse":
+            rec_loss = nn.functional.mse_loss(recon_x, x)
+        elif rec_loss == "mae":
             rec_loss = nn.functional.l1_loss(recon_x, x)
-        KLD = -0.5 * T.sum(1 + logvar - mu.pow(2) - logvar.exp())
+        
+        # KL divergece loss   
+        if kld_loss == "mean":
+            KLD = -0.5 * T.mean(1 + logvar - mu.pow(2) - logvar.exp())
+        elif kld_loss == "sum":
+            KLD = -0.5 * T.sum(1 + logvar - mu.pow(2) - logvar.exp())
+            
         return rec_loss + KLD
     
     def forward(self, x, train = False):
@@ -3349,7 +3366,7 @@ class ViT_timm_EA(Project_DFD_model):
         # data trasnformation
         try:
             data_config = timm.data.resolve_model_data_config(self.model_vit.pretrained_cfg)
-            print("found transformation for the input use by pre-trained model")
+            print("Transformation ops from pre-trained model:")
             print_dict(data_config)
             transform_pretrained = timm.data.create_transform(**data_config)
             if only_transfNorm:
@@ -3362,7 +3379,7 @@ class ViT_timm_EA(Project_DFD_model):
             print("Not found transformation for the input use by pre-trained model")
             self.transform = None
         
-        print("transform ops: ", self.transform)
+        print("Transformation ops selected: ", self.transform)
 
         self.prog_model             = prog_model
         self.resize_att_map         = resize_att_map
@@ -3785,7 +3802,6 @@ class Abnormality_module_Encoder_ViT_v4(Project_abnorm_model):
         out = self.gelu(self.bn_risk_final(self.fc_risk_final(x_concat)))
         return out   
 
-#TODO deeper version of abn_ViT v3 and v4
 
 #_____________________________________Test models_________________________________________________ 
 

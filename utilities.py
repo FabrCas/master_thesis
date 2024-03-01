@@ -44,6 +44,9 @@ def mergeDatasets(dataset1, dataset2):
     """ alias for ConcatDataset from pytorch"""
     return ConcatDataset([dataset1, dataset2])
 
+def mergeListDatasets(*datasets):
+    return ConcatDataset(datasets)
+
 def sampleValidSet(trainset, testset, useOnlyTest = True, verbose = False):
     """
         Function used to partiton data to have also a validatio set for training.
@@ -588,7 +591,6 @@ def showImage(img, name= "unknown", has_color = True, save_image = False, conver
         if name == "unknown":
             name += "_" + date.today().strftime("%d-%m-%Y") + ".png"
     
-
     # if torch tensor convert to numpy array
     if isinstance(img, T.Tensor):
         try:
@@ -602,6 +604,8 @@ def showImage(img, name= "unknown", has_color = True, save_image = False, conver
     
     
     plt.figure()
+    
+
     
     if isinstance(img, (Image.Image, np.ndarray)): # is Pillow Image istance
         
@@ -621,7 +625,10 @@ def showImage(img, name= "unknown", has_color = True, save_image = False, conver
                 plt.savefig(os.path.join("./static/saved_imgs", name + ".png"))
             else:
                 plt.savefig(os.path.join(path_save, name + ".png"))
+                
+
         plt.show()
+
     else:
         print("img data is not valid for the printing")
 
@@ -973,7 +980,7 @@ def metrics_binClass(preds, targets, pred_probs, epoch_model= None, path_save = 
     
     return metrics_results
 
-def metrics_OOD(targets, pred_probs, pos_label = 1, path_save_json = None, path_save_plot = None, save = True, epoch = None):
+def metrics_OOD(targets, pred_probs, pos_label = 1, path_save_json = None, path_save_plot = None, save = True, epoch = None, duration_timer = 1000):
     """ 
         Computation of metrics for the OOD classification task
     """
@@ -982,7 +989,7 @@ def metrics_OOD(targets, pred_probs, pos_label = 1, path_save_json = None, path_
     
     # plot and save ROC curve
     
-    plot_ROC_curve(fpr, tpr, path_save_plot, epoch = epoch, duration_timer = None)
+    plot_ROC_curve(fpr, tpr, path_save_plot, epoch = epoch, duration_timer = duration_timer)
     
     fpr95 = fpr_at_95_tpr(pred_probs, targets, pos_label)
     

@@ -1,0 +1,27 @@
+{
+    "ID_max_prob": {
+        "mean": 0.47042739391326904,
+        "var": 0.06206030026078224
+    },
+    "OOD_max_prob": {
+        "mean": 0.6488145589828491,
+        "var": 0.19041506946086884
+    },
+    "normality": {
+        "base_rate": 50.0,
+        "Prob_AUPR": 87.65,
+        "Prob_AUROC": 90.39
+    },
+    "abnormality": {
+        "base_rate": 50.0,
+        "Prob_AUPR": 89.88,
+        "Prob_AUROC": 90.39
+    },
+    "avg_confidence": 0.5596209764480591,
+    "fpr95_normality": 0.3618,
+    "detection_error_normality": 0.20585000000000003,
+    "threshold_normality": 0.5054992437362671,
+    "fpr95_abnormality": 0.5473,
+    "detection_error_abnormality": 0.29810000000000003,
+    "threshold_abnormality": 0.45792844891548157
+}

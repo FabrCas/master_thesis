@@ -32,8 +32,9 @@ from    models                              import ResNet_ImageNet, ResNet_EDS, 
 """
 
 class BinaryClassifier(object):
+    """ Deepfake detection superclass """
     
-    def __init__(self, useGPU, batch_size, model_type):
+    def __init__(self, useGPU:bool, batch_size:int, model_type:str):
         super(BinaryClassifier, self).__init__()
         self.model_type     = model_type
         self.useGPU         = useGPU
