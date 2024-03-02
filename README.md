@@ -11,17 +11,17 @@ The dataset can be downloaded at the following [link](https://drive.google.com/f
 ## OOD benchmarks
 
 - **CIFAR-10/CIFAR-100**.
- Official page: [link](https://www.cs.toronto.edu/~kriz/cifar.html)
+Official page: [link](https://www.cs.toronto.edu/~kriz/cifar.html)
 - **MNIST**, The MNIST Database of Handwritten Digit Images for Machine Learning Research.
- [paper](https://ieeexplore.ieee.org/document/6296535)
- -**FMINST**, Fashion-MNIST: a Novel Image Dataset for Benchmarking Machine Learning Algorithms.
- [paper](https://arxiv.org/abs/1708.07747)
- - **SVHN**.
- Official page: [link](http://ufldl.stanford.edu/housenumbers/)
- -**DTD**, Describing Textures in the Wild.
-  [paper](https://arxiv.org/abs/1311.3618)
+[paper](https://ieeexplore.ieee.org/document/6296535)
+-**FMINST**, Fashion-MNIST: a Novel Image Dataset for Benchmarking Machine Learning Algorithms.
+[paper](https://arxiv.org/abs/1708.07747)
+- **SVHN**.
+Official page: [link](http://ufldl.stanford.edu/housenumbers/)
+-**DTD**, Describing Textures in the Wild.
+[paper](https://arxiv.org/abs/1311.3618)
 - **Tiny ImageNet**, 80 Million Tiny Images: A Large Data Set for Nonparametric Object and Scene Recognition.
-  [paper](https://ieeexplore.ieee.org/document/4531741)
+[paper](https://ieeexplore.ieee.org/document/4531741)
 
 
 ## Models
