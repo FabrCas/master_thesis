@@ -13,8 +13,8 @@ The dataset can be downloaded at the following [link](https://drive.google.com/f
 - **CIFAR-10/CIFAR-100**.
 Official page: [link](https://www.cs.toronto.edu/~kriz/cifar.html)
 - **MNIST**, The MNIST Database of Handwritten Digit Images for Machine Learning Research.
-[paper](https://ieeexplore.ieee.org/document/6296535)
--**FMINST**, Fashion-MNIST: a Novel Image Dataset for Benchmarking Machine Learning Algorithms.
+- [paper](https://ieeexplore.ieee.org/document/6296535)
+- **FMINST**, Fashion-MNIST: a Novel Image Dataset for Benchmarking Machine Learning Algorithms.
 [paper](https://arxiv.org/abs/1708.07747)
 - **SVHN**.
 Official page: [link](http://ufldl.stanford.edu/housenumbers/)
