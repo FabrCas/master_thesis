@@ -1295,7 +1295,7 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         
         # learning hyperparameters (default)
         self.lr                     = 1e-3      # 1e-4
-        self.learning_coeff         = 1.5
+        self.learning_coeff         = 1
         self.n_epochs               = 50 * self.learning_coeff
         self.start_early_stopping   = int(self.n_epochs/2)                                  # epoch to start early stopping
         self.weight_decay           = 0.001                                                 # L2 regularization term 

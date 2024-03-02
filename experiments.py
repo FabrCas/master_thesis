@@ -1950,7 +1950,7 @@ class OOD_Classifier(object):
 
 class CIFAR_VITEA_Abnormality_module(OOD_Classifier):
 
-    def __init__(self, classifier: CIFAR_VITEA_benchmark, model_type: str, useGPU: bool= True, batch_size:int = 64, balancing_mode: str = "max", 
+    def __init__(self, classifier: CIFAR_VITEA_benchmark, model_type: str, useGPU: bool= True, batch_size:int = 32, balancing_mode: str = "max", 
                  ood_dataset:str = "mnist", att_map_mode:str = "residual", image_size:int = 224, with_outlier  = False):
         """ 
             ARGS:
@@ -2577,7 +2577,7 @@ class CIFAR_VITEA_Abnormality_module(OOD_Classifier):
         """
             
         ood_data_test       = self._get_OOD_dataset(train= False, name_ood_dataset=ood_dataset)
-        id_data_test        = self._get_ID_dataset(train=True, transform_ood=False)
+        id_data_test        = self._get_ID_dataset(train=False, transform_ood=False)
         self.dataset_test   = OOD_dataset(id_data_test , ood_data_test,  balancing_mode= "all")
         
         
@@ -2899,12 +2899,16 @@ if __name__ == "__main__":
     
     """                            train abn module cifar 10                                """
     
-    train_abn_module(add2name= "w/outlier", model_type= "encoder_v3", with_outlier=True)
-    train_abn_module(add2name= "w/outlier", model_type= "encoder_v4", with_outlier=True)
+
+    # test_abn_module(name_folder="Abnormality_module_ViT_encoder_v3_test_outlier_01-03-2024", epoch = 16, ood_dataset= "cifar100", model_type= "encoder_v3")
+    # test_abn_module(name_folder="Abnormality_module_ViT_encoder_v3_test_outlier_01-03-2024", epoch = 20, ood_dataset= "cifar100", model_type= "encoder_v3")
+    
     
     # for a in ["mnist", "fmnist", "svhn", "dtd", "tiny_imagenet", "cifar100"]:
-    # test_abn_module(name_folder="Abnormality_module_ViT_encoder_v4_test_50e_29-02-2024", epoch = 21, ood_dataset= "cifar100", model_type= "encoder_v4")
-    # test_abn_module(name_folder="Abnormality_module_ViT_encoder_v4_test_50e_29-02-2024", epoch = 50, ood_dataset= "cifar100", model_type= "encoder_v4")
+    #     test_abn_module(name_folder="Abnormality_module_ViT_encoder_v3_test_outlier_01-03-2024", epoch = 16, ood_dataset= a, model_type= "encoder_v3")
+    #     test_abn_module(name_folder="Abnormality_module_ViT_encoder_v3_test_outlier_01-03-2024", epoch = 20, ood_dataset= a, model_type= "encoder_v3")
+    #     test_abn_module(name_folder="Abnormality_module_ViT_encoder_v4_test_outlier_01-03-2024", epoch = 18, ood_dataset= a, model_type= "encoder_v4")
+    #     test_abn_module(name_folder="Abnormality_module_ViT_encoder_v4_test_outlier_01-03-2024", epoch = 20, ood_dataset= a, model_type= "encoder_v4")
     
     
     #                           [End test section] 
@@ -2938,4 +2942,6 @@ if __name__ == "__main__":
     train_abn_module(model_type = "encoder_v4") 20 epochs
     train_abn_module(model_type = "encoder_v3", add2name="50e")
     train_abn_module(model_type = "encoder_v4", add2name="50e")
+    train_abn_module(add2name= "outlier", model_type= "encoder_v3", with_outlier=True) # 20 epochs
+    train_abn_module(add2name= "outlier", model_type= "encoder_v4", with_outlier=True) # 20 epochs
     """
