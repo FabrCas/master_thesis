@@ -28,52 +28,10 @@ Binary classification:
 	scenario: mix
 
 		U-net based:
+			m_0_Unet5_Residual_Scorer_v4_02-03-2024	, epoch = 44   # images 224p
+				"f1-score": 0.929
 		
 		ViT based:
-
-Multiclass classification:
-
-	scenario: content (faces)
-
-		real labels grouping: single
-
-			U-net based:
-			
-			ViT based:
-
-		real labels grouping: category
-
-			U-net based:
-			
-			ViT based:
-
-	scenario: group (GAN)
-
-		real labels grouping: single
-
-			U-net based:
-			
-			ViT based:
-
-		real labels grouping: category
-
-			U-net based:
-			
-			ViT based:
-
-	scenario: mix
-
-		real labels grouping: single
-
-			U-net based:
-			
-			ViT based:
-
-		real labels grouping: category
-
-			U-net based:
-			
-			ViT based:
 
 
 

@@ -146,7 +146,6 @@ class ResNet_ImageNet(Project_DFD_model):   # not nn.Module subclass, but still 
     
     def __init__(self, n_classes = 10):
         super(ResNet_ImageNet,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = n_classes)
-        print("Initializing {} ...".format(self.__class__.__name__))
 
         self.weight_name =  ResNet50_Weights.IMAGENET1K_V2  # weights with accuracy 80.858% on ImageNet 
         self.model = self._create_net()
@@ -199,7 +198,6 @@ class ResNet_EDS(Project_DFD_model):
     """ ResNet multi head module with Encoder, Decoder and scorer (Classifier) """
     def __init__(self, n_classes = 10, use_upsample = False):               # expect image of shape 224x224
         super(ResNet_EDS,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = n_classes)
-        print("Initializing {} ...".format(self.__class__.__name__))
 
         self.use_upsample = use_upsample
         self.weight_name =  ResNet50_Weights.IMAGENET1K_V2  # weights with accuracy 80.858% on ImageNet 
@@ -554,7 +552,6 @@ class Unet4(Project_DFD_model):
     def __init__(self):
         super(Unet4,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = None)
         
-        print("Initializing {} ...".format(self.__class__.__name__))
         self.features_order = UNET_EXP_FMS   # orders greater and equal than 5 saturates the GPU!
         self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
         self.n_levels = 4
@@ -623,7 +620,6 @@ class Unet5(Project_DFD_model):
     
     def __init__(self):
         super(Unet5,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = None)
-        print("Initializing {} ...".format(self.__class__.__name__))
 
         self.features_order = UNET_EXP_FMS   # orders greater and equal than 5 saturates the GPU!
         self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
@@ -713,7 +709,6 @@ class Unet6(Project_DFD_model):
     
     def __init__(self):
         super(Unet6,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = None)
-        print("Initializing {} ...".format(self.__class__.__name__))
         
         self.features_order = UNET_EXP_FMS   # orders greater and equal than 5 saturates the GPU!
         self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
@@ -950,7 +945,6 @@ class Unet4_Scorer(Project_DFD_model):
 
     def __init__(self, n_classes= 10,  large_encoding = True):
         super(Unet4_Scorer,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = n_classes,)
-        print("Initializing {} ...".format(self.__class__.__name__))
 
         self.features_order = UNET_EXP_FMS   # orders greater and equal than 5 saturates the GPU!
         self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
@@ -1080,7 +1074,6 @@ class Unet5_Scorer(Project_DFD_model):
 
     def __init__(self, n_classes= 10, large_encoding = True):
         super(Unet5_Scorer,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = n_classes)
-        print("Initializing {} ...".format(self.__class__.__name__))
 
         self.features_order = UNET_EXP_FMS   # orders greater and equal than 5 saturates the GPU!
         self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
@@ -1220,7 +1213,6 @@ class Unet6_Scorer(Project_DFD_model):
 
     def __init__(self, n_classes= 10, large_encoding = True):
         super(Unet6_Scorer,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = n_classes)
-        print("Initializing {} ...".format(self.__class__.__name__))
 
         self.features_order = UNET_EXP_FMS   # orders greater and equal than 5 saturates the GPU!
         self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
@@ -1359,7 +1351,6 @@ class Unet6L_Scorer(Project_DFD_model):
 
     def __init__(self, n_classes= 10, large_encoding = True):
         super(Unet6L_Scorer,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = n_classes)
-        print("Initializing {} ...".format(self.__class__.__name__))
 
         self.features_order = UNET_EXP_FMS   # orders greater and equal than 5 saturates the GPU!
         self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
@@ -1500,7 +1491,6 @@ class Unet4_ResidualScorer(Project_DFD_model):
 
     def __init__(self, n_classes= 10, large_encoding = True):
         super(Unet4_ResidualScorer,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = n_classes)
-        print("Initializing {} ...".format(self.__class__.__name__))
 
         self.features_order = UNET_EXP_FMS     # orders greater and equal than 5 saturates the GPU!
         self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
@@ -1627,7 +1617,6 @@ class Unet5_ResidualScorer(Project_DFD_model):
     
     def __init__(self, n_classes= 10, large_encoding = True):
         super(Unet5_ResidualScorer,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = n_classes)
-        print("Initializing {} ...".format(self.__class__.__name__))
 
         self.features_order = UNET_EXP_FMS # orders greater and equal than 5 saturates the GPU!
         self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
@@ -1766,7 +1755,6 @@ class Unet6_ResidualScorer(Project_DFD_model):
 
     def __init__(self, n_classes = 10, large_encoding = True):
         super(Unet6_ResidualScorer,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = n_classes)
-        print("Initializing {} ...".format(self.__class__.__name__))
 
         self.features_order = UNET_EXP_FMS   # orders greater and equal than 5 saturates the GPU!
         self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
@@ -1905,7 +1893,6 @@ class Unet6L_ResidualScorer(Project_DFD_model):
 
     def __init__(self, n_classes= 10, large_encoding = True):
         super(Unet6L_ResidualScorer,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = n_classes)
-        print("Initializing {} ...".format(self.__class__.__name__))
 
         self.features_order = UNET_EXP_FMS   # orders greater and equal than 5 saturates the GPU!
         self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
@@ -2046,7 +2033,6 @@ class Unet4_Scorer_Confidence(Project_DFD_model):
 
     def __init__(self, n_classes= 10,  large_encoding = True):
         super(Unet4_Scorer_Confidence,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = n_classes,)
-        print("Initializing {} ...".format(self.__class__.__name__))
 
         self.features_order = UNET_EXP_FMS   # orders greater and equal than 5 saturates the GPU!
         self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net
@@ -2177,7 +2163,6 @@ class Unet5_Scorer_Confidence(Project_DFD_model):
 
     def __init__(self, n_classes= 10, large_encoding = True):
         super(Unet5_Scorer_Confidence,self).__init__(c = INPUT_CHANNELS, h = INPUT_HEIGHT, w = INPUT_WIDTH, n_classes = n_classes)
-        print("Initializing {} ...".format(self.__class__.__name__))
 
         self.features_order = UNET_EXP_FMS   # orders greater and equal than 5 saturates the GPU!
         self.feature_maps = lambda x: int(math.pow(2, self.features_order+x))  # x depth block in u-net

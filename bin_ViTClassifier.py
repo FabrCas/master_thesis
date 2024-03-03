@@ -673,7 +673,7 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
         self.weight_decay           = 1e-3    # L2 regularization term 
         
         # learning hyperparameters ViT
-        self.learning_coeff         = 1                                                  #  [0.5, 1, 2] multiplier that increases the training time
+        self.learning_coeff         = 0.4                                               #  [0.5, 1, 2] multiplier that increases the training time
         self.n_epochs               = math.floor(50 * self.learning_coeff)
         self.start_early_stopping   = math.floor(self.n_epochs/2)                       # epoch to start early stopping                         
         self.patience               = max(math.floor(5 * self.learning_coeff),5)        # early stopping patience
@@ -694,8 +694,9 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
         # training components definintion
         
         self.lr_scheduler_name      = "ReduceLROnPlateau"
-        # self.optimizer              = Adam(self.model.parameters(), lr = self.lr, weight_decay =  self.weight_decay)
-        self.optimizer              = SGD(self.model.parameters(), lr= self.lr,   momentum= 0.9, weight_decay =  self.weight_decay)
+        # self.lr_scheduler_name      = "CosineAnnealingWarmRestarts"
+        self.optimizer              = Adam(self.model.parameters(), lr = self.lr, weight_decay =  self.weight_decay)
+        # self.optimizer              = SGD(self.model.parameters(), lr= self.lr,   momentum= 0.9, weight_decay =  self.weight_decay)
         self.optimizer_name         = self.optimizer.__class__.__name__
         self.optimizer_ae           = Adam(self.autoencoder.parameters(), lr = self.lr, weight_decay =  self.weight_decay)
         self.lr_scheduler_ae_name   = "lr_scheduler.OneCycleLR"
@@ -1443,6 +1444,8 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
         elif self.early_stopping_trigger == "acc":
             self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='max', factor = 0.5, patience = 5, cooldown = 2, min_lr = self.lr*0.01, verbose = True) # reduce of a half the learning rate 
         
+        # self.scheduler = lr_scheduler.CosineAnnealingWarmRestarts(self.optimizer, T_0 = 5, T_mult =2, eta_min=1e-7)
+        
         # define the gradient scaler to avoid weigths explosion
         scaler      = GradScaler()
         
@@ -2007,7 +2010,7 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
 
 if __name__ == "__main__":
     #                           [Start test section] 
-    scenario_prog       = 1
+    scenario_prog       = 2
     data_scenario       = None
     
     if scenario_prog == 0: 
@@ -2304,14 +2307,17 @@ if __name__ == "__main__":
     
     #                               GAN training
     # TODO train gan, not good results with tiny DeiT
-    # train_v7_scenario_separately(prog_vit=3, add_name="DeiT_tiny_separateTrain")
+    
+    # train_v7_scenario_separately(prog_vit=3, add_name="DeiT_tiny_separateTrain")        # no good 
     # test_v7_both_metrics("gan_ViTEA_timm_DeiT_tiny_separateTrain_v7_20-02-2024", 54, 75)
     
-    train_v7_scenario_separately(prog_vit=3, add_name="DeiT_tiny_separateTrain_SGD")
+    # train_v7_scenario_separately(prog_vit=3, add_name="DeiT_tiny_separateTrain_SGD")    # no good 
+    # test_v7_metrics("gan_ViTEA_timm_DeiT_tiny_separateTrain_SGD_v7_02-03-2024", 37)
     
     
     #                               MIX training
-    # train_v7_scenario_separately(prog_vit=3, add_name="DeiT_tiny_separateTrain")
+    #TODO
+    train_v7_scenario_separately(prog_vit=3, add_name="DeiT_tiny_separateTrain")
     
     #                           [End test section] 
     """ 

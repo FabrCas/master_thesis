@@ -1295,9 +1295,9 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         
         # learning hyperparameters (default)
         self.lr                     = 1e-3      # 1e-4
-        self.learning_coeff         = 1
-        self.n_epochs               = 50 * self.learning_coeff
-        self.start_early_stopping   = int(self.n_epochs/2)                                  # epoch to start early stopping
+        self.learning_coeff         = 1.5       #1.5 or 1
+        self.n_epochs               = math.floor(50 * self.learning_coeff)
+        self.start_early_stopping   = math.floor(self.n_epochs/2)                                  # epoch to start early stopping
         self.weight_decay           = 0.001                                                 # L2 regularization term 
         self.patience               = max(math.floor(5 * self.learning_coeff),5)            # early stopping patience
         self.early_stopping_trigger = "acc"                                                 # values "acc" or "loss"
@@ -2457,8 +2457,8 @@ if __name__ == "__main__":
     # _____________________________________________________________________
     
     # TODO train these
-    # train_v4_scenario(model_type="Unet5_Scorer")  #224p
-    # train_v4_scenario(model_type="Unet5_Residual_Scorer")  #224p
+
+    test_v4_metrics("m_0_Unet5_Residual_Scorer_v4_02-03-2024", model_type="Unet5_Residual_Scorer", epoch= 51)
     
     #                           [End test section] 
     """ 
@@ -2530,7 +2530,10 @@ if __name__ == "__main__":
 
     # MIX:
     #                                               v4
-        train_v4_scenario(model_type="Unet5_Scorer")  #224p
+        train_v4_scenario(model_type="Unet5_Residual_Scorer")  #224p
+        
+        test_v4_metrics("m_0_Unet5_Residual_Scorer_v4_02-03-2024", model_type="Unet5_Residual_Scorer", epoch= 44)
+        test_v4_metrics("m_0_Unet5_Residual_Scorer_v4_02-03-2024", model_type="Unet5_Residual_Scorer", epoch= 51)
     
     
     """
