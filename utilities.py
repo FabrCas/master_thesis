@@ -292,8 +292,7 @@ def trans_input_base(isTensor = False):
     
 def trans_toTensor():
     return transforms.ToTensor()
-    
-    
+       
 def augment_v1(x):
     
     config = get_inputConfig()
@@ -338,7 +337,6 @@ def alpha_blend_pytorch(image1, image2, alpha):
     blended_image = (1 - alpha) * image1 + alpha * image2
     return blended_image
 
-
 def spread_range_tensor(x):
     """ take a tensor and spread is range between 0 and 1 """
     max_value, _ = T.max(x.reshape(x.shape[0], -1), dim = 1)
@@ -353,9 +351,8 @@ def spread_range_tensor(x):
     
     return x
     
-
 def include_attention(img, attention_map, alpha = 0.8):
-    """ include attention to the original image
+    """ include attention to the original image, blending
     
     this function returns the img + attention map (also for batch), and the attention map on range [0,1] in RGB format
     """
@@ -381,7 +378,6 @@ def include_attention(img, attention_map, alpha = 0.8):
     
     return blend_result, attention_map
             
-
 def image2int(img_tensor, is_range_zero_one = True):
     """ 
         convert img (T.tensor) to int range 0-255. img can be a single image or a batch

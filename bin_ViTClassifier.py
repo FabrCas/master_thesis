@@ -670,7 +670,7 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
 
         # learning hyperparameters common
         self.lr                     = 1e-3    # 1e-3 or 1e-4
-        self.weight_decay           = 1e-3    # L2 regularization term 
+        self.weight_decay           = 1e-4    # 1e-3, L2 regularization term 
         
         # learning hyperparameters ViT
         self.learning_coeff         = 0.4                                               #  [0.5, 1, 2] multiplier that increases the training time
@@ -1859,6 +1859,316 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
 
         self.autoencoder.eval()
     
+    def continueTrainViT(self, name_folder, start_epoch = 0, end_epoch = None, test_loop = False ):
+        """
+        Args:
+            name_folder (str) folder name used to load and restart the training 
+        """
+        
+        
+        # check args validity
+        if start_epoch != 0:
+            if end_epoch is None:
+                raise ValueError("End epoch is not specified (required if start epoch is not 0)")
+            if (end_epoch - start_epoch) <= 0:
+                raise ValueError("end epoch should be grater than start epoch")
+        
+        if not(end_epoch is None):
+            # self.epochs = end_epoch
+            self.n_epochs = end_epoch
+        
+        
+        # set the full current model name 
+        self.classifier_name = name_folder
+        
+        path_model_folder       = os.path.join(self.path_models,  name_folder)
+        self.path_model_folder  = path_model_folder
+        check_folder(path_model_folder)
+        # create path for the model results
+        path_results_folder     = os.path.join(self.path_results, name_folder)
+        self.path_results_folder = path_results_folder
+        check_folder(path_results_folder) # create if doesn't exist
+        
+        # load classfier
+        self.load(folder_model= name_folder,epoch=start_epoch)
+        
+        # define train dataloader
+        train_dataloader = DataLoader(self.train_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= True, pin_memory= True)
+        
+        # define valid dataloader
+        valid_dataloader = DataLoader(self.valid_dataset, batch_size= self.batch_size, num_workers= 8, shuffle= False, pin_memory= True)
+        
+        # compute number of steps for epoch
+        n_steps = len(train_dataloader)
+        print("Number of steps per epoch: {}".format(n_steps))
+        
+        # model in training mode
+        self.model.train()
+        
+        # define the optimization algorithm
+        self.optimizer          =  Adam(self.model.parameters(), lr = self.lr, weight_decay =  self.weight_decay)
+        
+        # define the loss function and class weights, compute labels weights and cross entropy loss
+        self.pos_weight_label = self.compute_class_weights(only_positive_weight=True)
+        
+        self.bce       = T.nn.BCEWithLogitsLoss(pos_weight=T.tensor(self.pos_weight_label)).to(device=self.device)
+        
+        # learning rate schedulers
+        if self.early_stopping_trigger == "loss":
+            self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor = 0.5, patience = 5, cooldown = 2, min_lr = self.lr*0.01, verbose = True) # reduce of a half the learning rate 
+        elif self.early_stopping_trigger == "acc":
+            self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='max', factor = 0.5, patience = 5, cooldown = 2, min_lr = self.lr*0.01, verbose = True) # reduce of a half the learning rate 
+        
+        # self.scheduler = lr_scheduler.CosineAnnealingWarmRestarts(self.optimizer, T_0 = 5, T_mult =2, eta_min=1e-7)
+        
+        # define the gradient scaler to avoid weigths explosion
+        scaler      = GradScaler()
+        
+        # initialize logger
+        logger  = self.init_logger(path_model= path_model_folder, add2name="vit")
+        
+        if start_epoch != 0:
+            # intialize data structure to keep track of training performance
+            loss_epochs     = [*[None] * start_epoch]
+            # initialzie the patience counter and history for early stopping
+            valid_history   = [*[None] * start_epoch]
+        else:
+            loss_epochs     = []
+            valid_history   = []
+        
+        counter_stopping    = 0
+        last_epoch          = 0
+        
+        # define best validation results
+        if self.early_stopping_trigger == "loss":
+            best_valid = math.inf                # to minimize
+        elif self.early_stopping_trigger == "acc":
+            best_valid = 0                       # to maximize
+        best_valid_epoch = start_epoch
+
+        # initialize ditctionary best models
+        best_model_dict = copy.deepcopy(self.model.state_dict())
+
+        # learned epochs by the model initialization
+        self.modelEpochs = start_epoch
+        tmp_losses      = []
+        
+        # T.autograd.set_detect_anomaly(True)
+        # flag to detect forward problem with nan
+        printed_nan = False
+        
+        # loop over epochs
+        for epoch_idx in range((self.n_epochs - start_epoch)):
+            
+            # include the start epoch in the idx
+            epoch_idx = epoch_idx + start_epoch
+            
+            print(f"\n             [Epoch {epoch_idx+1}]             \n")
+            
+            # define cumulative loss for the current epoch and max/min loss
+            loss_epoch      = 0; max_loss_epoch     = 0; min_loss_epoch     = math.inf
+            
+            # update the last epoch for training the model
+            last_epoch = epoch_idx +1 
+            
+            max_value_att_map = []
+            
+            # loop over steps
+            for step_idx,(x,y) in tqdm(enumerate(train_dataloader), total= n_steps):
+                
+                # test steps loop for debug
+                if test_loop and step_idx+1 == 5: break
+                
+                # prepare samples/targets batches 
+                x = x.to(self.device)
+                x.requires_grad_(True)
+                y = y.to(self.device)               # binary int encoding for each sample
+                y = y.to(T.float)
+                
+                if T.isnan(x).any().item():
+                    print("nan value in the input found")
+                    continue
+                
+                # check there is any nan value in the input that causes instability
+                # zeroing the gradient
+                self.optimizer.zero_grad()
+                # model forward and loss computation
+                with autocast():   
+
+                    out = self.model.forward(x) 
+                    logits      = out[0]
+                    att_maps    = out[2]
+                    
+                    
+                    # apply activation function to logits
+                    # pred = self.sigmoid(logits)
+                        
+                    #                                       compute classification loss
+                    loss      = self.bce(input=logits, target=y)   # bce from logits (no weights loaded)
+                    # loss      = self.bce(input=pred, target=y)   # classic bce with "probabilities"
+
+                
+                max_value_att_map.append(T.max(att_maps).detach().cpu().item())
+                
+                if (T.isnan(loss).any().item() or T.isinf(loss).any().item())and not(printed_nan):
+                    print(loss)
+                    print(logits)
+                    print(T.norm(logits))
+                    print(y)
+                    for name, param in self.model.named_parameters():
+                        if param.grad is not None:
+                            print(f'Parameter: {name}, Gradient Magnitude: {param.grad.norm().item()}')
+                    
+                    printed_nan = True
+                    break  #
+                    
+                
+                loss_value = loss.cpu().item()
+                tmp_losses.append(loss_value)
+                
+                print_every = 50
+                if (step_idx+1)%print_every == 0:
+                    # print("norm logits every 100 epochs ->", T.norm(logits).cpu().item())
+                    print(f"avg loss every {print_every} epochs ->", sum(tmp_losses)/len(tmp_losses))
+                    print(f"max att map: {T.max(att_maps)}", f"min att map: {T.min(att_maps)}", f"avg sum att map: {T.mean(T.sum(att_maps.view(att_maps.shape[0], -1), dim = 0))}")
+                    tmp_losses = []
+                
+                if loss_value>max_loss_epoch    : max_loss_epoch = round(loss_value,4)
+                if loss_value<min_loss_epoch    : min_loss_epoch = round(loss_value,4)
+                
+                # update total loss    
+                loss_epoch += loss_value   # from tensor with single value to int and accumulation
+                
+                # loss backpropagation
+                scaler.scale(loss).backward()
+                
+                # compute updates using optimizer
+                scaler.step(self.optimizer)
+
+                # update weights through scaler
+                scaler.update()
+                
+                # (optional) gradient clipping 
+                # T.nn.utils.clip_grad_norm_(self.model.parameters(), 10) 
+                         
+            if printed_nan: break
+                     
+            # compute average loss for the epoch
+            avg_loss = round(loss_epoch/n_steps,4)
+            loss_epochs.append(avg_loss)
+            print("Average loss: {}".format(avg_loss))
+            
+            avg_max_attention = sum(max_value_att_map)/len(max_value_att_map)   
+            print("Average max attention value: {}".format(avg_max_attention))
+            
+            # include validation here if needed
+            criterion = self.validViT(epoch=epoch_idx+1, valid_dataloader= valid_dataloader)
+            valid_history.append(criterion)
+            
+            # look for best models *.*
+            
+            if self.early_stopping_trigger  == "loss":
+                if criterion < best_valid:
+                    best_valid = criterion
+                    best_model_dict = copy.deepcopy(self.model.state_dict())
+                    best_valid_epoch = epoch_idx+1
+                    print("** new best classifier **")
+            elif self.early_stopping_trigger == "acc":
+                if criterion > best_valid:
+                    best_valid = criterion
+                    best_model_dict = copy.deepcopy(self.model.state_dict())
+                    best_valid_epoch = epoch_idx+1
+                    print("** new best classifier **")   
+            
+            # initialize not early stopping
+            early_exit = False 
+            
+            # early stopping update
+            if epoch_idx > start_epoch and last_epoch >= start_epoch + int((self.n_epochs-start_epoch)/2):
+                print("Early stopping step ...")
+                
+                if self.early_stopping_trigger == "loss":
+                        if valid_history[-1] > valid_history[-2]:
+                            if counter_stopping >= self.patience:
+                                print("Early stop")
+                                early_exit = True
+                                # break
+                            else:
+                                print("Pantience counter increased")
+                                counter_stopping += 1
+                        else:
+                            print("loss decreased respect previous epoch")
+                            
+                elif self.early_stopping_trigger == "acc":
+                        if valid_history[-1] < valid_history[-2]:
+                            if counter_stopping >= self.patience:
+                                print("Early stop")
+                                early_exit = True
+                                # break
+                            else:
+                                print("Pantience counter increased")
+                                counter_stopping += 1
+                        else:
+                            print("Accuracy increased respect previous epoch")
+            
+            
+            # create dictionary with info frome epoch: loss + valid, and log it
+            epoch_data = {"epoch": last_epoch, "avg_loss": avg_loss, "max_loss": max_loss_epoch, \
+                          "min_loss": min_loss_epoch, self.early_stopping_trigger + "_valid": criterion,
+                         }
+            
+            logger.log(epoch_data)
+            
+            # test epochs loop for debug   
+            if test_loop and last_epoch == 5: break
+            
+            # exit for early stopping if is the case
+            if early_exit: break 
+            
+            # lr scheduler step based on validation result
+            self.scheduler.step(criterion)
+            
+
+        # log GPU memory statistics during training
+        logger.log_mem(T.cuda.memory_summary(device=self.device))
+        
+        # create path for the model save and loss plot in results
+        # classifier
+        name_model_file         = str(last_epoch) +'.ckpt'
+        name_best_model_file    = str(best_valid_epoch) +'.ckpt'
+        path_model_save         = os.path.join(path_model_folder, name_model_file)  # path folder + name file
+        path_best_model_save    = os.path.join(path_model_folder, name_best_model_file)
+
+        # classifier
+        name_loss_file          = 'loss_'+ str(last_epoch) +'.png'
+        name_valid_file         = "valid_{}_{}.png".format(self.early_stopping_trigger, str(last_epoch))
+        
+        
+        
+        # save info for the new model trained
+        self.path2model_results = path_results_folder
+        self.modelEpochs        = last_epoch
+        
+        # save loss plot
+
+        # main model
+        plot_loss(loss_epochs, title_plot= "classifier", path_save = os.path.join(path_results_folder, name_loss_file))
+        plot_loss(loss_epochs, title_plot= "classifier", path_save = os.path.join(path_model_folder,name_loss_file), show=False)
+        plot_valid(valid_history, title_plot= "classifier "+ self.early_stopping_trigger, path_save = os.path.join(path_results_folder, name_valid_file))
+        plot_valid(valid_history, title_plot= "classifier "+ self.early_stopping_trigger, path_save = os.path.join(path_model_folder,name_valid_file), show=False)
+
+        # save model
+        saveModel(self.model, path_model_save)
+        saveModel(best_model_dict, path_best_model_save, is_dict= True)
+        
+        # terminate the log session
+        logger.end_log(model_results_folder_path=path_results_folder)
+        
+        self.model.eval()
+        
+        return name_folder
+        
+    
     # ------------------------------- testing, load & forward 
     
     def test(self):
@@ -2010,7 +2320,7 @@ class DFD_BinViTClassifier_v7(BinaryClassifier):
 
 if __name__ == "__main__":
     #                           [Start test section] 
-    scenario_prog       = 2
+    scenario_prog       = 1
     data_scenario       = None
     
     if scenario_prog == 0: 
@@ -2267,7 +2577,14 @@ if __name__ == "__main__":
             bin_classifier.trainViT(name_train= scenario_setting + "_" + model_type + "_" + add_name, test_loop = test_loop)
         else:
             bin_classifier.trainViT(name_train= scenario_setting + "_" + model_type, test_loop = test_loop)
+    
+    def continueTrainViT_v7_scenario(name_folder, prog_vit, start_epoch = 0, end_epoch = None, model_type = "ViTEA_timm", test_loop = False):
+        bin_classifier = DFD_BinViTClassifier_v7(scenario = data_scenario, useGPU= True, model_type=model_type,\
+                                            train_together=False, prog_pretrained_model= prog_vit)
         
+        bin_classifier.continueTrainViT(name_folder=name_folder, start_epoch= start_epoch, end_epoch=end_epoch, test_loop = test_loop)
+
+      
     def trainAE_v7_scenario(name_folder_train, epoch_vit, prog_vit, model_type = "ViTEA_timm", autoencoder_type = "vae", test_loop = False):
             bin_classifier = DFD_BinViTClassifier_v7(scenario = data_scenario, useGPU= True, model_type=model_type,\
                                         train_together=False, prog_pretrained_model= prog_vit, model_ae_type= autoencoder_type)
@@ -2314,10 +2631,17 @@ if __name__ == "__main__":
     # train_v7_scenario_separately(prog_vit=3, add_name="DeiT_tiny_separateTrain_SGD")    # no good 
     # test_v7_metrics("gan_ViTEA_timm_DeiT_tiny_separateTrain_SGD_v7_02-03-2024", 37)
     
+    # train_v7_scenario_separately(prog_vit=2, add_name="DeiT_small_separateTrain")
+    # test_v7_metrics("gan_ViTEA_timm_DeiT_small_separateTrain_v7_03-03-2024", epoch=20, prog_model=2)
+    # continueTrainViT_v7_scenario(name_folder="gan_ViTEA_timm_DeiT_small_separateTrain_v7_03-03-2024", prog_vit=2, start_epoch=20, end_epoch=40)
+    # test_v7_metrics("gan_ViTEA_timm_DeiT_small_separateTrain_v7_03-03-2024", epoch=40, prog_model=2)
+    continueTrainViT_v7_scenario(name_folder="gan_ViTEA_timm_DeiT_small_separateTrain_v7_03-03-2024", prog_vit=2, start_epoch=40, end_epoch=60)
+
+    
     
     #                               MIX training
     #TODO
-    train_v7_scenario_separately(prog_vit=3, add_name="DeiT_tiny_separateTrain")
+    # train_v7_scenario_separately(prog_vit=3, add_name="DeiT_tiny_separateTrain")        # no good
     
     #                           [End test section] 
     """ 

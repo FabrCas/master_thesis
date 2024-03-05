@@ -1234,7 +1234,7 @@ class DFD_BinClassifier_v4(BinaryClassifier):
         
 
     """
-    def __init__(self, scenario, useGPU = True, batch_size = 32, model_type = "Unet5_Residual_Scorer"):
+    def __init__(self, scenario, useGPU = True, batch_size = 32, model_type = "Unet5_Residual_Scorer", large_encoding = True):
         """ init classifier
 
         Args:
@@ -1258,31 +1258,34 @@ class DFD_BinClassifier_v4(BinaryClassifier):
                 - "Unet6_Residual_Scorer"
                 - "Unet6L_Residual_Scorer"
             Defaults is "Unet5_Residual_Scorer". 
+            large_encoding(bool, optional): manually select the large or reduced dimensionality for metadata encoding, if abn v3 is used will be automatically set to False.
+            This is mostrly used for debug, don't touch if not strictly required since could lead to internal error. Defaults to True
         """
         super(DFD_BinClassifier_v4, self).__init__(useGPU = useGPU, batch_size = batch_size, model_type = model_type)
         self.version = 4
         self.scenario = scenario
         self.augment_data_train = True
         self.use_cutmix         = True
+        self.large_encoding     = large_encoding
             
 
         # load model
         if model_type == "Unet4_Scorer":
-            self.model = Unet4_Scorer(n_classes=2)
+            self.model = Unet4_Scorer(n_classes=2, large_encoding= self.large_encoding)
         elif model_type == "Unet4_Residual_Scorer":
-            self.model = Unet4_ResidualScorer(n_classes=2)
+            self.model = Unet4_ResidualScorer(n_classes=2, large_encoding= self.large_encoding)
         elif model_type == "Unet5_Scorer":
-            self.model = Unet5_Scorer(n_classes=2)
+            self.model = Unet5_Scorer(n_classes=2, large_encoding= self.large_encoding)
         elif model_type == "Unet5_Residual_Scorer":
-            self.model = Unet5_ResidualScorer(n_classes=2)
+            self.model = Unet5_ResidualScorer(n_classes=2, large_encoding= self.large_encoding)
         elif model_type == "Unet6_Scorer":
-            self.model = Unet6_Scorer(n_classes=2)
+            self.model = Unet6_Scorer(n_classes=2, large_encoding= self.large_encoding)
         elif model_type == "Unet6L_Scorer":
-            self.model = Unet6L_Scorer(n_classes=2)
+            self.model = Unet6L_Scorer(n_classes=2, large_encoding= self.large_encoding)
         elif model_type == "Unet6_Residual_Scorer":
-            self.model = Unet6_ResidualScorer(n_classes=2)
+            self.model = Unet6_ResidualScorer(n_classes=2, large_encoding= self.large_encoding)
         elif model_type == "Unet6L_Residual_Scorer":
-            self.model = Unet6L_ResidualScorer(n_classes=2)
+            self.model = Unet6L_ResidualScorer(n_classes=2, large_encoding= self.large_encoding)
         else:
             raise ValueError("The model type is not a Unet model")
         
@@ -1724,7 +1727,7 @@ class DFD_BinClassifier_v5(BinaryClassifier):
         
 
     """
-    def __init__(self, scenario, useGPU = True, batch_size = 64, model_type = "Unet4_Scorer_Confidence"):
+    def __init__(self, scenario, useGPU = True, batch_size = 64, model_type = "Unet4_Scorer_Confidence", large_encoding = True):
         """ init classifier
 
         Args:
@@ -1741,19 +1744,22 @@ class DFD_BinClassifier_v5(BinaryClassifier):
             model_type (str, optional): choose the Unet architecture between :
                 - Unet4_Scorer_Confidence
             Defaults is "Unet4_Scorer_Confidence". 
+            large_encoding(bool, optional): manually select the large or reduced dimensionality for metadata encoding, if abn v3 is used will be automatically set to False.
+            This is mostrly used for debug, don't touch if not strictly required since could lead to internal error. Defaults to True
         """
         super(DFD_BinClassifier_v5, self).__init__(useGPU = useGPU, batch_size = batch_size, model_type = model_type)
         self.version = 5
         self.scenario = scenario
         self.augment_data_train = True
         self.use_cutmix         = True
+        self.large_encoding     = large_encoding 
             
 
         # load model
         if model_type == "Unet4_Scorer_Confidence":
-            self.model = Unet4_Scorer_Confidence(n_classes=2)
+            self.model = Unet4_Scorer_Confidence(n_classes=2, large_encoding= self.large_encoding)
         elif model_type == "Unet5_Scorer_Confidence":
-            self.model == Unet5_Scorer_Confidence(n_classes=2)
+            self.model == Unet5_Scorer_Confidence(n_classes=2, large_encoding= self.large_encoding)
         else:
             raise ValueError("The model type is not a Unet model")
         

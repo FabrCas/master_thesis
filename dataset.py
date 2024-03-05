@@ -2137,7 +2137,6 @@ class OOD_dataset(Dataset):
         else:
             return x, y_vector
             
-
 if __name__ == "__main__":
     #                           [Start test section] 
     def test_cddbinary():
@@ -2336,5 +2335,18 @@ if __name__ == "__main__":
     # test_distortions()
     
     # test_getters("cifar10")
+    # s = "mix"
+    
+    # dataset_id_train        = CDDB_binary_Partial(scenario= s, ood = False,  train= True)
+    # dataset_id_test         = CDDB_binary_Partial(scenario= s, ood = False, train= False)
+    
+    # print("\n______________________________\n")
+    
+    # dataset_ood_train       = CDDB_binary_Partial(scenario= s, ood = True,  train= True)
+    # dataset_ood_test        = CDDB_binary_Partial(scenario= s, ood = True, train= False)
+    
+    
+    
+    
     
     #                           [End test section] 

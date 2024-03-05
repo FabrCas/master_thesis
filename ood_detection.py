@@ -52,7 +52,7 @@ class OOD_Classifier(object):
         
         
         # hyper-params
-        self.batch_size     =  256  # 32 -> basic, 64/128 -> encoder
+        self.batch_size     =  64  # 32 -> basic, 64/128 -> encoder, other -> 256
         
     #                                      data aux functions
     def compute_class_weights(self, verbose = False, positive = "ood", multiplier = 1, normalize = True, only_positive_weight = False):
@@ -1485,10 +1485,9 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
         if not batch_size == "dafault":   # default batch size is defined in the superclass 
             self.batch_size             = int(batch_size)
             
-        # self.lr                     = 1e-4
-        self.lr                     = 1e-3
-        self.n_epochs               = 50
-        self.weight_decay           = 1e-3                  # L2 regularization term 
+        self.lr                     = 1e-3      # 1e-3 or 1e-4
+        self.n_epochs               = 50        # 50 or 20
+        self.weight_decay           = 1e-3      # L2 regularization term 
         
         # load data ID/OOD
         if self.binary_dataset:   # binary vs multi-class task
@@ -2322,10 +2321,6 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
         self.model.eval()
         raise NotImplementedError
 
-
-# TODO test changing attention usage:
-# 1) stack original attention map and reconstruction
-# 2) use also the attention map from the other token after interpolation (another 224è grey image)
 
 class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary 
     """ 
@@ -3216,11 +3211,13 @@ if __name__ == "__main__":
     
     # [1] load deep fake classifier
     # choose classifier model as module A associated with a certain scenario
-    classifier_model = 2
-    scenario = "content"
+    classifier_model = 3
+    scenario = None
+    conf_usage_mode = None
 
     if classifier_model == 0:      # Unet + classifiier 
         
+        scenario = "content"
         classifier_name = "faces_Unet4_Scorer112p_v4_03-12-2023"
         classifier_type = "Unet4_Scorer"
         classifier_epoch = 73
@@ -3229,7 +3226,8 @@ if __name__ == "__main__":
         resolution = "112p"
     
     elif classifier_model == 1:   # Unet + classifiier + confidence
-    
+        
+        scenario = "content"
         classifier_name = "faces_Unet4_Scorer_Confidence_112p_v5_02-01-2024"
         classifier_type = "Unet4_Scorer_Confidence"
         classifier_epoch = 98
@@ -3239,6 +3237,8 @@ if __name__ == "__main__":
         resolution = "112p"
     
     elif classifier_model == 2:         # ViT + Autoencoder
+        
+        scenario = "content"
         classifier_name     = "faces_ViTEA_timm_DeiT_tiny_separateTrain_v7_13-02-2024"
         classifier_type     = "ViTEA_timm"
         autoencoder_type    = "vae"
@@ -3249,6 +3249,24 @@ if __name__ == "__main__":
                                              prog_pretrained_model= prog_model_timm)
         # load classifier & autoencoder
         classifier.load_both(classifier_name, classifier_epoch, autoencoder_epoch)
+        resolution = "224p"
+    
+    elif classifier_model == 3:   # Unet + classifiier GAN
+        scenario = "group"
+        classifier_name = "gan_Unet5_Scorer_v4_07-01-2024"
+        classifier_type = "Unet5_Scorer"
+        classifier_epoch = 71
+        classifier = DFD_BinClassifier_v4(scenario=scenario, model_type=classifier_type)
+        classifier.load(classifier_name, classifier_epoch)
+        resolution = "224p"
+        
+    elif classifier_model == 4:   # Unet + classifiier Mix
+        scenario = "mix"
+        classifier_name = "m_0_Unet5_Residual_Scorer_v4_02-03-2024"
+        classifier_type = "Unet5_Residual_Scorer"
+        classifier_epoch = 51
+        classifier = DFD_BinClassifier_v4(scenario=scenario, model_type=classifier_type)
+        classifier.load(classifier_name, classifier_epoch)
         resolution = "224p"
     
     
@@ -3388,7 +3406,6 @@ if __name__ == "__main__":
     # -- "full_cls_rec_attention_maps", use cls_attention_map, its reconstruction and the attention map over patches (stacked)
     # -- "residual_full_attention_map", use residual and attention map of pathes (stacked)
     
-    
     def train_abn_encoder(type_encoder = "encoder_v3", add_name = "", att_map_mode = "residual"):
         
         if classifier_model == 2:
@@ -3466,6 +3483,13 @@ if __name__ == "__main__":
         # launch test with non-thr metrics
         abn.test_risk()
 
+    
+    
+    train_abn_encoder(type_encoder="encoder_v3", add_name="50e")
+    train_abn_encoder(type_encoder="encoder_v4", add_name="50e")
+    #TODO change to 20 epochs
+    # train_full_extended_abn_encoder(type_encoder="encoder_v3", add_name="20e")
+    # train_full_extended_abn_encoder(type_encoder="encoder_v4", add_name="20e")
     
     
     #                           [End test section] 
@@ -3645,8 +3669,16 @@ if __name__ == "__main__":
         
         train_full_extended_abn_encoder(type_encoder="encoder_v4") # 20 epocsh
         test_abn("Abnormality_module_ViT_encoder_v4_224p_fullExtendedOOD_15-02-2024", 20, "encoder_v4") 
-    
-    
-    
-    
+    """
+    """
+    classifier: gan_Unet5_Scorer_v4_07-01-2024
+        v3:
+            
+        v4:
+    """
+    """
+    classifier: m_0_Unet5_Residual_Scorer_v4_02-03-2024
+        v3:
+        
+        v4:
     """

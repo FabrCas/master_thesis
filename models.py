@@ -2468,6 +2468,8 @@ class Abnormality_module_Encoder_v1(Project_abnorm_model):
         self.e1 = Encoder_block(in_c =  self.residual_shape[1] , out_c = 16)
         self.e2 = Encoder_block(in_c =  16, out_c = 32)
         self.e3 = Encoder_block(in_c =  32, out_c = 64)
+        if INPUT_WIDTH == 224:
+            self.e4 = Encoder_block(in_c =  64, out_c = 128)
         # e2 = Encoder_block(in_c =  64, out_c = 128)
         
         tot_features_1      = 2048
@@ -2502,6 +2504,8 @@ class Abnormality_module_Encoder_v1(Project_abnorm_model):
         _, residual_out = self.e1(residual)
         _, residual_out = self.e2(residual_out)
         _, residual_out = self.e3(residual_out)
+        if INPUT_WIDTH == 224:
+            _, residual_out = self.e4(residual_out)
         
         # flat the residual
         flatten_residual = T.flatten(residual_out, start_dim=1)
@@ -2579,6 +2583,8 @@ class Abnormality_module_Encoder_v2(Project_abnorm_model):
         self.e1 = Encoder_block_v2(in_c =  self.residual_shape[1] , out_c = 16)
         self.e2 = Encoder_block_v2(in_c =  16, out_c = 32)
         self.e3 = Encoder_block_v2(in_c =  32, out_c = 64)
+        if INPUT_WIDTH == 224:
+            self.e4 = Encoder_block_v2(in_c =  64, out_c = 128)
         # e2 = Encoder_block(in_c =  64, out_c = 128)
         
         tot_features_1      = 4096
@@ -2616,6 +2622,8 @@ class Abnormality_module_Encoder_v2(Project_abnorm_model):
         residual_out = self.e1(residual)
         residual_out = self.e2(residual_out)
         residual_out = self.e3(residual_out)
+        if INPUT_WIDTH == 224:
+            residual_out = self.e4(residual_out)
 
         # flat the residual
         flatten_residual = T.flatten(residual_out, start_dim=1)
@@ -2667,6 +2675,9 @@ class Abnormality_module_Encoder_v3(Project_abnorm_model):
         self.e2 = Encoder_block_v2(in_c =  4, out_c = 8)
         self.e3 = Encoder_block_v2(in_c =  8, out_c = 16)
         self.e4 = Encoder_block_v2(in_c =  16, out_c = 32)
+        if INPUT_WIDTH == 224:
+            self.e5 = Encoder_block_v2(in_c =  32, out_c = 64)
+            
 
         tot_features_1      = 1024       
          
@@ -2698,16 +2709,16 @@ class Abnormality_module_Encoder_v3(Project_abnorm_model):
         residual_out = self.e2(residual_out)
         residual_out = self.e3(residual_out)
         residual_out = self.e4(residual_out)   # 64, 7, 7 shape
-        
-        print(residual_out.shape)
+        if INPUT_WIDTH == 224:
+            residual_out = self.e5(residual_out)
         
         # flat the residual
         flatten_residual = T.flatten(residual_out, start_dim=1)
-        
+
         # build the vector input 
         x = T.cat((probs_softmax, encoding, flatten_residual), dim = 1)
         if verbose: print("input module b shape -> ", x.shape)
-        
+
         # preliminary layers
         x = self.gelu(self.bn1(self.fc1(x)))
         
@@ -2761,7 +2772,8 @@ class Abnormality_module_Encoder_v4(Project_abnorm_model):
         self.e1 = Encoder_block_v2(in_c =  self.residual_shape[1] , out_c = 16)
         self.e2 = Encoder_block_v2(in_c =  16, out_c = 32)
         self.e3 = Encoder_block_v2(in_c =  32, out_c = 64)
-        
+        if INPUT_WIDTH == 224:
+            self.e4 = Encoder_block_v2(in_c =  64, out_c = 128)
 
         # preliminary layers after flatterning output residual from conv blocks
         self.fc1r = T.nn.Linear(residual_length,tot_features_1)
@@ -2807,6 +2819,8 @@ class Abnormality_module_Encoder_v4(Project_abnorm_model):
         residual_out = self.e1(residual)
         residual_out = self.e2(residual_out)
         residual_out = self.e3(residual_out)
+        if INPUT_WIDTH == 224:
+            residual_out = self.e4(residual_out)
 
         # flat the residual
         flatten_residual = T.flatten(residual_out, start_dim=1)
@@ -3978,16 +3992,6 @@ if __name__ == "__main__":
     
     # deepfake detection
     
-    def test_ResNet():
-        resnet = ResNet_scratch()
-        resnet.to(device)
-        print(resnet.isCuda())
-        
-       
-        batch_example = input_example.unsqueeze(0)
-        # print(batch_example.shape)
-        resnet.getSummary(input_shape= input_example.shape)
-        
     def test_ResNet50ImageNet():
         resnet = ResNet_ImageNet()
         resnet.to(device)
@@ -4204,8 +4208,8 @@ if __name__ == "__main__":
     
     def test_abnorm_encoder():
         from    bin_classifier                  import DFD_BinClassifier_v4
-        classifier = DFD_BinClassifier_v4(scenario="content", model_type="Unet4_Scorer")
-        classifier.load("faces_Unet4_Scorer112p_v4_03-12-2023", 73)
+        classifier = DFD_BinClassifier_v4(scenario="content", model_type="Unet5_Residual_Scorer", large_encoding=True)
+        # classifier.load("faces_Unet4_Scorer112p_v4_03-12-2023", 73)
         x_module_a = T.rand((32, INPUT_CHANNELS, INPUT_HEIGHT, INPUT_WIDTH)).to(device)
         logits, reconstruction, encoding = classifier.model.forward(x_module_a)
         # input("press enter for next step ")
@@ -4230,7 +4234,7 @@ if __name__ == "__main__":
         # abnorm_module.getSummary()
         # abnorm_module.forward(probs_softmax=softmax_prob, residual=residual, encoding=encoding)
         
-        abnorm_module = Abnormality_module_Encoder_v3(shape_softmax_probs = softmax_prob.shape, shape_encoding=encoding.shape, shape_residual=residual.shape).to(device)
+        abnorm_module = Abnormality_module_Encoder_v4(shape_softmax_probs = softmax_prob.shape, shape_encoding=encoding.shape, shape_residual=residual.shape).to(device)
         # abnorm_module.getSummary()
         abnorm_module.forward(probs_softmax=softmax_prob, residual=residual, encoding=encoding)
         # input("press enter to exit ")
@@ -4267,9 +4271,7 @@ if __name__ == "__main__":
         out = abnorm_module.forward(probs_softmax=softmax_prob, residual=residual, encoding=encoding, verbose = True)
         print(out.shape)
     
-    # get_vitTimm_models()
-    test_ViTEA()
-    # test_abnorm_encoder_vit()
+    test_abnorm_encoder()
     
     
     #                           [End test section] 
