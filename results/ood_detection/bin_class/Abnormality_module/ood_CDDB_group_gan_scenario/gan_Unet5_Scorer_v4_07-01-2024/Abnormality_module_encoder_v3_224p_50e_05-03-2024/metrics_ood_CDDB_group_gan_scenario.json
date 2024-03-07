@@ -1,27 +1,27 @@
 {
     "ID_max_prob": {
-        "mean": 0.4765070974826813,
-        "var": 0.019349098205566406
+        "mean": 0.4764636158943176,
+        "var": 0.020681139081716537
     },
     "OOD_max_prob": {
-        "mean": 0.4883776307106018,
-        "var": 0.06562607735395432
+        "mean": 0.48919424414634705,
+        "var": 0.06831999123096466
     },
     "normality": {
         "base_rate": 50.0,
-        "Prob_AUPR": 54.18,
-        "Prob_AUROC": 57.6
+        "Prob_AUPR": 60.1,
+        "Prob_AUROC": 63.35
     },
     "abnormality": {
         "base_rate": 50.0,
-        "Prob_AUPR": 60.52,
-        "Prob_AUROC": 57.6
+        "Prob_AUPR": 64.21,
+        "Prob_AUROC": 63.35
     },
-    "avg_confidence": 0.48244237899780273,
-    "fpr95_normality": 0.8610637540913618,
-    "detection_error_normality": 0.4560267539490537,
-    "threshold_normality": 0.51953125,
-    "fpr95_abnormality": 0.9432211963191479,
-    "detection_error_abnormality": 0.49587306105023476,
-    "threshold_abnormality": 0.470947265625
+    "avg_confidence": 0.48282891511917114,
+    "fpr95_normality": 0.8433186281485698,
+    "detection_error_normality": 0.44642094777287605,
+    "threshold_normality": 0.5197802782058716,
+    "fpr95_abnormality": 0.907641952469048,
+    "detection_error_abnormality": 0.4781556852141739,
+    "threshold_abnormality": 0.4716607928276062
 }

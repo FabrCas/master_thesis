@@ -2169,13 +2169,11 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
         for idx, (x,y) in tqdm(enumerate(test_dl), total= n_steps):
             
             # to test
-            # if idx >= 1: break
+            # if idx>60:break
             
             x = x.to(self.device)
             with T.no_grad():
                 with autocast():
-                    
-                    x += 0.1
                     
                     out = self._forward_A(x)
 
@@ -2193,9 +2191,10 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
                     # if not basic Abnromality model, do recuction here
                     
                     logit = self._forward_B(probs_softmax, encoding, residual)
+                                                            
                     # risk = T.squeeze(risk)
                     risk =self.sigmoid(logit)
-                    
+                        
             # to numpy array
             risk   = risk.cpu().numpy()
             y       = y.numpy()
@@ -2212,7 +2211,11 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
         
         risks_id = risks_id[:risks_ood.shape[0]]
         
-        # print(risks_idù.shape)
+        
+        # risks_id = risks_id * 0.8
+        
+        # risks_ood = risks_ood**risks_ood
+        # print(risks_id.shape)
         # print(risks_ood.shape)
         # compute statistical moments from risks output
         
@@ -3212,7 +3215,7 @@ if __name__ == "__main__":
     
     # [1] load deep fake classifier
     # choose classifier model as module A associated with a certain scenario
-    classifier_model = 3
+    classifier_model = 4
     scenario = None
     conf_usage_mode = None
 
@@ -3496,11 +3499,11 @@ if __name__ == "__main__":
         abn.test_risk()
     
 
-    test_abn("Abnormality_module_encoder_v3_224p_50e_05-03-2024", 50)
+    # test_abn("Abnormality_module_encoder_v3_224p_50e_05-03-2024", 50)
     # test_abn("Abnormality_module_encoder_v3_224p_50e_fullExtendedOOD_05-03-2024", 50)
     
     
-    # test_abn("Abnormality_module_encoder_v3_224p_50e_06-03-2024", 50)
+    test_abn("Abnormality_module_encoder_v3_224p_50e_06-03-2024", 50)
     # test_abn("Abnormality_module_encoder_v3_224p_50e_fullExtendedOOD_06-03-2024", 50)
     
     

@@ -833,8 +833,12 @@ def plot_ROC_curve(fpr, tpr, path_save = None, epoch = None, duration_timer = 25
         plt.close()
         # plt.clf()  # clear plot data
     
+    # Interpolate the ROC curve to generate more points
+    
     plt.figure()
     plt.plot(fpr, tpr, color='lime', lw=2, label=f'ROC curve)')
+    # plt.plot(interp_fpr, interp_tpr, color='lime', lw=2, label=f'ROC curve)')
+    
     plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
     plt.xlim([0.0, 1.01])
     plt.ylim([0.0, 1.05])
