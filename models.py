@@ -2415,7 +2415,7 @@ class Abnormality_module_Basic(Project_abnorm_model):
         self.fc_risk_2      = T.nn.Linear(tot_feaures_risk_1,tot_feaures_risk_2)
         self.bn_risk_2      = T.nn.BatchNorm1d(tot_feaures_risk_2)
         self.fc_risk_final  = T.nn.Linear(tot_feaures_risk_2,tot_feaures_final)
-        self.bn_risk_final  = T.nn.BatchNorm1d(tot_feaures_final)
+        # self.bn_risk_final  = T.nn.BatchNorm1d(tot_feaures_final)      
         
     def forward(self, probs_softmax, encoding, residual, verbose = False):
         
@@ -2436,7 +2436,8 @@ class Abnormality_module_Basic(Project_abnorm_model):
         # risk section
         x = self.gelu(self.bn_risk_1(self.fc_risk_1(x)))
         x = self.gelu(self.bn_risk_2(self.fc_risk_2(x)))
-        x = self.gelu(self.bn_risk_final(self.fc_risk_final(x)))
+        # x = self.gelu(self.bn_risk_final(self.fc_risk_final(x)))
+        x = self.fc_risk_final(x)
         
         return x
 
@@ -2521,7 +2522,8 @@ class Abnormality_module_Encoder_v1(Project_abnorm_model):
         # risk section
         x = self.gelu(self.bn_risk_1(self.fc_risk_1(x)))
         x = self.gelu(self.bn_risk_2(self.fc_risk_2(x)))
-        x = self.gelu(self.bn_risk_final(self.fc_risk_final(x)))
+        # x = self.gelu(self.bn_risk_final(self.fc_risk_final(x)))
+        x = self.fc_risk_final(x)
         
         return x
 
@@ -2614,7 +2616,7 @@ class Abnormality_module_Encoder_v2(Project_abnorm_model):
         self.fc_risk_2      = T.nn.Linear(tot_feaures_risk_1,tot_feaures_risk_2)
         self.bn_risk_2      = T.nn.BatchNorm1d(tot_feaures_risk_2)
         self.fc_risk_final  = T.nn.Linear(tot_feaures_risk_2,tot_feaures_final)
-        self.bn_risk_final  = T.nn.BatchNorm1d(tot_feaures_final)
+        # self.bn_risk_final  = T.nn.BatchNorm1d(tot_feaures_final)
         
     def forward(self, probs_softmax, encoding, residual, verbose = False):
         
@@ -2640,7 +2642,8 @@ class Abnormality_module_Encoder_v2(Project_abnorm_model):
         # risk section
         x = self.gelu(self.bn_risk_1(self.fc_risk_1(x)))
         x = self.gelu(self.bn_risk_2(self.fc_risk_2(x)))
-        x = self.gelu(self.bn_risk_final(self.fc_risk_final(x)))
+        # x = self.gelu(self.bn_risk_final(self.fc_risk_final(x)))
+        x = self.fc_risk_final(x)
         
         return x
 
@@ -2678,7 +2681,6 @@ class Abnormality_module_Encoder_v3(Project_abnorm_model):
         if INPUT_WIDTH == 224:
             self.e5 = Encoder_block_v2(in_c =  32, out_c = 64)
             
-
         tot_features_1      = 1024       
          
         # taken from official work 
@@ -2699,6 +2701,7 @@ class Abnormality_module_Encoder_v3(Project_abnorm_model):
         self.fc_risk_2      = T.nn.Linear(tot_feaures_risk_1,tot_feaures_risk_2)
         self.bn_risk_2      = T.nn.BatchNorm1d(tot_feaures_risk_2)
         self.fc_risk_final  = T.nn.Linear(tot_feaures_risk_2,tot_feaures_final)
+        self.bn_risk_final  = T.nn.BatchNorm1d(tot_feaures_final)
         self.bn_risk_final  = T.nn.BatchNorm1d(tot_feaures_final)
         
     def forward(self, probs_softmax, encoding, residual, verbose = False):
@@ -2726,6 +2729,7 @@ class Abnormality_module_Encoder_v3(Project_abnorm_model):
         x = self.gelu(self.bn_risk_1(self.fc_risk_1(x)))
         x = self.gelu(self.bn_risk_2(self.fc_risk_2(x)))
         x = self.gelu(self.bn_risk_final(self.fc_risk_final(x)))
+        # x = self.fc_risk_final(x)
         
         return x
     
@@ -2811,7 +2815,7 @@ class Abnormality_module_Encoder_v4(Project_abnorm_model):
         
         # final fc layer after contenation 
         self.fc_risk_final  = T.nn.Linear(tot_feature_risk_concat,tot_feaures_final)
-        self.bn_risk_final  = T.nn.BatchNorm1d(tot_feaures_final)
+        # self.bn_risk_final  = T.nn.BatchNorm1d(tot_feaures_final)
         
     def forward(self, probs_softmax, encoding, residual, verbose = False):
         
@@ -2851,7 +2855,8 @@ class Abnormality_module_Encoder_v4(Project_abnorm_model):
         # # build the vector as input of final fc layer
         x_concat = T.cat((probs_softmax, x_e, x_r), dim = 1)
         # if verbose: print("input module b shape -> ", x.shape)
-        out = self.gelu(self.bn_risk_final(self.fc_risk_final(x_concat)))
+        # out = self.gelu(self.bn_risk_final(self.fc_risk_final(x_concat)))
+        out = self.fc_risk_final(x_concat)
         return out   
 
 
@@ -3693,7 +3698,8 @@ class Abnormality_module_Encoder_ViT_v3(Project_abnorm_model):
         # # risk section
         x = self.gelu(self.bn_risk_1(self.fc_risk_1(x)))
         x = self.gelu(self.bn_risk_2(self.fc_risk_2(x)))
-        x = self.gelu(self.bn_risk_final(self.fc_risk_final(x)))
+        # x = self.gelu(self.bn_risk_final(self.fc_risk_final(x)))
+        x = self.fc_risk_final(x)
         
         return x
 
@@ -3762,7 +3768,7 @@ class Abnormality_module_Encoder_ViT_v4(Project_abnorm_model):
         
         # final fc layer after contenation 
         self.fc_risk_final  = T.nn.Linear(tot_feature_risk_concat,tot_feaures_final)
-        self.bn_risk_final  = T.nn.BatchNorm1d(tot_feaures_final)
+        # self.bn_risk_final  = T.nn.BatchNorm1d(tot_feaures_final)
         
     def forward(self, probs_softmax, encoding, residual, verbose = False):
         
@@ -3798,7 +3804,8 @@ class Abnormality_module_Encoder_ViT_v4(Project_abnorm_model):
         
         # print(x_concat.shape)
         # if verbose: print("input module b shape -> ", x.shape)
-        out = self.gelu(self.bn_risk_final(self.fc_risk_final(x_concat)))
+        # out = self.gelu(self.bn_risk_final(self.fc_risk_final(x_concat)))     
+        out = self.fc_risk_final(x_concat)
         return out   
 
 

@@ -1,0 +1,39 @@
+{
+    "ID_max_prob": {
+        "mean": 0.9293065667152405,
+        "var": 0.12895436584949493
+    },
+    "OOD_max_prob": {
+        "mean": 0.8953801989555359,
+        "var": 0.12874925136566162
+    },
+    "ID_entropy": {
+        "mean": 2.134406566619873,
+        "var": 0.2094559520483017
+    },
+    "OOD_entropy": {
+        "mean": 2.0420761108398438,
+        "var": 0.2084014117717743
+    },
+    "normality": {
+        "base_rate": 50.0,
+        "KL_AUPR": 71.34,
+        "KL_AUROC": 69.74,
+        "Prob_AUPR": 71.34,
+        "Prob_AUROC": 69.74
+    },
+    "abnormality": {
+        "base_rate": 50.0,
+        "KL_AUPR": 61.6,
+        "KL_AUROC": 69.74,
+        "Prob_AUPR": 61.6,
+        "Prob_AUROC": 69.74
+    },
+    "avg_confidence": 0.9120000004768372,
+    "fpr95_normality": 0.9513422818791947,
+    "detection_error_normality": 0.4975671140939597,
+    "threshold_normality": 0.5455580949783325,
+    "fpr95_abnormality": 0.7420581655480983,
+    "detection_error_abnormality": 0.3963087248322148,
+    "threshold_abnormality": 0.006026923656463623
+}

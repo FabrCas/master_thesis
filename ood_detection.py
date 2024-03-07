@@ -2175,6 +2175,8 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
             with T.no_grad():
                 with autocast():
                     
+                    x += 0.1
+                    
                     out = self._forward_A(x)
 
                     probs_softmax       = out["probabilities"]
@@ -2209,9 +2211,9 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
         risks_ood     = pred_risks[ood_labels == 1]
         
         risks_id = risks_id[:risks_ood.shape[0]]
-        # print(risks_id.shape)
+        
+        # print(risks_idù.shape)
         # print(risks_ood.shape)
-         
         # compute statistical moments from risks output
         
         conf_all           = np.average(pred_risks)
@@ -2320,7 +2322,6 @@ class Abnormality_module(OOD_Classifier):   # model to train necessary
     def test_threshold(self):
         self.model.eval()
         raise NotImplementedError
-
 
 class Abnormality_module_ViT(OOD_Classifier):   # model to train necessary 
     """ 
@@ -3303,23 +3304,29 @@ if __name__ == "__main__":
             # ood_detector.test_threshold(thr_type="fpr95_abnormality",   normality_setting=False)
             ood_detector.test_threshold(thr_type="fpr95_normality",     normality_setting=True)
       
-    def test_baseline_content_faces():
-        name_ood_data_content  = "CDDB_content_faces_scenario"
-        
+    def test_baseline_scenario(scenario = "content"):
+        if scenario == "content":
+            name_ood_data_content  = "CDDB_content_faces_scenario"
+        elif scenario == "group":
+            name_ood_data_content  = "CDDB_group_gan_scenario"
+        elif scenario == "mix":
+            name_ood_data_content  = "CDDB_mix_m_0_scenario"
+            
         # laod id data test
-        id_data_train      = CDDB_binary_Partial(scenario = "content", train = True,  ood = False, augment = False)
-        id_data_test       = CDDB_binary_Partial(scenario = "content", train = False, ood = False, augment = False)
+        id_data_train      = CDDB_binary_Partial(scenario = scenario, train = True,  ood = False, augment = False)
+        id_data_test       = CDDB_binary_Partial(scenario = scenario, train = False, ood = False, augment = False)
         _ , id_data_test   = sampleValidSet(trainset = id_data_train, testset= id_data_test, useOnlyTest = True, verbose = True)
         
         # load ood data test
-        ood_data_test  = CDDB_binary_Partial(scenario = "content", train = False,  ood = True, augment = False)
+        ood_data_test  = CDDB_binary_Partial(scenario = scenario, train = False,  ood = True, augment = False)
         
         # print(len(id_data_test), len(ood_data_test))
                 
         ood_detector = Baseline(classifier=classifier, task_type_prog = 0, name_ood_data = name_ood_data_content ,  id_data_test = id_data_test, ood_data_test = ood_data_test, useGPU= True)
         
         ood_detector.test_probabilties()
-        
+    
+       
     # ________________________________ baseline + ODIN  ________________________________
     
     def test_baselineOdin_facesCDDB_CIFAR():
@@ -3340,16 +3347,21 @@ if __name__ == "__main__":
         # [4] launch analyzer/training
         ood_detector.test_probabilties()
     
-    def test_baselineOdin_content_faces():
-        name_ood_data_content  = "CDDB_content_faces_scenario"
+    def test_baselineOdin_scenario(scenario = "content"):
+        if scenario == "content":
+            name_ood_data_content  = "CDDB_content_faces_scenario"
+        elif scenario == "group":
+            name_ood_data_content  = "CDDB_group_gan_scenario"
+        elif scenario == "mix":
+            name_ood_data_content  = "CDDB_mix_m_0_scenario"
 
         # laod id data test
-        id_data_train      = CDDB_binary_Partial(scenario = "content", train = True,  ood = False, augment = False)
-        id_data_test       = CDDB_binary_Partial(scenario = "content", train = False, ood = False, augment = False)
+        id_data_train      = CDDB_binary_Partial(scenario = scenario, train = True,  ood = False, augment = False)
+        id_data_test       = CDDB_binary_Partial(scenario = scenario, train = False, ood = False, augment = False)
         _ , id_data_test   = sampleValidSet(trainset = id_data_train, testset= id_data_test, useOnlyTest = True, verbose = True)
         
         # load ood data test
-        ood_data_test  = CDDB_binary_Partial(scenario = "content", train = False,  ood = True, augment = False)
+        ood_data_test  = CDDB_binary_Partial(scenario = scenario, train = False,  ood = True, augment = False)
         
         ood_detector = Baseline_ODIN(classifier=classifier, task_type_prog = 0, name_ood_data = name_ood_data_content ,  id_data_test = id_data_test, ood_data_test = ood_data_test, useGPU= True)
         
@@ -3482,14 +3494,14 @@ if __name__ == "__main__":
     
         # launch test with non-thr metrics
         abn.test_risk()
+    
 
+    test_abn("Abnormality_module_encoder_v3_224p_50e_05-03-2024", 50)
+    # test_abn("Abnormality_module_encoder_v3_224p_50e_fullExtendedOOD_05-03-2024", 50)
     
     
-    train_abn_encoder(type_encoder="encoder_v3", add_name="50e")
-    train_abn_encoder(type_encoder="encoder_v4", add_name="50e")
-    #TODO change to 20 epochs
-    # train_full_extended_abn_encoder(type_encoder="encoder_v3", add_name="20e")
-    # train_full_extended_abn_encoder(type_encoder="encoder_v4", add_name="20e")
+    # test_abn("Abnormality_module_encoder_v3_224p_50e_06-03-2024", 50)
+    # test_abn("Abnormality_module_encoder_v3_224p_50e_fullExtendedOOD_06-03-2024", 50)
     
     
     #                           [End test section] 
@@ -3673,12 +3685,23 @@ if __name__ == "__main__":
     """
     classifier: gan_Unet5_Scorer_v4_07-01-2024
         v3:
+            ABNORMALITY MODULE ENCODER  (Synthetic ood data, no extension)
+            train_abn_encoder(type_encoder="encoder_v3", add_name="50e")
             
-        v4:
+            
+            
+            ABNORMALITY MODULE ENCODER  (Synthetic ood data, + extension, all merging)
+            train_full_extended_abn_encoder(type_encoder="encoder_v3", add_name="50e")
+            
+            
+            
     """
     """
     classifier: m_0_Unet5_Residual_Scorer_v4_02-03-2024
         v3:
-        
-        v4:
+            ABNORMALITY MODULE ENCODER  (Synthetic ood data, no extension)
+            train_abn_encoder(type_encoder="encoder_v3", add_name="50e")
+            
+            ABNORMALITY MODULE ENCODER  (Synthetic ood data, + extension, all merging)
+            train_full_extended_abn_encoder(type_encoder="encoder_v3", add_name="50e")
     """
