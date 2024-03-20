@@ -3768,7 +3768,7 @@ class Abnormality_module_Encoder_ViT_v4(Project_abnorm_model):
         
         # final fc layer after contenation 
         self.fc_risk_final  = T.nn.Linear(tot_feature_risk_concat,tot_feaures_final)
-        # self.bn_risk_final  = T.nn.BatchNorm1d(tot_feaures_final)
+        self.bn_risk_final  = T.nn.BatchNorm1d(tot_feaures_final)
         
     def forward(self, probs_softmax, encoding, residual, verbose = False):
         
@@ -3804,8 +3804,8 @@ class Abnormality_module_Encoder_ViT_v4(Project_abnorm_model):
         
         # print(x_concat.shape)
         # if verbose: print("input module b shape -> ", x.shape)
-        # out = self.gelu(self.bn_risk_final(self.fc_risk_final(x_concat)))     
-        out = self.fc_risk_final(x_concat)
+        out = self.gelu(self.bn_risk_final(self.fc_risk_final(x_concat)))     
+        # out = self.fc_risk_final(x_concat)
         return out   
 
 
