@@ -47,7 +47,6 @@ def check_arguments(args):
         [print(str(k) +" -> "+ str(v)) for k,v in vars(args).items()]
     return args
 
-
 def create_folders(args):
     folders = os.listdir("./")
 
@@ -73,7 +72,6 @@ def redirect_requirements(name_file = "requirements.txt"):
 
     return 
 		
-
 def main():
     # parse main arguments
     args = parse_arguments()
@@ -82,7 +80,25 @@ def main():
     # create project folders
     create_folders(args)
 
-    type_test = "abn_mix"
+    type_test = "test_benchmark_synth"
+    
+    if type_test == "test_benchmark_synth":
+        prog_model          = 3
+        name_folder         = "train_3_DeiT_tiny_27-02-2024"
+        epoch_classifier    = 50
+        epoch_autoencodder  = 50
+        classifier = CIFAR_VITEA_benchmark(cifar100=False, prog_model= prog_model)
+        classifier.load_classifier(epoch=epoch_classifier, name_folder=name_folder)
+        classifier.load_autoencoder(epoch=epoch_autoencodder, name_folder= name_folder)
+        
+        name_folder = "Abnormality_module_ViT_encoder_v3_test_29-02-2024"
+        epoch = 20
+        model_type= "encoder_v3"
+        abn = CIFAR_VITEA_Abnormality_module(classifier, model_type= model_type, with_outlier= False)
+        abn.load(name_folder_abn = name_folder, epoch= epoch)
+        
+        for a in ["mnist", "fmnist", "svhn", "dtd", "tiny_imagenet", "cifar100"]:
+            abn.test_risk(ood_dataset=a)
     
     if type_test == "test_benchmark":
         prog_model          = 3
@@ -176,10 +192,7 @@ def main():
         abn = Abnormality_module(classifier, scenario=scenario, model_type= "encoder_v3")
         abn.load("Abnormality_module_encoder_v3_224p_50e_fullExtendedOOD_06-03-2024", 50)
         abn.test_risk()
-        
-            
-
-	
+        	
 if __name__ == "__main__":
     print("started execution {}".format(os.getcwd()+ "/main.py"))
     t_start = time.time()

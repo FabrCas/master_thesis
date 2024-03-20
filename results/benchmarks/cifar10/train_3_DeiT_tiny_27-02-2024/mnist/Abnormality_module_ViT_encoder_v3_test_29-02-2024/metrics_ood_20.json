@@ -17,7 +17,7 @@
         "Prob_AUPR": 92.3,
         "Prob_AUROC": 93.15
     },
-    "avg_confidence": 0.48043379187583923,
+    "avg_confidence": 0.480433851480484,
     "fpr95_normality": 0.223,
     "detection_error_normality": 0.13645000000000002,
     "threshold_normality": 0.5339036583900452,
