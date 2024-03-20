@@ -276,17 +276,5 @@ class MultiClassifier(object):
 
 
 
-
-
 if __name__ == "__main__":
-    
-    # a = MultiClassifier(True, 64, "test")
-    
-    #                           [Start test section] 
     pass
-
-    #                           [End test section] 
-   
-    """ 
-            Past test/train launched: 
-    """
