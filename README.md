@@ -37,55 +37,30 @@ Then move the CDDB dataset in the data folder and pretrained models in the model
 ```bash
 
 ├──  data/
-
 ├──  models/
-
 ├──  results/
-
 ├──  scripts/
-
 ├──  setup/
-
 ├──  static/
-
 ├──  bin_classifier.py
-
 ├──  bin_ViTClassifier.py
-
 ├──  dataset.py
-
 ├──  experiments.py
-
 ├──  __init__.py
-
 ├──  main.py
-
 ├──  models_2.py
-
 ├──  models.py
-
 ├──  multi_classifier.py
-
 ├──  ood_detection.py
-
 ├──  README.md
-
 ├──  LICENSE
-
 ├──  test_dataset.py
-
 ├──  test_models.py
-
 ├──  launch_bin_classifier.py
-
 ├──  launch_bin_ViTClassifier.py
-
 ├──  launch_experiments.py
-
 ├──  launch_ood_detector.py
-
 └──  utilities.py
-
 ```
 
 ## Launching the Software
