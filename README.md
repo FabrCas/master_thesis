@@ -2,9 +2,11 @@
 
 Novel architectures and strategies for **OOD detection** employing the collaborative efforts of In-Distribution classifiers and Out-Of-Distribution detectors.
 
+![Out-Of-Distribution in Deepfake Detection domain](https://raw.githubusercontent.com/FabrCas/master_thesis/main/static/ood_in_df.png)
+
 These techniques are used to improve the robustness of **Deepfake detection**. Our study integrates *Convolutional Neural Networks* (CNN) and *Vision Transformers* (ViT), presenting two distinct architectures related to a common Strategy. The first exploits the image reconstruction capabilities of the CNN model, while the second integrates the attention estimation in the study. Auxiliary data produced by the ID classifier and other components are exploited by the custom Abnormality module to infer whether a sample is Out-Of-Distribution.
 
-![Proposed Architecture](https://raw.githubusercontent.com/FabrCas/master_thesis/main/static/pipeline.png)
+![Proposed Architecture](https://raw.githubusercontent.com/FabrCas/master_thesis/main/static/architecture.png)
 
 The full treatment of this research study is covered in this [pdf file](https://github.com/FabrCas/master_thesis/blob/main/thesis.pdf).
 
