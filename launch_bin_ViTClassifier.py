@@ -291,8 +291,8 @@ def test_v7_both_metrics(name_folder_train, epoch, epoch_ae, prog_model  = 3, mo
    
 if __name__ == "__main__":
     #                           [Start test section] 
-    scenario_prog       = 1
-    data_scenario       = None
+    scenario_prog = 1
+    data_scenario = None
     
     if scenario_prog == 0: 
         data_scenario = "content"
@@ -302,3 +302,8 @@ if __name__ == "__main__":
         data_scenario = "mix"
     
     scenario_setting = getScenarioSetting()[data_scenario]    # type of content/group
+    
+    # trainViT_v7_scenario(prog_vit = 4, add_name ="BASE")
+    
+    # test_v7_metrics("gan_ViTEA_timm_BASE_v7_23-04-2024", epoch = 20, prog_model=4)
+    

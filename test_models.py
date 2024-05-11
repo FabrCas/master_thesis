@@ -309,3 +309,7 @@ if __name__ == "__main__":
     device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
     input_example = T.rand(size=(INPUT_CHANNELS,INPUT_HEIGHT,INPUT_WIDTH))
     batch_example = T.rand(size=(32,INPUT_CHANNELS,INPUT_HEIGHT,INPUT_WIDTH))
+    
+    # model = ViT_timm_EA(prog_model = 4)
+    # model.forward(batch_example, verbose = True)
+    

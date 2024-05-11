@@ -2,7 +2,9 @@
 
 Novel architectures and strategies for **OOD detection** employing the collaborative efforts of In-Distribution classifiers and Out-Of-Distribution detectors.
 
-These techniques are used to improve the robustness of **Deepfake detection**. Our study integrates *Convolutional Neural Networks* (CNN) and *Vision Transformers* (ViT), presenting two distinct architectures related to a common Pipeline. The first exploits the image reconstruction capabilities of the CNN model, while the second integrates the attention estimation in the study. Auxiliary data produced by the ID classifier and other components are exploited by the custom Abnormality module to infer whether a sample is Out-Of-Distribution.
+These techniques are used to improve the robustness of **Deepfake detection**. Our study integrates *Convolutional Neural Networks* (CNN) and *Vision Transformers* (ViT), presenting two distinct architectures related to a common Strategy. The first exploits the image reconstruction capabilities of the CNN model, while the second integrates the attention estimation in the study. Auxiliary data produced by the ID classifier and other components are exploited by the custom Abnormality module to infer whether a sample is Out-Of-Distribution.
+
+![Proposed Architecture](https://raw.githubusercontent.com/FabrCas/master_thesis/main/static/pipeline.png)
 
 The full treatment of this research study is covered in this [pdf file](https://github.com/FabrCas/master_thesis/blob/main/thesis.pdf).
 
@@ -37,11 +39,28 @@ Then move the CDDB dataset in the data folder and pretrained models in the model
 ```bash
 
 ├──  data/
+├───── CDDB/
+├───── cifar10/
+├───── cifar100/
+├───── DTD/
+├───── FashionMNIST/
+├───── MNIST/
+├───── SVHN/
+├───── tinyimagenet/
 ├──  models/
+├───── benchmarks/
+├───── bin_class/
+├───── ood_detection/
 ├──  results/
+├───── benchmarks/
+├───── bin_class/
+├───── ood_detection/
 ├──  scripts/
+├───── ...
 ├──  setup/
+├───── requirments.txt
 ├──  static/
+├───── ...
 ├──  bin_classifier.py
 ├──  bin_ViTClassifier.py
 ├──  dataset.py
